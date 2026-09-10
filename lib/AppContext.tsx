@@ -529,31 +529,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setInspections(p => [r, ...p]); // optimistic — แสดงรูป base64 ทันที
     if (!api.apiEnabled) return;
     (async () => {
-      // อัปโหลดรูป base64 → Google Drive แล้วเก็บเป็น URL แทน
-      // ⚠️ รูปไหนอัปไม่ขึ้น → เก็บ base64 ไว้ก่อน (กันข้อมูลหาย) แล้ว "บันทึก record ต่อเสมอ"
-      //    เดิมใช้ Promise.all ถ้ารูปเดียว fail → throw ทั้งก้อน → ไม่ได้ insert เลย (ข้อมูลหาย)
+      // ⭐ บันทึก record ก่อนเลย (มีรูป base64) — กันข้อมูลหายถ้า Google Drive ช้า/ล่ม/ค้าง
+      //    (addInspectionApi เป็น upsert → บันทึกซ้ำ id เดิมได้ · เดิมรออัป Drive ก่อน insert ทำให้หายถ้าอัปพัง)
+      try {
+        await api.addInspectionApi(r);
+      } catch (e) {
+        console.warn("addInspection insert(base64)", e); // insert ไม่ผ่าน → คงไว้ใน state รอ retry/refresh
+        return;
+      }
+      // อัปรูป base64 → Google Drive แล้ว "อัปเดต record" เป็น URL เบื้องหลัง (ทีละรูป · fail คง base64 ไว้)
       const urlMap = new Map<string, string>();
+      let anyUploaded = false;
       const urls = await Promise.all((r.images || []).map(async (img) => {
         if (!img.startsWith("data:")) return img; // เป็น URL อยู่แล้ว
         try {
           const mime = /^data:(.*?);base64,/.exec(img)?.[1] || "image/jpeg";
           const url = (await api.uploadImageApi(img, mime, `${r.unit_no}_${r.id}`)).url;
-          urlMap.set(img, url);
+          urlMap.set(img, url); anyUploaded = true;
           return url;
         } catch (e) {
-          console.warn("uploadImage failed — เก็บ base64 ไว้ก่อน", e);
-          return img; // อัปไม่ขึ้น → คง base64 (ยังโชว์รูปได้ + ไม่หาย)
+          console.warn("uploadImage failed — คง base64 ไว้ใน DB", e);
+          return img; // อัปไม่ขึ้น → คง base64 (บันทึกไว้แล้ว ไม่หาย · ลองใหม่ทีหลังได้)
         }
       }));
+      if (!anyUploaded) return; // ไม่มีรูปที่อัปขึ้น Drive สำเร็จ → base64 ยังอยู่ใน DB แล้ว จบ
       const slots = r.image_slots
         ? Object.fromEntries(Object.entries(r.image_slots).map(([k, v]) => [k, (v && urlMap.get(v)) ?? v]))
         : undefined;
       const record: InspectionRecord = { ...r, images: urls, image_slots: slots as InspectionRecord["image_slots"] };
+      lastLocalEditRef.current = Date.now();
+      setInspections(p => p.map(x => x.id === r.id ? record : x)); // เปลี่ยน base64 → URL (เท่าที่อัปสำเร็จ)
       try {
-        await api.addInspectionApi(record);
-        setInspections(p => p.map(x => x.id === r.id ? record : x)); // เปลี่ยน base64 → URL (เท่าที่อัปสำเร็จ)
+        await api.addInspectionApi(record); // upsert ทับด้วย URL
       } catch (e) {
-        console.warn("addInspection insert", e); // insert ไม่ผ่าน → คงไว้ใน state (optimistic) รอ retry/refresh
+        console.warn("addInspection update(url)", e);
       }
     })();
   }, []);
