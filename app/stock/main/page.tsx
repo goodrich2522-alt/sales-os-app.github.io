@@ -237,7 +237,10 @@ export default function StockMain() {
     try {
       const imgs: string[] = [];
       for (const f of Array.from(files)) { try { imgs.push(await resizeImageFile(f)); } catch { /* ข้ามรูปที่อ่านไม่ได้ */ } }
-      if (imgs.length) addInspection({ id: `ins_stock_${Date.now()}`, unit_no: target.SN || target.id, transporter_name: `${username} (สต็อก)`, date: today(), images: imgs, role: "ผู้รับรถ" });
+      if (imgs.length) addInspection(
+        { id: `ins_stock_${Date.now()}`, unit_no: target.SN || target.id, transporter_name: `${username} (สต็อก)`, date: today(), images: imgs, role: "ผู้รับรถ" },
+        (ok, err) => showToast(ok ? "เพิ่มรูปแล้ว ✓" : `บันทึกไม่สำเร็จ: ${String((err as { message?: string })?.message ?? err ?? "เชื่อมต่อฐานข้อมูลไม่ได้")}`),
+      );
     } finally { setPhotoBusy(false); }
   };
 
@@ -2453,9 +2456,12 @@ export default function StockMain() {
                           <button onClick={() => setRecvBackfill(null)} className="flex-1 text-xs font-bold text-slate-500 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg px-3 py-2">ยกเลิก</button>
                           <button disabled={photoBusy || recvBackfill.imgs.length === 0}
                             onClick={() => {
-                              addInspection({ id: `ins_stock_${Date.now()}`, unit_no: it.SN || it.id, transporter_name: recvBackfill.name.trim() || `${username} (สต็อก)`, date: recvBackfill.date || today(), images: recvBackfill.imgs, role: "ผู้รับรถ" });
+                              const imgs = recvBackfill.imgs;
+                              addInspection(
+                                { id: `ins_stock_${Date.now()}`, unit_no: it.SN || it.id, transporter_name: recvBackfill.name.trim() || `${username} (สต็อก)`, date: recvBackfill.date || today(), images: imgs, role: "ผู้รับรถ" },
+                                (ok, err) => showToast(ok ? "บันทึกรับรถย้อนหลังแล้ว ✓" : `บันทึกไม่สำเร็จ: ${String((err as { message?: string })?.message ?? err ?? "เชื่อมต่อฐานข้อมูลไม่ได้")}`),
+                              );
                               setRecvBackfill(null);
-                              showToast("บันทึกรับรถย้อนหลังแล้ว ✓");
                             }}
                             className="flex-1 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg px-3 py-2">บันทึกรับรถ</button>
                         </div>

@@ -113,7 +113,7 @@ interface AppContextType {
   setActor: (name: string) => void;                          // ตั้งชื่อผู้ทำรายการ (สำหรับ audit log)
   exportData: () => BackupData;
   importData: (data: BackupData) => Promise<{ forklifts: number; sales: number; inspections: number }>;
-  addInspection: (r: InspectionRecord) => void;
+  addInspection: (r: InspectionRecord, onResult?: (ok: boolean, err?: unknown) => void) => void;
   deleteInspection: (id: string) => void;
   restoreInspection: (id: string) => void;
   purgeInspection: (id: string) => void;
@@ -524,17 +524,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // ── Inspection CRUD ───────────────────────────────────────────────────────
-  const addInspection = useCallback((r: InspectionRecord) => {
+  const addInspection = useCallback((r: InspectionRecord, onResult?: (ok: boolean, err?: unknown) => void) => {
     lastLocalEditRef.current = Date.now();
     setInspections(p => [r, ...p]); // optimistic — แสดงรูป base64 ทันที
-    if (!api.apiEnabled) return;
+    if (!api.apiEnabled) { onResult?.(true); return; }
     (async () => {
       // ⭐ บันทึก record ก่อนเลย (มีรูป base64) — กันข้อมูลหายถ้า Google Drive ช้า/ล่ม/ค้าง
       //    (addInspectionApi เป็น upsert → บันทึกซ้ำ id เดิมได้ · เดิมรออัป Drive ก่อน insert ทำให้หายถ้าอัปพัง)
       try {
         await api.addInspectionApi(r);
+        onResult?.(true); // insert ลง DB สำเร็จ (รูปยัง base64 · อัป Drive ต่อเบื้องหลัง)
       } catch (e) {
-        console.warn("addInspection insert(base64)", e); // insert ไม่ผ่าน → คงไว้ใน state รอ retry/refresh
+        console.warn("addInspection insert(base64)", e); // insert ไม่ผ่าน → แจ้งผู้ใช้ + คงไว้ใน state รอ retry
+        onResult?.(false, e);
         return;
       }
       // อัปรูป base64 → Google Drive แล้ว "อัปเดต record" เป็น URL เบื้องหลัง (ทีละรูป · fail คง base64 ไว้)
