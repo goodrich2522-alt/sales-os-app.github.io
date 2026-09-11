@@ -6,14 +6,14 @@ import { ArrowLeft, Users, Search, Plus, Pencil, Trash2, X, Phone, MapPin, FileT
 import { useApp } from "@/lib/AppContext";
 import { DashboardGuard } from "@/components/DashboardGuard";
 import { PROVINCES } from "@/lib/mockData";
+import { purchaseKey } from "@/lib/commission";
 import type { Customer, Sale } from "@/lib/types";
 
 const fmt = (n: number) => Math.round(Number(n) || 0).toLocaleString("th-TH");
 const fmtM = (n: number) => Math.abs(n) >= 1_000_000 ? (n / 1_000_000).toFixed(1) + " ล." : fmt(n);
 const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
-// "การซื้อ 1 ครั้ง" = 1 วัน (ซื้อหลายคันวันเดียวกัน นับเป็นครั้งเดียว) · deals = จำนวนวันที่ซื้อไม่ซ้ำ · units = จำนวนคัน
+// "การซื้อ 1 ครั้ง" = 1 ใบเอกสาร (ซื้อหลายคันในใบเดียว = ครั้งเดียว) · deals = จำนวนใบเอกสารไม่ซ้ำ · units = จำนวนคัน
 type CustStat = { deals: number; units: number; revenue: number; lastAt: string; cars: Sale[] };
-const dayKey = (s: Sale) => String(s.created_at || s.delivery_date || s.id).slice(0, 10); // วันที่ซื้อ (ตรงกับวันที่โชว์ในประวัติ)
 type SortKey = "name" | "spend" | "deals" | "recent";
 
 const blank = (): Customer => ({
@@ -38,7 +38,7 @@ function CustomersPageInner() {
       const g = m.get(k) ?? { units: 0, revenue: 0, lastAt: "", cars: [], days: new Set<string>() };
       g.units++; g.revenue += Number(s.actual_sale) || 0;
       const at = String(s.created_at || ""); if (at.localeCompare(g.lastAt) > 0) g.lastAt = at;
-      g.cars.push(s); g.days.add(dayKey(s)); // วันเดียวกัน = ครั้งเดียว
+      g.cars.push(s); g.days.add(purchaseKey(s)); // ใบเอกสารเดียวกัน = ครั้งเดียว (แม้หลายคัน)
       m.set(k, g);
     });
     return m;

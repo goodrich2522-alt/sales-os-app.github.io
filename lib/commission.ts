@@ -100,25 +100,35 @@ export const sameCustomer = (a: Pick<Sale, "customer_name" | "customer_tel">, b:
   const ta = normTel(a.customer_tel),  tb = normTel(b.customer_tel);
   return (!!na && na === nb) || (ta.length >= 6 && ta === tb);
 };
-// ⭐ กติกา (ผู้ใช้สั่ง 11 ก.ย. 2569): ซื้อหลายคัน "วันเดียวกัน" = การซื้อครั้งเดียว (ไม่นับเป็นลูกค้าเก่า/ซื้อซ้ำ)
-// → นับเป็น "จำนวนวันที่เคยซื้อ" ไม่ใช่จำนวนดีล/คัน · เทียบด้วยวันที่ (ตัดเวลา) ไม่ใช่ timestamp เต็ม
+// ⭐ กติกา (ผู้ใช้สั่ง 11 ก.ย. 2569): 1 การซื้อ = 1 ใบเอกสาร (เลขที่ใบกำกับ/เอกสาร → PI → วันที่)
+// ซื้อหลายคันในใบเดียว = ครั้งเดียว · ใบคนละเลข = คนละครั้ง (แม้วันเดียวกัน)
 const saleDay = (s: Sale) => String(s.created_at || "").slice(0, 10);
-// จำนวน "วันที่เคยซื้อก่อนวันของดีลนี้" (นับรวมดีลนำเข้า GR) — >0 = ลูกค้าเก่า · ซื้อวันเดียวกันไม่นับ
-export const priorPurchaseCount = (sale: Sale, all: Sale[]) => {
-  const day = saleDay(sale);
-  const days = new Set(all
-    .filter(o => o.id !== sale.id && isClosedSale(o) && sameCustomer(o, sale) && saleDay(o) && saleDay(o) < day)
-    .map(saleDay));
-  return days.size;
+/** รหัส "โอกาสการซื้อ" ของดีล — จับกลุ่มตามใบเอกสาร (เลขที่ใบกำกับ/เอกสาร) > PI > วันที่ (สำรอง) */
+export const purchaseKey = (s: Sale): string => {
+  const cf = (s.custom_fields || {}) as Record<string, string>;
+  const inv = String(cf["เลขที่ใบกำกับภาษี"] || cf["เลขที่เอกสาร"] || "").trim();
+  if (inv) return "DOC:" + inv;
+  const pi = String(cf["PI"] || "").trim();
+  if (pi) return "PI:" + pi;
+  return "DAY:" + (saleDay(s) || String(s.id));
 };
-// เช็คตอนกรอกฟอร์ม (ดีลใหม่ = วันนี้) — เคยซื้อ "วันอื่นที่ไม่ใช่วันนี้" ไหม (ซื้อวันเดียวกันไม่นับเป็นลูกค้าเก่า)
+const orderKey = (s: Sale) => saleDay(s) + "|" + purchaseKey(s); // ลำดับก่อน-หลัง (วัน แล้วเลขเอกสาร กันวันเดียวกันเรียงตามเลขใบ)
+// จำนวน "ใบเอกสารที่เคยซื้อก่อนดีลนี้" (นับรวมดีลนำเข้า GR) — >0 = ลูกค้าเก่า · คันในใบเดียวกันไม่นับซ้ำ
+export const priorPurchaseCount = (sale: Sale, all: Sale[]) => {
+  const myKey = purchaseKey(sale), myOrder = orderKey(sale);
+  const prior = new Set(all
+    .filter(o => o.id !== sale.id && isClosedSale(o) && sameCustomer(o, sale) && purchaseKey(o) !== myKey && orderKey(o) < myOrder)
+    .map(purchaseKey));
+  return prior.size;
+};
+// เช็คตอนกรอกฟอร์ม (ดีลใหม่ = วันนี้) — เคยซื้อ "ใบเอกสารอื่นที่ไม่ใช่วันนี้" ไหม (ซื้อวันนี้ยังไม่นับเป็นลูกค้าเก่า)
 export const priorPurchaseByCustomer = (name: string, tel: string, all: Sale[]) => {
   const today = new Date().toISOString().slice(0, 10);
   const probe = { customer_name: name, customer_tel: tel };
-  const days = new Set(all
+  const keys = new Set(all
     .filter(o => isClosedSale(o) && sameCustomer(probe, o) && saleDay(o) && saleDay(o) !== today)
-    .map(saleDay));
-  return days.size;
+    .map(purchaseKey));
+  return keys.size;
 };
 
 // กำไรสุทธิของดีล
