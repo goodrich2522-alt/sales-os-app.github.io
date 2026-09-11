@@ -23,6 +23,7 @@ function CustomersPageInner() {
   const { customers, sales, fieldConfig, addCustomer, updateCustomer, deleteCustomer } = useApp();
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<SortKey>("name");
+  const [filter, setFilter] = useState<"all" | "repeat">("all"); // กรองจากการ์ดสถิติ: ทั้งหมด / เฉพาะซื้อซ้ำ
   const [edit, setEdit] = useState<Customer | null>(null); // ฟอร์มเพิ่ม/แก้ไข (id ว่าง = เพิ่มใหม่)
   const [delId, setDelId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Customer | null>(null); // โมดัลประวัติการซื้อ
@@ -53,9 +54,10 @@ function CustomersPageInner() {
 
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
-    const arr = s
+    let arr = s
       ? customers.filter(c => [c.name, c.tel, c.province, c.tax_id, c.contact_person].some(v => String(v ?? "").toLowerCase().includes(s)))
       : customers;
+    if (filter === "repeat") arr = arr.filter(c => statOf(c.name).deals >= 2); // เฉพาะลูกค้าซื้อซ้ำ (≥2 ครั้ง)
     const withStat = arr.map(c => ({ c, st: statOf(c.name) }));
     withStat.sort((a, b) =>
       sort === "spend"  ? b.st.revenue - a.st.revenue :
@@ -64,7 +66,7 @@ function CustomersPageInner() {
       a.c.name.localeCompare(b.c.name, "th"));
     return withStat.map(x => x.c);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customers, q, sort, statMap]);
+  }, [customers, q, sort, statMap, filter]);
 
   const save = () => {
     if (!edit || !edit.name.trim()) return;
@@ -95,21 +97,41 @@ function CustomersPageInner() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-6 flex flex-col gap-4">
-        {/* สรุปภาพรวม (CRM) */}
+        {/* สรุปภาพรวม (CRM) — กดการ์ดเพื่อกรอง/เรียงดูข้อมูล */}
         <div className="grid grid-cols-3 gap-3">
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3.5 flex flex-col gap-0.5">
-            <span className="text-[11px] text-slate-400 font-semibold flex items-center gap-1"><Users className="w-3.5 h-3.5" />ลูกค้าทั้งหมด</span>
-            <span className="text-xl font-bold text-slate-800">{fmt(summary.total)}</span>
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3.5 flex flex-col gap-0.5">
-            <span className="text-[11px] text-slate-400 font-semibold flex items-center gap-1"><Repeat className="w-3.5 h-3.5" />ลูกค้าซื้อซ้ำ</span>
-            <span className="text-xl font-bold text-emerald-600">{fmt(summary.repeat)}</span>
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3.5 flex flex-col gap-0.5">
-            <span className="text-[11px] text-slate-400 font-semibold flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5" />ยอดซื้อรวม</span>
-            <span className="text-xl font-bold text-indigo-700">฿{fmtM(summary.revenue)}</span>
-          </div>
+          {(() => {
+            const allActive = filter === "all" && sort !== "spend";
+            const repeatActive = filter === "repeat";
+            const spendActive = filter === "all" && sort === "spend";
+            const card = "bg-white rounded-2xl border shadow-sm p-3.5 flex flex-col gap-0.5 text-left transition-all hover:shadow-md active:scale-[0.98]";
+            return (<>
+              <button onClick={() => { setFilter("all"); setSort("name"); }}
+                className={`${card} ${allActive ? "border-slate-400 ring-2 ring-slate-200" : "border-slate-100 hover:border-slate-300"}`}>
+                <span className="text-[11px] text-slate-400 font-semibold flex items-center gap-1"><Users className="w-3.5 h-3.5" />ลูกค้าทั้งหมด</span>
+                <span className="text-xl font-bold text-slate-800">{fmt(summary.total)}</span>
+              </button>
+              <button onClick={() => setFilter("repeat")}
+                className={`${card} ${repeatActive ? "border-emerald-400 ring-2 ring-emerald-200" : "border-slate-100 hover:border-emerald-300"}`}>
+                <span className="text-[11px] text-slate-400 font-semibold flex items-center gap-1"><Repeat className="w-3.5 h-3.5" />ลูกค้าซื้อซ้ำ</span>
+                <span className="text-xl font-bold text-emerald-600">{fmt(summary.repeat)}</span>
+              </button>
+              <button onClick={() => { setFilter("all"); setSort("spend"); }}
+                className={`${card} ${spendActive ? "border-indigo-400 ring-2 ring-indigo-200" : "border-slate-100 hover:border-indigo-300"}`}>
+                <span className="text-[11px] text-slate-400 font-semibold flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5" />ยอดซื้อรวม</span>
+                <span className="text-xl font-bold text-indigo-700">฿{fmtM(summary.revenue)}</span>
+              </button>
+            </>);
+          })()}
         </div>
+        {/* ป้ายบอกมุมมองที่กรองอยู่ */}
+        {(filter === "repeat" || sort === "spend") && (
+          <div className="flex items-center gap-2 -mt-1">
+            <span className="text-xs font-semibold text-slate-500">
+              {filter === "repeat" ? `🔁 แสดงเฉพาะลูกค้าซื้อซ้ำ (${list.length} ราย)` : "📈 เรียงตามยอดซื้อรวม (รายใหญ่อยู่บน)"}
+            </span>
+            <button onClick={() => { setFilter("all"); setSort("name"); }} className="text-xs text-indigo-600 hover:underline font-semibold">ล้าง</button>
+          </div>
+        )}
 
         {/* ค้นหา + เรียง */}
         <div className="flex gap-2 flex-wrap">
