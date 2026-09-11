@@ -100,15 +100,25 @@ export const sameCustomer = (a: Pick<Sale, "customer_name" | "customer_tel">, b:
   const ta = normTel(a.customer_tel),  tb = normTel(b.customer_tel);
   return (!!na && na === nb) || (ta.length >= 6 && ta === tb);
 };
-// จำนวนดีลปิดของลูกค้ารายนี้ที่เกิด "ก่อน" ดีลนี้ (นับรวมดีลนำเข้า GR เพราะเป็นประวัติซื้อจริง)
+// ⭐ กติกา (ผู้ใช้สั่ง 11 ก.ย. 2569): ซื้อหลายคัน "วันเดียวกัน" = การซื้อครั้งเดียว (ไม่นับเป็นลูกค้าเก่า/ซื้อซ้ำ)
+// → นับเป็น "จำนวนวันที่เคยซื้อ" ไม่ใช่จำนวนดีล/คัน · เทียบด้วยวันที่ (ตัดเวลา) ไม่ใช่ timestamp เต็ม
+const saleDay = (s: Sale) => String(s.created_at || "").slice(0, 10);
+// จำนวน "วันที่เคยซื้อก่อนวันของดีลนี้" (นับรวมดีลนำเข้า GR) — >0 = ลูกค้าเก่า · ซื้อวันเดียวกันไม่นับ
 export const priorPurchaseCount = (sale: Sale, all: Sale[]) => {
-  const t = String(sale.created_at || "");
-  return all.filter(o => o.id !== sale.id && isClosedSale(o) && String(o.created_at || "") < t && sameCustomer(o, sale)).length;
+  const day = saleDay(sale);
+  const days = new Set(all
+    .filter(o => o.id !== sale.id && isClosedSale(o) && sameCustomer(o, sale) && saleDay(o) && saleDay(o) < day)
+    .map(saleDay));
+  return days.size;
 };
-// เช็คตอนกรอกฟอร์ม (ยังไม่มี created_at) — มีประวัติซื้อของลูกค้าชื่อ/เบอร์นี้ไหม
+// เช็คตอนกรอกฟอร์ม (ดีลใหม่ = วันนี้) — เคยซื้อ "วันอื่นที่ไม่ใช่วันนี้" ไหม (ซื้อวันเดียวกันไม่นับเป็นลูกค้าเก่า)
 export const priorPurchaseByCustomer = (name: string, tel: string, all: Sale[]) => {
+  const today = new Date().toISOString().slice(0, 10);
   const probe = { customer_name: name, customer_tel: tel };
-  return all.filter(o => isClosedSale(o) && sameCustomer(probe, o)).length;
+  const days = new Set(all
+    .filter(o => isClosedSale(o) && sameCustomer(probe, o) && saleDay(o) && saleDay(o) !== today)
+    .map(saleDay));
+  return days.size;
 };
 
 // กำไรสุทธิของดีล

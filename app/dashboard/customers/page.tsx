@@ -11,7 +11,9 @@ import type { Customer, Sale } from "@/lib/types";
 const fmt = (n: number) => Math.round(Number(n) || 0).toLocaleString("th-TH");
 const fmtM = (n: number) => Math.abs(n) >= 1_000_000 ? (n / 1_000_000).toFixed(1) + " ล." : fmt(n);
 const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
-type CustStat = { deals: number; revenue: number; lastAt: string; cars: Sale[] };
+// "การซื้อ 1 ครั้ง" = 1 วัน (ซื้อหลายคันวันเดียวกัน นับเป็นครั้งเดียว) · deals = จำนวนวันที่ซื้อไม่ซ้ำ · units = จำนวนคัน
+type CustStat = { deals: number; units: number; revenue: number; lastAt: string; cars: Sale[] };
+const dayKey = (s: Sale) => String(s.created_at || s.delivery_date || s.id).slice(0, 10); // วันที่ซื้อ (ตรงกับวันที่โชว์ในประวัติ)
 type SortKey = "name" | "spend" | "deals" | "recent";
 
 const blank = (): Customer => ({
@@ -28,20 +30,24 @@ function CustomersPageInner() {
   const [delId, setDelId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Customer | null>(null); // โมดัลประวัติการซื้อ
 
-  // สถิติต่อลูกค้า (จับชื่อตรง) — จำนวนดีล/ยอดซื้อรวม/ซื้อล่าสุด/รถที่เคยซื้อ
+  // สถิติต่อลูกค้า (จับชื่อตรง) — deals=จำนวนวันที่ซื้อไม่ซ้ำ (ซื้อหลายคันวันเดียว=1ครั้ง) · units=จำนวนคัน
   const statMap = useMemo(() => {
-    const m = new Map<string, CustStat>();
+    const m = new Map<string, { units: number; revenue: number; lastAt: string; cars: Sale[]; days: Set<string> }>();
     sales.forEach(s => {
       const k = norm(s.customer_name || ""); if (!k) return;
-      const g = m.get(k) ?? { deals: 0, revenue: 0, lastAt: "", cars: [] };
-      g.deals++; g.revenue += Number(s.actual_sale) || 0;
+      const g = m.get(k) ?? { units: 0, revenue: 0, lastAt: "", cars: [], days: new Set<string>() };
+      g.units++; g.revenue += Number(s.actual_sale) || 0;
       const at = String(s.created_at || ""); if (at.localeCompare(g.lastAt) > 0) g.lastAt = at;
-      g.cars.push(s);
+      g.cars.push(s); g.days.add(dayKey(s)); // วันเดียวกัน = ครั้งเดียว
       m.set(k, g);
     });
     return m;
   }, [sales]);
-  const statOf = (name: string): CustStat => statMap.get(norm(name)) ?? { deals: 0, revenue: 0, lastAt: "", cars: [] };
+  const statOf = (name: string): CustStat => {
+    const g = statMap.get(norm(name));
+    return g ? { deals: g.days.size, units: g.units, revenue: g.revenue, lastAt: g.lastAt, cars: g.cars }
+             : { deals: 0, units: 0, revenue: 0, lastAt: "", cars: [] };
+  };
 
   // สรุปภาพรวม
   const summary = useMemo(() => {
@@ -177,7 +183,7 @@ function CustomersPageInner() {
                   {c.note && <span className="text-amber-600 leading-snug">📝 {c.note}</span>}
                 </div>
                 <div className="mt-1 flex items-center gap-2 flex-wrap">
-                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${st.deals >= 2 ? "bg-emerald-50 text-emerald-600" : "bg-indigo-50 text-indigo-600"}`}>ซื้อ {st.deals} ครั้ง</span>
+                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${st.deals >= 2 ? "bg-emerald-50 text-emerald-600" : "bg-indigo-50 text-indigo-600"}`}>ซื้อ {st.deals} ครั้ง{st.units > st.deals ? ` · ${st.units} คัน` : ""}</span>
                   {st.revenue > 0 && <span className="text-[11px] font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">฿{fmt(st.revenue)}</span>}
                   {st.lastAt && <span className="text-[11px] text-slate-400 flex items-center gap-1"><Calendar className="w-3 h-3" />ล่าสุด {st.lastAt.slice(0, 10)}</span>}
                   {st.deals > 0 && <ChevronRight className="w-3.5 h-3.5 text-slate-300 ml-auto" />}
@@ -260,7 +266,7 @@ function CustomersPageInner() {
               <div className="px-6 py-4 bg-gradient-to-r from-indigo-600 to-blue-700 flex items-center justify-between flex-shrink-0">
                 <div className="min-w-0">
                   <h3 className="text-base font-bold text-white truncate">{detail.name}</h3>
-                  <p className="text-xs text-indigo-200">ซื้อ {st.deals} ครั้ง · รวม ฿{fmt(st.revenue)}{detail.tel ? ` · ☎ ${detail.tel}` : ""}</p>
+                  <p className="text-xs text-indigo-200">ซื้อ {st.deals} ครั้ง · {st.units} คัน · รวม ฿{fmt(st.revenue)}{detail.tel ? ` · ☎ ${detail.tel}` : ""}</p>
                 </div>
                 <button onClick={() => setDetail(null)} className="text-white/70 hover:text-white hover:bg-white/20 rounded-xl p-2 flex-shrink-0"><X className="w-5 h-5" /></button>
               </div>
