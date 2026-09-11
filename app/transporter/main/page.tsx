@@ -526,9 +526,16 @@ export default function TransporterMain() {
                       const noSN = !(c.SN && String(c.SN).trim());
                       const docRef = String(c.custom_fields?.["รหัสอ้างอิงนำเข้า"] || "").trim();
                       const st = String(c.status || "").trim();
-                      const waiting = st === "รอรับ";                       // ยังไม่รับ = ป้ายส้ม · รับแล้ว/สถานะอื่น = เทา
+                      // มีบันทึกรับรถแล้วหรือยัง (จับคู่ SN หรือ id)
+                      const hasRecv = inspections.some(r => {
+                        const u = String(r.unit_no ?? "").toUpperCase();
+                        return (u === String(c.SN ?? "").toUpperCase() || u === String(c.id ?? "").toUpperCase()) && (r.role ?? "ผู้รับรถ") === "ผู้รับรถ";
+                      });
+                      // รับได้ = ยังไม่รับเข้าคลัง: "รอรับ" หรือ รถสั่งผลิต/จอง/มัดจำ/ไฟแนนซ์ ที่ยังไม่มีบันทึกรับ (จองก่อนรถมา)
+                      const receivable = /รอรับ|จอง|มัดจำ|ไฟแนนซ์|สั่งผลิต/.test(st);
+                      const waiting = st === "รอรับ" || (receivable && !hasRecv); // ยังไม่รับ = ป้ายส้ม กดรับได้ · รับแล้ว/ปิด/เช่า = เทา
                       return (
-                        // กดรับได้เฉพาะคัน "รอรับ" · คันที่ผ่านแล้ว (รับ/ขาย/เช่า) = ดูอย่างเดียว
+                        // กดรับได้: รถที่ยังไม่รับเข้าคลัง (รวมรถสั่งผลิตที่ถูกจองไว้) · คันที่ผ่านแล้ว = ดูอย่างเดียว
                         <button key={c.id} disabled={!waiting}
                           onClick={() => { if (waiting) { setRecvCarId(c.id); setUnitNo(String(c.SN || "")); } }}
                           className={`flex items-center gap-3 rounded-xl border p-3.5 transition-all text-left ${waiting ? "border-slate-200 bg-slate-50 hover:bg-amber-50 hover:border-amber-300 active:scale-[0.99]" : "border-slate-100 bg-white cursor-default opacity-90"}`}>
