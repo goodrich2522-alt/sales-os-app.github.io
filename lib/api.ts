@@ -200,12 +200,24 @@ export const addInspectionApi = async (r: InspectionRecord) => {
   }
   const { error } = await sb().from("inspections").upsert({ ...r, deleted_at: null });
   if (error) {
-    // ยังไม่ได้รัน migration (ขาดคอลัมน์ image_slots / delivery_company / location_link)
-    // → เซฟแบบตัดคอลัมน์ใหม่ทิ้งไปก่อน กันข้อมูลหลักหาย แล้วเตือนใน console
-    const { image_slots: _slots, delivery_company: _dc, location_link: _ll, ...core } = r;
-    const retry = await sb().from("inspections").upsert({ ...core, deleted_at: null });
-    if (retry.error) throw error;
-    console.warn("inspections ขาดคอลัมน์ใหม่ — รัน supabase-migration-2026-07-14.sql (delivery_company/location_link) และ 2026-07-13.sql (image_slots)");
+    // ⭐ FALLBACK: insert ตรงล้มเหลว (session หมดอายุ/RLS บล็อก 42501 · หรือขาดคอลัมน์)
+    //    → เขียนผ่าน RPC SECURITY DEFINER (แบบผู้ขนส่ง) ที่ไม่ต้องมี session · ส่ง forklift ว่าง = ไม่แตะสถานะรถ
+    //    (แก้ปัญหาฝ่ายสต็อก session ตายแล้วบันทึกรูปไม่เข้าแบบเงียบๆ)
+    const rpcRes = r.role === "ผู้ส่งมอบรถ"
+      ? await sb().rpc("transporter_deliver", {
+          p_ins_id: r.id, p_unit_no: r.unit_no, p_name: r.transporter_name, p_phone: r.transporter_phone ?? "",
+          p_date: r.date, p_images: r.images ?? [], p_company: r.delivery_company ?? "", p_location: r.location_link ?? "" })
+      : await sb().rpc("transporter_receive", {
+          p_ins_id: r.id, p_unit_no: r.unit_no, p_name: r.transporter_name, p_phone: r.transporter_phone ?? "",
+          p_date: r.date, p_images: r.images ?? [], p_image_slots: r.image_slots ?? {},
+          p_forklift_id: "", p_sn: "", p_pi_no: "", p_received_date: "" }); // forklift ว่าง = ไม่เปลี่ยนสถานะรถ
+    if (rpcRes.error) {
+      // สุดท้าย: ยังไม่ได้รัน migration (ขาดคอลัมน์ image_slots/delivery_company/location_link) → ตัดคอลัมน์ใหม่ทิ้ง
+      const { image_slots: _slots, delivery_company: _dc, location_link: _ll, ...core } = r;
+      const retry = await sb().from("inspections").upsert({ ...core, deleted_at: null });
+      if (retry.error) throw error;
+      console.warn("inspections ขาดคอลัมน์ใหม่ — รัน supabase-migration-2026-07-14.sql");
+    }
   }
   return { id: r.id };
 };
