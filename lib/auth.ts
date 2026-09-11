@@ -31,14 +31,19 @@ export function userStatus(u: KnownUser | null | undefined): KnownUserStatus | n
   return u.status ?? "approved";
 }
 
-/** มี session ของ Supabase Auth ที่ยังไม่หมดอายุไหม (ใช้กันหน้า main ค้างแบบไม่มีสิทธิ์) */
+/** มี session Supabase Auth ที่ "ใช้เขียนได้จริง" ไหม (ใช้กันหน้า main ค้างแบบไม่มีสิทธิ์)
+ *  ⚠️ ต้องใช้ getUser() ไม่ใช่ getSession() — getSession อ่านจาก localStorage เฉยๆ token หมดอายุก็ยังคืน session
+ *  → เขียนไม่เข้าแบบเงียบๆ (RLS มองเป็น anon) · getUser ตรวจกับ server จริง (หมดอายุ → refresh · refresh ไม่ได้ → error) */
 export async function hasActiveSession(): Promise<boolean> {
   if (!supabase) return true; // โหมด local — ไม่มีระบบ session
   try {
     const { data } = await supabase.auth.getSession();
-    return !!data.session;
+    if (!data.session) return false;               // ไม่มี session เลย → ต้องล็อกอิน
+    const { data: u, error } = await supabase.auth.getUser(); // ตรวจ/รีเฟรชกับ server
+    if (error) return false;                        // token หมดอายุ+รีเฟรชไม่ได้ → ล็อกอินใหม่
+    return !!u.user;
   } catch {
-    return false;
+    return true; // network สะดุดชั่วคราว → อย่าเพิ่งเตะออก (กัน false positive)
   }
 }
 
