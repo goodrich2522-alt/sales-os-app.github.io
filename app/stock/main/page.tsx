@@ -106,6 +106,8 @@ export default function StockMain() {
   const [bulkMode, setBulkMode]     = useState(false);              // โหมดเลือกหลายคัน
   const [selIds, setSelIds]         = useState<Set<string>>(new Set()); // รถที่เลือกไว้
   const [bulkDelConfirm, setBulkDelConfirm] = useState(false);
+  // ── แก้สเปก/ราคาหลายคันพร้อมกัน — ช่องที่เว้นว่าง = ไม่แก้ (ใช้ซ่อมข้อมูลที่นำเข้าผิดทั้งล็อต) ──
+  const [bulkEdit, setBulkEdit] = useState<null | { model: string; capacity: string; cost: string; cat: string; pi: string }>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [showSettings, setShowSettings]   = useState(false);
   const [detailItem, setDetailItem]       = useState<Forklift | null>(null); // รถที่กดดูรายละเอียด
@@ -305,6 +307,23 @@ export default function StockMain() {
   const bulkSetStatus = (status: string) => { if (!status) return; selForklifts().forEach(f => updateForklift({ ...f, status })); clearSel(); };
   const bulkSetLocation = (loc: string) => { if (!loc) return; selForklifts().forEach(f => updateForklift({ ...f, location: loc })); clearSel(); };
   const bulkDelete = () => { selForklifts().forEach(f => deleteForklift(f.id)); clearSel(); };
+  // แก้สเปก/ราคาให้ทุกคันที่เลือก — ใส่เฉพาะช่องที่กรอก (เว้นว่าง = คงค่าเดิมของคันนั้น)
+  const bulkApplyEdit = () => {
+    if (!bulkEdit) return;
+    const model = bulkEdit.model.trim(), capacity = bulkEdit.capacity.trim();
+    const cat = bulkEdit.cat.trim(), pi = bulkEdit.pi.trim();
+    const cost = bulkEdit.cost.trim() === "" ? null : Number(bulkEdit.cost.replace(/[^d.-]/g, ""));
+    selForklifts().forEach(f => updateForklift({
+      ...f,
+      ...(model ? { model } : {}),
+      ...(capacity ? { capacity } : {}),
+      ...(cat ? { vehicle_category: cat as Forklift["vehicle_category"] } : {}),
+      ...(pi ? { pi_no: pi } : {}),
+      ...(cost != null && Number.isFinite(cost) ? { cost_price: cost } : {}),
+    }));
+    showToast(`แก้ ${selIds.size} คันแล้ว ✓`);
+    setBulkEdit(null); clearSel();
+  };
 
   // ── QR ต่อคัน — เข้ารหัสลิงก์เปิดข้อมูลรถ (สแกนแล้วเปิดหน้านี้ + เลือกรถให้) ──
   const carUrl = (target: Forklift) => `${window.location.origin}${window.location.pathname}?car=${encodeURIComponent(target.SN || target.id)}`;
@@ -1875,6 +1894,53 @@ export default function StockMain() {
         </div>
       )}
 
+      {/* ── แผงแก้สเปก/ราคาหลายคัน — เว้นว่าง = ไม่แก้ช่องนั้น ── */}
+      {bulkMode && selIds.size > 0 && bulkEdit && (() => {
+        const e = bulkEdit;
+        const set = (k: keyof typeof e, v: string) => setBulkEdit({ ...e, [k]: v });
+        const changes = [
+          e.model.trim() && `รุ่น → ${e.model.trim()}`,
+          e.capacity.trim() && `พิกัด → ${e.capacity.trim()}`,
+          e.cat.trim() && `หมวดรถ → ${e.cat.trim()}`,
+          e.cost.trim() && `ราคาทุน → ${Number(e.cost.replace(/[^d.-]/g, "")).toLocaleString("th-TH")}`,
+          e.pi.trim() && `เลข PI → ${e.pi.trim()}`,
+        ].filter(Boolean) as string[];
+        const inp = "w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 bg-white placeholder:text-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 focus:outline-none";
+        return (
+          <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 bg-white rounded-2xl shadow-2xl border border-indigo-200 p-4 w-[min(92vw,760px)]">
+            <p className="text-sm font-bold text-indigo-700 mb-1 flex items-center gap-1.5"><Pencil className="w-4 h-4" />แก้ {selIds.size} คันที่เลือก</p>
+            <p className="text-[11px] text-slate-400 mb-3">กรอกเฉพาะช่องที่ต้องการแก้ — <b>ช่องที่เว้นว่างจะคงค่าเดิมของแต่ละคัน</b></p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <label className="flex flex-col gap-1 min-w-0"><span className="text-[11px] font-semibold text-slate-500">รุ่น</span>
+                <input value={e.model} onChange={x => set("model", x.target.value)} placeholder="เช่น CBD20-WS" className={inp} /></label>
+              <label className="flex flex-col gap-1 min-w-0"><span className="text-[11px] font-semibold text-slate-500">พิกัดยก</span>
+                <input value={e.capacity} onChange={x => set("capacity", x.target.value)} placeholder="เช่น 2.0 ตัน" className={inp} /></label>
+              <label className="flex flex-col gap-1 min-w-0"><span className="text-[11px] font-semibold text-slate-500">ราคาทุน (บาท)</span>
+                <input value={e.cost} onChange={x => set("cost", x.target.value)} placeholder="เช่น 24500" className={inp} /></label>
+              <label className="flex flex-col gap-1 min-w-0"><span className="text-[11px] font-semibold text-slate-500">หมวดรถ</span>
+                <select value={e.cat} onChange={x => set("cat", x.target.value)} className={inp}>
+                  <option value="">(ไม่แก้)</option>
+                  {VEHICLE_CATS.map(c => <option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}
+                </select></label>
+              <label className="flex flex-col gap-1 min-w-0"><span className="text-[11px] font-semibold text-slate-500">เลข PI</span>
+                <input value={e.pi} onChange={x => set("pi", x.target.value)} placeholder="เช่น HCTH-BFL2026091402" className={inp} /></label>
+            </div>
+            {changes.length > 0 && (
+              <p className="text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1.5 mt-3">
+                จะแก้ <b>{selIds.size} คัน</b>: {changes.join(" · ")}
+              </p>
+            )}
+            <div className="flex justify-end gap-2 mt-3">
+              <button onClick={() => setBulkEdit(null)} className="px-3 py-1.5 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-100">ยกเลิก</button>
+              <button onClick={bulkApplyEdit} disabled={changes.length === 0}
+                className={`px-4 py-1.5 rounded-lg text-sm font-bold ${changes.length ? "bg-indigo-600 text-white hover:bg-indigo-700" : "bg-slate-200 text-slate-400 cursor-not-allowed"}`}>
+                บันทึก {selIds.size} คัน
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── แถบจัดการหลายคัน (bulk) — ลอยล่างจอเมื่อเลือกรถ ── */}
       {bulkMode && selIds.size > 0 && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-white rounded-2xl shadow-2xl border border-indigo-200 px-4 py-3 flex items-center gap-2.5 flex-wrap max-w-[95vw]">
@@ -1889,6 +1955,10 @@ export default function StockMain() {
             <option value="" disabled>เปลี่ยนโลเคชั่น…</option>
             {fieldConfig.locations.map(l => <option key={l} value={l}>{l}</option>)}
           </select>
+          <button onClick={() => setBulkEdit(bulkEdit ? null : { model: "", capacity: "", cost: "", cat: "", pi: "" })}
+            className={`flex items-center gap-1 text-xs font-bold rounded-lg px-2.5 py-1.5 border transition ${bulkEdit ? "bg-indigo-600 text-white border-indigo-600" : "text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border-indigo-200"}`}>
+            <Pencil className="w-3.5 h-3.5" />แก้สเปก/ราคา
+          </button>
           {bulkDelConfirm ? (
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-semibold text-red-600">ลบ {selIds.size} คัน?</span>
