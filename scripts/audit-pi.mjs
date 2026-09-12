@@ -101,6 +101,34 @@ const show = (r) => {
   if (r.costSplit) console.log("     ⚠️ ทุนไม่เท่ากันทั้งที่รุ่นเดียวกัน");
 };
 
+// ── เลข PI ที่ "น่าจะเป็นใบเดียวกัน แต่พิมพ์ต่างกัน" → รถกระจายไปคนละกลุ่ม ──
+// เจอจริง 3 ครั้ง: HCTH-BFL-202604545 (ขีดเกิน) · HCTH-BFL20262278 (ตก 0) · HCTH-BE202601013 (ตก FL)
+const normPi = (pi) => pi.toUpperCase().replace(/[^A-Z0-9]/g, "");
+const byNorm = new Map();
+for (const r of rows) {
+  const k = normPi(r.pi);
+  if (!byNorm.has(k)) byNorm.set(k, []);
+  byNorm.get(k).push(r);
+}
+const sameAfterNorm = [...byNorm.values()].filter((v) => v.length > 1);
+
+// ต่างกันไม่เกิน 2 ตัวหลัง normalize (ตัวสั้นเป็นส่วนย่อยของตัวยาว) = น่าจะพิมพ์ตก
+const nearMiss = [];
+const keys = [...byNorm.keys()];
+for (let i = 0; i < keys.length; i++)
+  for (let j = i + 1; j < keys.length; j++) {
+    const a = keys[i], b = keys[j];
+    if (a === b) continue;
+    const [lo, hi] = a.length <= b.length ? [a, b] : [b, a];
+    const gap = hi.length - lo.length;
+    if (gap === 0 || gap > 2 || lo.length < 8) continue;
+    let k = 0, skip = 0;
+    for (let x = 0; x < hi.length && skip <= gap; x++) {
+      if (k < lo.length && lo[k] === hi[x]) k++; else skip++;
+    }
+    if (k === lo.length && skip <= gap) nearMiss.push({ a: byNorm.get(a), b: byNorm.get(b), gap });
+  }
+
 const A = rows.filter((r) => r.tier === "A");
 const B = rows.filter((r) => r.tier === "B");
 const C = rows.filter((r) => !r.tier && r.costSplit);
@@ -118,5 +146,11 @@ if (C.length) {
   console.log(`\n🟡 อื่นๆ — ทุนไม่เท่ากันในรุ่นเดียวกัน (${C.length} ใบ)`);
   C.forEach(show);
 }
+
+console.log(`\n🔵 เลข PI ที่น่าจะเป็นใบเดียวกันแต่พิมพ์ต่างกัน (${sameAfterNorm.length + nearMiss.length} ชุด)`);
+if (!sameAfterNorm.length && !nearMiss.length) console.log("  ไม่พบ ✓");
+const piLabel = (v) => v.map((r) => `${r.pi} (${r.cars.length} คัน)`).join(", ");
+for (const v of sameAfterNorm) console.log(`  ⛔ ต่างกันแค่เครื่องหมาย: ${piLabel(v)}`);
+for (const n of nearMiss) console.log(`  ⚠️ ต่างกัน ${n.gap} ตัว: ${piLabel(n.a)}  ≠  ${piLabel(n.b)}`);
 
 console.log("\nวิธีตรวจ: เปิดใบ PI จริง เทียบจำนวนต่อรุ่นกับบรรทัดข้างบน — ไม่ตรงให้แก้ในหน้าสต็อก (ดู QUOTE-IMPORT-RULES.md)");
