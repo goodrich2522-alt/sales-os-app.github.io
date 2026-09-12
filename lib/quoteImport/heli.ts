@@ -3,7 +3,7 @@
 // ✅ แยกรุ่นตามรายการ: จับ SN เข้ากับรุ่นที่ถูกต้องต่อ item (เดิมเอารุ่นแรกไปใส่ทุกคัน → ผิดเมื่อใบมีหลายรุ่น)
 
 import { ParsedVehicle, QuoteParseResult, QuoteDocCheck } from "./types";
-import { isKdRef, hasKdMark } from "./madeToOrder";
+import { isKdRef, hasKdMark, leadDaysFrom } from "./madeToOrder";
 
 /** พลังงานจากคำในเอกสาร (อังกฤษ) → ไทย */
 function fuelFromText(s: string): string | undefined {
@@ -47,6 +47,7 @@ export function parseHeli(rawText: string): QuoteParseResult {
 
   // ใบ KD = รถสั่งผลิต → ยังไม่มี SN เป็นเรื่องปกติ (ผู้ผลิตให้ SN ตอนผลิตเสร็จ ~60-90 วัน) ดู madeToOrder.ts
   const isKd = isKdRef(importRef, piFromRef) || hasKdMark(text);
+  const lead = leadDaysFrom(text);          // "Delivery: 75-90 days" — ใช้แทนค่าคงที่ถ้าใบเขียนไว้
 
   const modelMatches = [...text.matchAll(MODEL_RE)];
   if (modelMatches.length === 0) {
@@ -85,6 +86,7 @@ export function parseHeli(rawText: string): QuoteParseResult {
         brand: "HELI", model, SN: sn, capacity, fuel, mast, valve,
         cost_price: cost, pi_no: piFromRef, import_ref: importRef, vendor: "HELI",
         made_to_order: kd || undefined,
+        lead_days: kd ? lead : undefined,
         flags: flags.length ? flags : undefined,
       };
     };

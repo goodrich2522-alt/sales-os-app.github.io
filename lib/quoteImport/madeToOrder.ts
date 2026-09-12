@@ -9,6 +9,18 @@
 export const KD_LEAD_MIN_DAYS = 60;
 export const KD_LEAD_MAX_DAYS = 90;
 
+/**
+ * ระยะเวลาส่งมอบที่เอกสารเขียนไว้ เช่น "Delivery: 75-90 days after confirm order"
+ * ใบ KD ของ HELI เขียน 75-90 วัน · ใบรถมีสต็อกเขียน 3-5 วัน
+ * อ่านจากใบได้แม่นกว่าใช้ค่าคงที่ — ไม่เจอค่อยตกไปใช้ KD_LEAD_MIN/MAX_DAYS
+ */
+export function leadDaysFrom(text: string): { min: number; max: number } | undefined {
+  const m = text.match(/Delivery *:? *([0-9]{1,3}) *[-–—] *([0-9]{1,3}) *days?/i);
+  if (!m) return undefined;
+  const min = Number(m[1]), max = Number(m[2]);
+  return min > 0 && max >= min && max <= 365 ? { min, max } : undefined;
+}
+
 /** ต่อท้ายด้วย KD — ต้องมีตัวเลขนำหน้า (กัน "KD" ที่บังเอิญติดมากับคำอื่น) */
 const KD_TAIL = /\d\s*[-.]?\s*KD$/i;
 

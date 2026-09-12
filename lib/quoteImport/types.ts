@@ -21,6 +21,8 @@ export interface ParsedVehicle {
   pi_no?: string;           // เลขสัญญา/PI/Contract (เว้นว่างสำหรับใบเสนอราคา — เติมเลข PI จริงทีหลัง)
   /** รถสั่งผลิต (เลข PI/รหัสอ้างอิงลงท้าย KD) — ยังไม่มี SN · SN มาตอนผลิตเสร็จ ~60-90 วัน (ดู madeToOrder.ts) */
   made_to_order?: boolean;
+  /** ระยะเวลาส่งมอบที่ "เอกสารเขียนไว้เอง" เช่น Delivery: 75-90 days → {min:75,max:90} */
+  lead_days?: { min: number; max: number };
   import_ref?: string;      // รหัสอ้างอิงนำเข้าจริงจากเอกสาร (เช่น C20726201-001) — ไม่ใช่เลข PI
   vendor: QuoteVendor;
   /** ฟิลด์ที่ parser ไม่มั่นใจ (ค่าว่าง/รูปแบบแปลก) — หน้าตรวจทานติดธงให้คนดู */

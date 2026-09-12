@@ -15,7 +15,7 @@
 // ทุกใบคืน docCheck = จำนวนที่เอกสารระบุ ให้หน้าตรวจทานเทียบกับที่อ่านได้จริง
 
 import { ParsedVehicle, QuoteParseResult, QuoteDocCheck } from "./types";
-import { isKdRef, hasKdMark } from "./madeToOrder";
+import { isKdRef, hasKdMark, leadDaysFrom } from "./madeToOrder";
 
 // รุ่น HANGCHA: CPD(ไฟฟ้า)/CPCD(ดีเซล)/CBD/CDD/CQD/CBS/XF ตามด้วยพิกัด เช่น CPD25-XAJ4-I, CBD15-WS
 const MODEL_RE = /\b((?:CPCD|CPD|CBD|CDD|CQD|CBS|XF)\d{1,3}[A-Z0-9-]*)/i;
@@ -89,6 +89,7 @@ export function parseHangcha(rawText: string): QuoteParseResult {
 
   // ใบ KD = รถสั่งผลิต → ยังไม่มี SN เป็นเรื่องปกติ (SN มาตอนผลิตเสร็จ ~60-90 วัน) ดู madeToOrder.ts
   const isKd = isKdRef(pi_no) || hasKdMark(text);
+  const lead = leadDaysFrom(text);          // "Delivery: X-Y days" ถ้าใบเขียนไว้
 
   const blocks = itemBlocks(text);
   if (blocks.length === 0) return { vendor: "HANGCHA", pi_no, quote_date: date, vehicles: [], rawText };
@@ -130,7 +131,7 @@ export function parseHangcha(rawText: string): QuoteParseResult {
       if (!unit) flags.push("ไม่พบราคาทุน");
       return {
         brand: "HANGCHA", model, SN: sn, capacity, fuel, mast, fork_length, height,
-        cost_price: unit, pi_no, vendor: "HANGCHA", made_to_order: kd || undefined,
+        cost_price: unit, pi_no, vendor: "HANGCHA", made_to_order: kd || undefined, lead_days: kd ? lead : undefined,
         flags: flags.length ? flags : undefined,
       };
     };

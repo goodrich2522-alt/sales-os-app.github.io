@@ -36,9 +36,15 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
   // ── รถสั่งผลิต (KD) — ใบที่เลข PI ลงท้าย KD ยังไม่มี SN ตอนนี้ · SN มาตอนผลิตเสร็จ 60-90 วัน ──
   const isMto = (v: ParsedVehicle) => !!v.made_to_order && !String(v.SN ?? "").trim();
   const kdBase = orderDate || today();                              // นับจากวันสั่งรถ (ไม่กรอก = วันนี้)
-  const kdFrom = addDays(kdBase, KD_LEAD_MIN_DAYS);
-  const kdTo   = addDays(kdBase, KD_LEAD_MAX_DAYS);
-  const mtoCount = rows.filter(isMto).length;
+  // ระยะเวลาส่งมอบ: ใช้ที่ "เอกสารเขียนไว้เอง" ก่อน (เช่น HELI KD เขียน Delivery: 75-90 days)
+  // ไม่มีในใบค่อยใช้ค่ากลาง 60-90 วัน — แม่นกว่าเดาเอง
+  const mtoRows = rows.filter(isMto);
+  const docLead = mtoRows.find((v) => v.lead_days)?.lead_days;
+  const leadMin = docLead?.min ?? KD_LEAD_MIN_DAYS;
+  const leadMax = docLead?.max ?? KD_LEAD_MAX_DAYS;
+  const kdFrom = addDays(kdBase, leadMin);
+  const kdTo   = addDays(kdBase, leadMax);
+  const mtoCount = mtoRows.length;
   // ติ๊กเอง — เผื่อเอกสารไม่ได้เขียน KD ไว้ หรือ parser อ่านไม่เจอ
   const toggleMto = (i: number) =>
     setRows((r) => r.map((v, j) => (j === i ? { ...v, made_to_order: !v.made_to_order } : v)));
@@ -193,6 +199,10 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
 
   const dupCount = rows.filter((v, i) => existingIds.has(toForklift(v, i).id)).length;
 
+  // รถที่ยังไม่มี SN ต้องมีเลข PI — รหัสชั่วคราวคือ <เลข PI>#<ลำดับ> (SN-RULES ข้อ 5.ข)
+  // ไม่มีทั้ง SN และ PI → รหัสจะกลายเป็น "PI#N" ซึ่งชนกันข้ามใบ (เจอของจริงในระบบ 4 คัน)
+  const noPiRows = rows.filter((v) => !String(v.SN ?? "").trim() && !String(v.pi_no ?? "").trim() && !String(v.import_ref ?? "").trim());
+
   // ── ด่านตรวจจำนวน (กติกา 12 ก.ย. 2569) — เทียบ "เอกสารระบุ" กับ "ระบบอ่านได้" ทีละรุ่น ──
   // เหตุที่ต้องมี: ใบ HCTH-BFL2026091402 (2 รุ่น) เคยถูกอ่านเป็นรุ่นเดียวจำนวนผิด แล้วบันทึกลงสต็อกเงียบๆ
   const MODEL_UNSET = "(ไม่ระบุรุ่น)";
@@ -209,7 +219,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
   const docTotal = docChecks.length && docChecks.every((d) => d.check.totalQty)
     ? docChecks.reduce((n, d) => n + (d.check.totalQty ?? 0), 0) : undefined;
   const countMismatch = hasDocQty && (verifyRows.some((r) => r.exp != null && r.exp !== r.act) || (docTotal != null && docTotal !== rows.length));
-  const blockSave = countMismatch && !confirmDiff;
+  const blockSave = (countMismatch && !confirmDiff) || noPiRows.length > 0;
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4"
@@ -338,7 +348,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                       <Factory className="w-4 h-4 flex-shrink-0 mt-0.5" />
                       <span>
                         พบ <b>รถสั่งผลิต (KD) {mtoCount} คัน</b> — เอกสารลงท้าย &ldquo;KD&rdquo; คือรถที่ยังไม่ผลิต จึงยังไม่มี SN (ไม่ใช่ข้อผิดพลาด)<br />
-                        บันทึกด้วยสถานะ <b>&ldquo;สั่งผลิต&rdquo;</b> · คาดได้ SN <b>{kdFrom ? thaiDate(kdFrom) : "?"}</b> ถึง <b>{kdTo ? thaiDate(kdTo) : "?"}</b> ({KD_LEAD_MIN_DAYS}-{KD_LEAD_MAX_DAYS} วันจาก{orderDate ? "วันสั่งรถ" : "วันนี้"})
+                        บันทึกด้วยสถานะ <b>&ldquo;สั่งผลิต&rdquo;</b> · คาดได้ SN <b>{kdFrom ? thaiDate(kdFrom) : "?"}</b> ถึง <b>{kdTo ? thaiDate(kdTo) : "?"}</b> ({leadMin}-{leadMax} วันจาก{orderDate ? "วันสั่งรถ" : "วันนี้"}{docLead ? " · ตามที่ระบุในเอกสาร" : ""})
                         {!orderDate && <> · <b>กรอก &ldquo;วันสั่งซื้อรถ&rdquo; ด้านบน</b>ให้ตรง วันคาดรับจะแม่นขึ้น</>}<br />
                         <span className="text-violet-600">เมื่อรถผลิตเสร็จ ผู้ขนส่งกรอก SN จริงตอนรับรถ ระบบเปลี่ยนรหัสให้เอง</span>
                       </span>
@@ -414,6 +424,11 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                             <Field label="Valve" val={v.valve ?? ""} onChange={(x) => edit(i, "valve", x)} ph="เช่น 3 วาล์ว" />
                             <Field label="ราคาทุน" val={v.cost_price ? String(v.cost_price) : ""} onChange={(x) => edit(i, "cost_price", x)} ph="บาท" />
                           </div>
+                          {!String(v.SN ?? "").trim() && !String(v.pi_no ?? "").trim() && !String(v.import_ref ?? "").trim() && (
+                            <p className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 mt-2.5">
+                              ⛔ คันนี้ยังไม่มีทั้ง SN และเลข PI — <b>ต้องกรอกเลข PI ก่อน</b> ไม่งั้นรหัสรถจะชนกับรถใบอื่น
+                            </p>
+                          )}
                           {mto && <p className="text-[11px] text-violet-700 bg-violet-50 border border-violet-200 rounded-lg px-2.5 py-1.5 mt-2.5">🏭 รถสั่งผลิต — บันทึกเป็นสถานะ &ldquo;สั่งผลิต&rdquo; · คาดได้ SN {kdFrom ? thaiDate(kdFrom) : "?"} ถึง {kdTo ? thaiDate(kdTo) : "?"} · รหัสชั่วคราว {v.pi_no || v.import_ref || "PI"}#{i + 1}</p>}
                           {flags.length ? <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-2.5">⚠️ {flags.join(" · ")}</p> : null}
                         </div>
@@ -433,7 +448,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
             <button onClick={save} disabled={blockSave}
               title={blockSave ? "จำนวนไม่ตรงกับเอกสาร — ตรวจและติ๊กยืนยันก่อน" : undefined}
               className={`px-5 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 ${blockSave ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}>
-              <CheckCircle className="w-4 h-4" />{blockSave ? "จำนวนไม่ตรงเอกสาร — ตรวจก่อน" : `บันทึกเข้าสต็อก ${rows.length} คัน`}
+              <CheckCircle className="w-4 h-4" />{noPiRows.length ? `กรอกเลข PI ให้ครบก่อน (${noPiRows.length} คัน)` : blockSave ? "จำนวนไม่ตรงเอกสาร — ตรวจก่อน" : `บันทึกเข้าสต็อก ${rows.length} คัน`}
             </button>
           </div>
         )}
