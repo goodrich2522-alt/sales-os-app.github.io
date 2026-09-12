@@ -5,7 +5,7 @@
 
 import { useState } from "react";
 import { useApp } from "@/lib/AppContext";
-import { readPdfText, looksScanned, parseQuoteText, detectVendor, parseQuoteExcel, readExcelRows, isExcelFile, isImageFile, readImageText, normalizeStaxxModel, ParsedVehicle, QuoteDocCheck, KD_LEAD_MIN_DAYS, KD_LEAD_MAX_DAYS } from "@/lib/quoteImport";
+import { readPdfText, looksScanned, readScannedPdfText, parseQuoteText, parseQuoteExcel, readExcelRows, isExcelFile, isImageFile, readImageText, normalizeStaxxModel, ParsedVehicle, QuoteDocCheck, KD_LEAD_MIN_DAYS, KD_LEAD_MAX_DAYS } from "@/lib/quoteImport";
 import { categorizeModel } from "@/lib/constants";
 import { today, addDays, thaiDate } from "@/lib/format";
 import { Forklift } from "@/lib/types";
@@ -81,16 +81,23 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
           continue;
         }
         // PDF
-        const text = await readPdfText(f);
+        let text = await readPdfText(f);
         if (looksScanned(text)) {
-          const v = detectVendor(text);
-          vendors.add(v === "unknown" ? "สแกน" : v);
-          setNotice(`⚠️ "${f.name}" เป็นไฟล์สแกน (ไม่มี text layer) — ต้องใช้ OCR (ยังไม่รองรับ) หรือกรอกมือ`);
-          continue;
+          // ไฟล์สแกน (เช่นใบกำกับภาษีที่ถ่าย/สแกนมา) → เรนเดอร์หน้าเป็นรูปแล้ว OCR ในเครื่อง
+          setOcr({ name: f.name, pct: 0 });
+          text = await readScannedPdfText(f, (pg, pages, pct) =>
+            setOcr({ name: pages > 1 ? `${f.name} (หน้า ${pg}/${pages})` : f.name, pct }));
+          setOcr(null);
+          if (looksScanned(text)) {
+            setNotice(`⚠️ "${f.name}" อ่าน (OCR) แล้วยังไม่ได้ข้อความ — ภาพอาจเอียง/จาง ลองสแกนใหม่ให้ชัดขึ้น หรือกด "เพิ่มรถเอง"`);
+            continue;
+          }
         }
         const res = parseQuoteText(text);
         if (res.docCheck) checks.push({ file: f.name, check: res.docCheck });
-        vendors.add(res.vendor);
+        vendors.add(res.doc_kind === "tax-invoice" ? `${res.vendor} (ใบกำกับภาษี)` : res.vendor);
+        if (res.doc_kind === "tax-invoice")
+          setNotice(`📄 "${f.name}" เป็น**ใบกำกับภาษี** ${res.invoice_no ? `เลขที่ ${res.invoice_no} ` : ""}— อ่าน SN + วันส่งรถจากใบให้แล้ว · ตรวจ SN กับตัวรถอีกครั้งก่อนบันทึก`);
         if (res.vendor === "unknown") { setNotice(`⚠️ "${f.name}" เดาผู้ผลิตไม่ได้`); continue; }
         if (res.vendor === "STAXX") { setNotice(`ℹ️ "${f.name}" เป็น STAXX — ใบ PDF ได้แค่รุ่น/ราคา · ใช้ไฟล์ Excel Serial List เพื่อดึง SN`); continue; }
         if (res.vehicles.length === 0) { setNotice(`⚠️ "${f.name}" (${res.vendor}) อ่านไม่พบรายการรถ — ตรวจไฟล์`); continue; }
@@ -148,7 +155,8 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
     status: finalStatus,
     created_at: today(),
     // "พร้อมขาย" ควรมีวันรับรถ → ถ้าไม่กรอกใช้วันนี้ · "รอรับ" ใช้ค่าที่กรอก (เว้นว่างได้ ค่อยเติมตอนรับ)
-    received_date: receivedDate || (finalStatus === "พร้อมขาย" ? today() : undefined),
+    // วันรับรถ: จากใบกำกับ (รายคัน) > ที่กรอกให้ทั้งล็อต > วันนี้ (เฉพาะที่ขึ้นขายเลย)
+    received_date: v.received_date || receivedDate || (finalStatus === "พร้อมขาย" ? today() : undefined),
     vehicle_category: categorizeModel(v.model),
     pi_no: v.pi_no || undefined,   // เว้นว่างสำหรับใบเสนอราคา — เติมเลข PI จริงทีหลัง
     custom_fields: {
@@ -156,6 +164,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
       ...(v.valve ? { Valve: v.valve } : {}),
       ...(v.fobUsd ? { "ราคา FOB (USD)": String(v.fobUsd) } : {}),
       ...(v.import_ref ? { "รหัสอ้างอิงนำเข้า": v.import_ref } : {}), // ref จริงจากเอกสาร (เช่น C20726201-001)
+      ...(v.invoice_no ? { "เลขที่ใบกำกับภาษี": v.invoice_no } : {}), // มาจากใบกำกับภาษี (ยืนยันของที่ส่งจริง)
       ...(orderDate ? { "วันสั่งรถ": orderDate } : {}), // วันสั่งซื้อรถ (ทั้งล็อต)
       // รถสั่งผลิต (KD): จำไว้ว่า SN ยังไม่มา + ช่วงที่คาดว่าจะได้ (หน้าสต็อกใช้ "วันคาดรับรถสั่งผลิต" แจ้งเตือนอยู่แล้ว)
       ...(isMto(v) ? {
@@ -229,7 +238,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
           <div>
             <h3 className="text-base font-bold text-slate-800 flex items-center gap-2"><FileText className="w-4 h-4 text-emerald-600" />นำเข้าจากใบเสนอราคา</h3>
-            <p className="text-xs text-slate-500 mt-0.5">อ่านไฟล์ในเครื่อง 100% · รองรับ HELI / HANGCHA / ROCKMAN (PDF) · STAXX (Excel Serial List){vendor ? ` · อ่านได้: ${vendor}` : ""}</p>
+            <p className="text-xs text-slate-500 mt-0.5">อ่านไฟล์ในเครื่อง 100% · รองรับ HELI / HANGCHA / ROCKMAN (PDF) · ใบกำกับภาษี HANGCHA · STAXX (Excel Serial List){vendor ? ` · อ่านได้: ${vendor}` : ""}</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl p-2 transition-all"><X className="w-5 h-5" /></button>
         </div>
@@ -270,7 +279,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                 <p className="text-sm font-semibold text-slate-600 mt-2">
                   {ocr ? `🔍 กำลังอ่านรูป "${ocr.name}"... ${ocr.pct}%` : busy ? "กำลังอ่าน..." : "ลากไฟล์มาวาง หรือกดเลือก"}
                 </p>
-                <p className="text-xs text-slate-400 mt-0.5">PDF (HELI/HANGCHA/ROCKMAN) · Excel Serial List (STAXX) · รูป JPEG/PNG (OCR ในเครื่อง) · หลายไฟล์พร้อมกันได้</p>
+                <p className="text-xs text-slate-400 mt-0.5">PDF ใบสั่งซื้อ/ใบกำกับภาษี (สแกนก็ได้ — OCR ในเครื่อง) · Excel Serial List (STAXX) · รูป JPEG/PNG · หลายไฟล์พร้อมกันได้</p>
                 {ocr && <p className="text-[11px] text-slate-400 mt-1">อ่านในเครื่อง 100% · ครั้งแรกโหลดภาษาไทยอาจนานสักครู่</p>}
               </label>
 

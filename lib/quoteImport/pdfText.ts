@@ -4,7 +4,8 @@
 
 // lazy-load pdfjs เฉพาะตอนใช้ (ก้อนใหญ่ ไม่อยากติด bundle หน้าอื่น)
 let _lib: typeof import("pdfjs-dist") | null = null;
-async function getPdfjs() {
+/** โหลด pdfjs ครั้งเดียวแล้วใช้ซ้ำ — ใช้ทั้งอ่าน text layer และเรนเดอร์หน้าไป OCR */
+export async function getPdfjs() {
   if (_lib) return _lib;
   const lib = await import("pdfjs-dist");
   // worker แยกไฟล์ — bundler แปลง URL นี้เป็น asset จริงตอน build

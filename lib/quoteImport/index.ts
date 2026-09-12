@@ -4,12 +4,15 @@ import { parseHeli } from "./heli";
 import { parseEp } from "./ep";
 import { parseRockman } from "./rockman";
 import { parseHangcha } from "./hangcha";
+import { parseHangchaTax, isTaxInvoice } from "./hangchaTax";
 import { parseStaxxSerialSheet, parseStaxxProforma, normalizeStaxxModel } from "./staxx";
 import { QuoteParseResult, QuoteVendor } from "./types";
 
 export * from "./types";
 export { isKdRef, hasKdMark, leadDaysFrom, KD_LEAD_MIN_DAYS, KD_LEAD_MAX_DAYS } from "./madeToOrder";
 export { readPdfText, looksScanned } from "./pdfText";
+export { readScannedPdfText, isPdfFile } from "./pdfOcr";
+export { isTaxInvoice } from "./hangchaTax";
 export { readExcelRows, isExcelFile } from "./excelRead";
 export { isImageFile, readImageText } from "./imageOcr";
 
@@ -19,13 +22,15 @@ export function detectVendor(text: string): QuoteVendor {
   if (/EP\s*Distribution|ep-ep\.com|ep-zl\.com|Quote\s*No\.?\s*:?\s*EPZL/i.test(text)) return "EP";
   if (/NINGBO|STAXX/i.test(text)) return "STAXX";
   if (/cnc-?moving|rockman/i.test(text)) return "ROCKMAN";
-  if (/HANGCHA/i.test(text)) return "HANGCHA";
+  if (/HANGCHA|หังชา/i.test(text)) return "HANGCHA";
   return "unknown";
 }
 
 /** อ่านข้อความใบเสนอราคา (PDF text layer) → รายการรถ */
 export function parseQuoteText(text: string): QuoteParseResult {
   const vendor = detectVendor(text);
+  // ใบกำกับภาษี = คนละโครงสร้างกับใบสั่งซื้อ (มี SN จริง + วันส่งรถ) → parser แยก
+  if (isTaxInvoice(text)) return parseHangchaTax(text);
   switch (vendor) {
     case "HELI":
       return parseHeli(text);

@@ -3,6 +3,9 @@
 /** ผู้ผลิตที่ระบบรองรับการอ่านใบเสนอราคา */
 export type QuoteVendor = "HELI" | "STAXX" | "ROCKMAN" | "HANGCHA" | "EP" | "unknown";
 
+/** ชนิดเอกสาร — ใบสั่งซื้อ (PI) กับใบกำกับภาษี อ่านคนละแบบ */
+export type QuoteDocKind = "proforma" | "tax-invoice";
+
 /** รถ 1 คันที่ parse ได้จากใบเสนอราคา — ก่อนคนตรวจยืนยันเข้าสต็อก */
 export interface ParsedVehicle {
   brand: string;
@@ -24,6 +27,8 @@ export interface ParsedVehicle {
   /** ระยะเวลาส่งมอบที่ "เอกสารเขียนไว้เอง" เช่น Delivery: 75-90 days → {min:75,max:90} */
   lead_days?: { min: number; max: number };
   import_ref?: string;      // รหัสอ้างอิงนำเข้าจริงจากเอกสาร (เช่น C20726201-001) — ไม่ใช่เลข PI
+  invoice_no?: string;      // เลขที่ใบกำกับภาษี (เช่น TR202605-109) — มีเฉพาะใบกำกับ ไม่มีในใบ PI
+  received_date?: string;   // วันส่งรถจริงตามใบกำกับ (ISO) — "ส่งรถวันที่ 23.05.2026"
   vendor: QuoteVendor;
   /** ฟิลด์ที่ parser ไม่มั่นใจ (ค่าว่าง/รูปแบบแปลก) — หน้าตรวจทานติดธงให้คนดู */
   flags?: string[];
@@ -43,6 +48,10 @@ export interface QuoteDocCheck {
 /** ผลการอ่านใบเสนอราคา 1 ไฟล์ */
 export interface QuoteParseResult {
   vendor: QuoteVendor;
+  /** ใบนี้เป็นใบสั่งซื้อหรือใบกำกับภาษี (ไม่ระบุ = ใบสั่งซื้อ) */
+  doc_kind?: QuoteDocKind;
+  /** เลขที่ใบกำกับภาษี (เฉพาะ doc_kind = tax-invoice) */
+  invoice_no?: string;
   pi_no?: string;
   quote_date?: string;
   vehicles: ParsedVehicle[];
