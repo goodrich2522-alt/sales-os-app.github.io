@@ -45,7 +45,7 @@ export function getRegion(province: string): "เหนือ" | "กลาง" 
 
 // Default configurable field options
 export const DEFAULT_CUSTOMER_TYPES = ["บุคคลทั่วไป", "นิติบุคคล", "ราชการ"];
-export const DEFAULT_VEHICLE_GROUPS = ["รถยก 4 ล้อ", "รถยก 3 ล้อ", "Reach Truck", "Order Picker", "Pallet Truck", "Stacker"];
+export const DEFAULT_VEHICLE_GROUPS = ["รถยก 4 ล้อ", "รถยก 3 ล้อ", "Reach Truck", "Reach Stacker", "Order Picker", "Pallet Truck", "Stacker"];
 export const DEFAULT_CONTROL_TYPES = ["แมนนวล", "เซมิออโต", "ออโต", "AC Drive", "IC Engine"];
 export const DEFAULT_PO_STATUSES = ["รอ PO", "PO ออกแล้ว", "รอชำระ", "ชำระแล้ว", "ยกเลิก"];
 export const DEFAULT_LOCATIONS = ["สำนักงานใหญ่", "สาขาชลบุรี", "สาขาขอนแก่น"];

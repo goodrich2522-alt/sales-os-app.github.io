@@ -697,12 +697,12 @@ export default function StockMain() {
     return [...m.values()].sort((a, b) => b.available - a.available);
   }, [byModel]);
 
-  // ── แจ้งเตือนเตรียมสั่งสินค้า — forklift เหลือ < 3 · ชนิดอื่น (ยกเว้นรีชทรัค) เหลือ < 15 ──
+  // ── แจ้งเตือนเตรียมสั่งสินค้า — forklift เหลือ < 3 · ชนิดอื่น (ยกเว้นรีชทรัค/รีชสแตกเกอร์) เหลือ < 15 ──
   const reorderAlerts = useMemo(() => {
     const g = new Map<string, { brand: string; sub: string; cat: string; ready: number; threshold: number }>();
     forklifts.forEach(f => {
       const cat = f.vehicle_category ?? "Forklift";
-      if (cat === "Reach Truck") return;               // รีชทรัคไม่ต้องแจ้ง
+      if (cat === "Reach Truck" || cat === "Reach Stacker") return;   // รีชทรัค/รีชสแตกเกอร์ ซื้อทีละคัน ไม่ต้องแจ้ง
       const isFork = cat === "Forklift";
       const mast = String((f.custom_fields as Record<string, unknown> | undefined)?.["MAST"] ?? "").trim();
       const brand = f.brand || "(ไม่ระบุ)";

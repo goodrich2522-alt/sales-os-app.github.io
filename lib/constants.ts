@@ -4,13 +4,14 @@
 import type { VehicleType } from "./types";
 
 // ── ชนิดรถ (vehicle_category) — label ไทย + icon ใช้ร่วม stock/sales ──────────
-// 5 ชนิด: รถยก / รถลากไฟฟ้า / รถลากมือ / รถยกสูง / รีชทรัค (จัดตามรหัสรุ่น ดู STOCK-SPEC-FIX-PLAN.md)
+// 6 ชนิด: รถยก / รถลากไฟฟ้า / รถลากมือ / รถยกสูง / รีชทรัค / รีชสแตกเกอร์ (จัดตามรหัสรุ่น ดู STOCK-SPEC-FIX-PLAN.md)
 export const VEHICLE_CATS: { key: VehicleType; label: string; icon: string }[] = [
   { key: "Forklift",              label: "โฟล์คลิฟท์", icon: "🚜" },
   { key: "Electric Pallet Truck", label: "รถลากไฟฟ้า", icon: "🔋" },
   { key: "Handlift",              label: "แฮนด์ลิฟท์", icon: "🔧" },
   { key: "Stacker",               label: "สแตกเกอร์",  icon: "📦" },
   { key: "Reach Truck",           label: "รีชทรัค",    icon: "🏗️" },
+  { key: "Reach Stacker",         label: "รีชสแตกเกอร์", icon: "🛗" },
 ];
 /** ตัวเลือกกรองชนิดรถ (รวม "all") */
 export type CatFilter = "all" | VehicleType;
@@ -20,7 +21,8 @@ export function categorizeModel(model: string): VehicleType {
   const m = (model || "").trim();
   if (/^(CPCD|CPD|EFL)/i.test(m)) return "Forklift"; // EFL = EP Electric Forklift
   if (/^(CBD|CBS)/i.test(m)) return "Electric Pallet Truck";
-  if (/^CQD/i.test(m)) return "Reach Truck";
+  if (/^CQDM/i.test(m)) return "Reach Stacker";  // CQDM = ยืนขับ มีแท่นยืน+แขนจับ (ต้องเช็คก่อน CQD)
+  if (/^CQD/i.test(m)) return "Reach Truck";      // CQD = Reach Truck นั่งขับ
   if (/^(CDD|EPS|PS|WMS|WDS|SDA|DG|PTS|PD|BFG)/i.test(m)) return "Stacker"; // DG = ครอบคลุม DGB + DG series (lift table)
   return "Handlift"; // BF/AC/PWH/WS/CNS/WH/HLD/HLS/EHLS ...
 }

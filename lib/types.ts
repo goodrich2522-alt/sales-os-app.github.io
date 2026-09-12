@@ -6,7 +6,8 @@ export type SaleStatus =
   | "จอง/รอโอน" | "จอง/โอนมัดจำแล้ว" | "รอจัดส่ง" | "รอไฟแนนซ์" | "ปิดการขาย/จัดส่งแล้ว"
   | "คืนสินค้า" // ลูกค้าคืนสินค้า — เก็บประวัติดีลไว้ แต่ตัดออกจากยอด/ค่าคอม (isClosedSale=false)
   | "มัดจำแล้ว" | "ขายแล้ว" | "จอง" | "รอผ่านไฟแนนซ์"; // (เก่า — backward compat)
-export type VehicleType = "Forklift" | "Stacker" | "Handlift" | "Electric Pallet Truck" | "Reach Truck";
+// Reach Stacker (CQDM) = รถยกสูงแบบยืนขับ มีแท่นยืน+แขนจับ — คนละประเภทกับ Reach Truck (CQD) ที่นั่งขับ
+export type VehicleType = "Forklift" | "Stacker" | "Handlift" | "Electric Pallet Truck" | "Reach Truck" | "Reach Stacker";
 export type ContactSource = "Line" | "Facebook" | "TikTok" | "โทร" | "Google" | "คนอื่นบอกต่อ";
 // ประเภทการขาย: ใช้จริง 2 ค่า (รถเช่า/รถใหม่) · คงค่าเดิมไว้เพื่อ backward compat ข้อมูลเก่า
 export type SaleType = "รถเช่า" | "รถใหม่" | "รถขายเต็มคัน" | "รถมือสอง" | "งานซ่อม";
