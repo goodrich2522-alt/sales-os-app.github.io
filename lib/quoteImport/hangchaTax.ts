@@ -11,9 +11,10 @@
 //    ทุกแถวจึงติดธงให้คนตรวจ SN กับตัวรถเสมอ (เคยเจอจริง M1BFS00963 → M1BFS009633)
 
 import { ParsedVehicle, QuoteParseResult, QuoteDocCheck } from "./types";
+import { modelRe, capacityFromModel } from "./models";
 
 // รุ่น HANGCHA (ชุดเดียวกับใบ PI)
-const MODEL_G = /\b((?:CPCD|CPD|CBD|CDD|CQD|CBS|XF)\d{1,3}[A-Z0-9-]*)/gi;
+// รหัสรุ่น: ใช้ความจำกลางที่ models.ts
 // SN 2 ตระกูล: ขึ้นต้นอักษร (M1BFS02022) · ขึ้นต้นตัวเลข (83BF10978)
 const SN_SHAPE = /^(?:[A-Z]{1,2}\d[A-Z]{2,4}\d{3,7}|\d{2}[A-Z]{2}\d{4,6})$/i;
 // "S/N : M1BFS02054 , M1BFS00963, M1BFS02060" (OCR อาจได้ S / N หรือ SN)
@@ -52,7 +53,7 @@ export function parseHangchaTax(rawText: string): QuoteParseResult {
     ?? text.match(/\b([A-Z]{2}\d{6}-\d{1,4})\b/)?.[1];
 
   // ── ตัดเป็นบล็อกละรายการ: เริ่มที่ชื่อรุ่นแต่ละครั้งที่เจอ (ใบกำกับ 1 แถว = 1 รุ่น) ──
-  const hits = [...text.matchAll(MODEL_G)];
+  const hits = [...text.matchAll(modelRe("gi"))];
   const blocks = hits.map((h, i) => ({
     model: h[1].toUpperCase(),
     seg: text.slice(h.index ?? 0, i + 1 < hits.length ? (hits[i + 1].index ?? text.length) : text.length),
@@ -83,8 +84,7 @@ export function parseHangchaTax(rawText: string): QuoteParseResult {
     const dm = b.seg.match(DELIVER_RE);
     const received_date = dm ? toIso(dm[1], dm[2], dm[3]) : undefined;
 
-    const capNum = b.model.match(/\d{1,3}/)?.[0];
-    const capacity = capNum ? `${(Number(capNum) / 10).toFixed(1)} ตัน` : undefined;
+    const capacity = capacityFromModel(b.model);
     const fuel = /diesel|ดีเซล/i.test(b.seg) || /^CPCD/i.test(b.model) ? "ดีเซล"
       : /electric|li-?ion|lithium|battery/i.test(b.seg) || /^C[BPQD]|^XF/i.test(b.model) ? "ไฟฟ้า" : undefined;
     const fork_length = b.seg.match(/Fork length\s*(\d{3,4})\s*(?:x\s*\d{3,4}\s*)?mm/i)?.[1];

@@ -4,6 +4,7 @@
 
 import { ParsedVehicle, QuoteParseResult, QuoteDocCheck } from "./types";
 import { isKdRef, hasKdMark, leadDaysFrom } from "./madeToOrder";
+import { modelRe, capacityFromModel } from "./models";
 
 /** พลังงานจากคำในเอกสาร (อังกฤษ) → ไทย */
 function fuelFromText(s: string): string | undefined {
@@ -29,7 +30,7 @@ function firstPrice(s: string): number | undefined {
 }
 
 // รุ่น HELI: รถยก CPCD/CPD/PCD · รถคลัง CBD/CDD/CQD/CBS (เรียงยาว→สั้นด้วย \d ต่อท้าย)
-const MODEL_RE = /\b((?:CPCD|CPD|PCD|CBD|CDD|CQD|CBS)\d{1,3}[A-Z0-9-]*)/gi;
+// รหัสรุ่น: ใช้ความจำกลางที่ models.ts — เจอรุ่นใหม่ที่อ่านไม่ออก ให้แก้ที่นั่นที่เดียว
 // SN HELI 2 รูปแบบ: 6ตัวเลข+1อักษร+4ตัวเลข (010353N6726) · 5ตัวเลข+3อักษร+3ตัวเลข (08015JVF574)
 const SN_RE = /\b(\d{4,6}[A-Z]{1,3}\d{3,4})\b/g;
 const MAST_RE = /\b(M\d{3}|ZSM\d{3,4}|ZM\d{3})\b/;
@@ -49,7 +50,7 @@ export function parseHeli(rawText: string): QuoteParseResult {
   const isKd = isKdRef(importRef, piFromRef) || hasKdMark(text);
   const lead = leadDaysFrom(text);          // "Delivery: 75-90 days" — ใช้แทนค่าคงที่ถ้าใบเขียนไว้
 
-  const modelMatches = [...text.matchAll(MODEL_RE)];
+  const modelMatches = [...text.matchAll(modelRe("gi"))];
   if (modelMatches.length === 0) {
     return { vendor: "HELI", pi_no: piFromRef, quote_date: date, vehicles: [], rawText };
   }
@@ -66,8 +67,7 @@ export function parseHeli(rawText: string): QuoteParseResult {
 
     const model = modelMatches[i][1].toUpperCase();
     baseModels.add(model.replace(/-.*$/, ""));
-    const num = model.match(/\d{2,3}/)?.[0];             // CBS15J → 15 → 1.5 ตัน
-    const capacity = num ? `${(Number(num) / 10).toFixed(1)} ตัน` : undefined;
+    const capacity = capacityFromModel(model);          // พิกัดยกจากรหัสรุ่น (models.ts)
     const fuel = fuelFromText(seg) ?? fuelFromModel(model);
     const mast = seg.match(MAST_RE)?.[1];
     const valve = seg.match(/(\d+)\s*Valves?/i)?.[1];

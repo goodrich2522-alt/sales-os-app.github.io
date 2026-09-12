@@ -100,7 +100,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
           setNotice(`📄 "${f.name}" เป็น**ใบกำกับภาษี** ${res.invoice_no ? `เลขที่ ${res.invoice_no} ` : ""}— อ่าน SN + วันส่งรถจากใบให้แล้ว · ตรวจ SN กับตัวรถอีกครั้งก่อนบันทึก`);
         if (res.vendor === "unknown") { setNotice(`⚠️ "${f.name}" เดาผู้ผลิตไม่ได้`); continue; }
         if (res.vendor === "STAXX") { setNotice(`ℹ️ "${f.name}" เป็น STAXX — ใบ PDF ได้แค่รุ่น/ราคา · ใช้ไฟล์ Excel Serial List เพื่อดึง SN`); continue; }
-        if (res.vehicles.length === 0) { setNotice(`⚠️ "${f.name}" (${res.vendor}) อ่านไม่พบรายการรถ — ตรวจไฟล์`); continue; }
+        if (res.vehicles.length === 0) { setNotice(`⚠️ "${f.name}" (${res.vendor}) อ่านข้อความได้แต่ไม่พบรายการรถ — มักเกิดจาก **รหัสรุ่นที่ระบบยังไม่รู้จัก** · แจ้งทีมพัฒนาพร้อมชื่อรุ่นในใบ (เพิ่มที่ lib/quoteImport/models.ts) หรือกด "เพิ่มรถเอง (กรอกมือ)" ไปก่อน`); continue; }
         all.push(...res.vehicles);
       } catch (e) {
         setOcr(null);

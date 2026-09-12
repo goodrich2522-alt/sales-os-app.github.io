@@ -16,9 +16,10 @@
 
 import { ParsedVehicle, QuoteParseResult, QuoteDocCheck } from "./types";
 import { isKdRef, hasKdMark, leadDaysFrom } from "./madeToOrder";
+import { modelRe, capacityFromModel } from "./models";
 
 // รุ่น HANGCHA: CPD(ไฟฟ้า)/CPCD(ดีเซล)/CBD/CDD/CQD/CBS/XF ตามด้วยพิกัด เช่น CPD25-XAJ4-I, CBD15-WS
-const MODEL_RE = /\b((?:CPCD|CPD|CBD|CDD|CQD|CBS|XF)\d{1,3}[A-Z0-9-]*)/i;
+// รหัสรุ่น: ใช้ความจำกลางที่ models.ts — เจอรุ่นใหม่ที่อ่านไม่ออก ให้แก้ที่นั่นที่เดียว
 // SN ของ HANGCHA มี 2 ตระกูล: ขึ้นต้นอักษร (M1BFS7150 · M1BDS410099) · ขึ้นต้นตัวเลข (83BF10978 · 15BF01722)
 const SN_SHAPE_G = /\b(?:[A-Z]{1,2}\d[A-Z]{2,4}\d{3,7}|\d{2}[A-Z]{2}\d{4,6})\b/gi;
 // ป้าย "Serial No. : SN1 , SN2" (บางใบ SN ตามหลังทันที)
@@ -45,7 +46,7 @@ function itemBlocks(text: string): Block[] {
   }
   if (blocks.length === 0) {
     // ไม่มีแถว SUBTOTAL → ตัดตามชื่อรุ่น (เริ่มบล็อกใหม่เมื่อเจอรุ่นที่ต่างจากเดิม)
-    const hits = [...text.matchAll(new RegExp(MODEL_RE.source, "gi"))];
+    const hits = [...text.matchAll(modelRe("gi"))];
     const starts: { model: string; at: number }[] = [];
     for (const h of hits) {
       const mm = h[1].toUpperCase();
@@ -60,7 +61,7 @@ function itemBlocks(text: string): Block[] {
   // เติมชื่อรุ่นให้แต่ละบล็อก · บล็อกที่ไม่มีชื่อรุ่น (ใบพิมพ์รุ่นครั้งเดียว) → ใช้รุ่นของบล็อกก่อนหน้า
   let last: string | undefined;
   for (const b of blocks) {
-    b.model = b.model ?? b.seg.match(MODEL_RE)?.[1]?.toUpperCase() ?? last;
+    b.model = b.model ?? b.seg.match(modelRe())?.[1]?.toUpperCase() ?? last;
     if (b.model) last = b.model;
   }
   return blocks.filter((b) => b.model);
@@ -106,8 +107,7 @@ export function parseHangcha(rawText: string): QuoteParseResult {
     const mastType = seg.match(/(Simplex|Duplex|Triplex)\s*mast/i)?.[1];
     const mast = mastM && mastType ? `${mastM}m ${mastType}` : mastType || (mastM ? `${mastM}m` : undefined);
     const height = mastM ? `${mastM} ม.` : undefined;
-    const capNum = model.match(/\d{1,3}/)?.[0];
-    const capacity = capNum ? `${(Number(capNum) / 10).toFixed(1)} ตัน` : undefined;
+    const capacity = capacityFromModel(model);
     const fuel = /diesel/i.test(seg) || /^CPCD/i.test(model) ? "ดีเซล"
       : /electric|li-?ion|lithium|battery/i.test(seg) || /^C[BPQD]|^XF/i.test(model) ? "ไฟฟ้า" : undefined;
 
