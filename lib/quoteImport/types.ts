@@ -19,6 +19,8 @@ export interface ParsedVehicle {
   fobUsd?: number;          // ราคา FOB (USD) จาก Proforma STAXX — ไม่ใช่ราคาทุนบาท
   qty?: number;             // จำนวนตาม Proforma (ก่อนแตกเป็นรายคัน)
   pi_no?: string;           // เลขสัญญา/PI/Contract (เว้นว่างสำหรับใบเสนอราคา — เติมเลข PI จริงทีหลัง)
+  /** รถสั่งผลิต (เลข PI/รหัสอ้างอิงลงท้าย KD) — ยังไม่มี SN · SN มาตอนผลิตเสร็จ ~60-90 วัน (ดู madeToOrder.ts) */
+  made_to_order?: boolean;
   import_ref?: string;      // รหัสอ้างอิงนำเข้าจริงจากเอกสาร (เช่น C20726201-001) — ไม่ใช่เลข PI
   vendor: QuoteVendor;
   /** ฟิลด์ที่ parser ไม่มั่นใจ (ค่าว่าง/รูปแบบแปลก) — หน้าตรวจทานติดธงให้คนดู */

@@ -7,6 +7,7 @@
 // ต้นทุน = SUBTOTAL(ก่อน VAT) ÷ จำนวนคันในกลุ่มเสมอ
 
 import { ParsedVehicle, QuoteParseResult } from "./types";
+import { isKdRef, hasKdMark } from "./madeToOrder";
 
 // รุ่น HANGCHA: CPD(ไฟฟ้า)/CPCD(ดีเซล)/CBD/CDD/CQD/CBS/XF ตามด้วยพิกัด เช่น CPD25-XAJ4-I, CBD15-WS
 const MODEL_RE = /\b((?:CPCD|CPD|CBD|CDD|CQD|CBS|XF)\d{1,3}[A-Z0-9-]*)/i;
@@ -23,6 +24,9 @@ export function parseHangcha(rawText: string): QuoteParseResult {
 
   const pi_no = text.match(/P\s*\/?\s*I\s*NO\.?\s*:?\s*(HCTH[-\w]+)/i)?.[1];
   const date = text.match(/DATE\s*:?\s*(\d{4}\.\d{2}\.\d{1,2})/i)?.[1];
+
+  // ใบ KD = รถสั่งผลิต → ยังไม่มี SN เป็นเรื่องปกติ (SN มาตอนผลิตเสร็จ ~60-90 วัน) ดู madeToOrder.ts
+  const isKd = isKdRef(pi_no) || hasKdMark(text);
 
   const firstModel = text.match(MODEL_RE)?.[1]?.toUpperCase();
   if (!firstModel) return { vendor: "HANGCHA", pi_no, quote_date: date, vehicles: [], rawText };
@@ -49,13 +53,14 @@ export function parseHangcha(rawText: string): QuoteParseResult {
 
   const build = (m: string, sn: string | undefined, unitCost?: number): ParsedVehicle => {
     const sp = specOf(m);
+    const kd = isKd && !sn;                        // ใบ KD + ยังไม่มี SN = รถสั่งผลิต
     const flags: string[] = [];
-    if (!sn) flags.push("ไม่พบ SN");
+    if (!sn && !kd) flags.push("ไม่พบ SN");        // KD ไม่ต้องเตือน — ยังไม่ถึงเวลามี SN
     if (!unitCost) flags.push("ไม่พบราคาทุน");
     if (multiModel) flags.push("ใบนี้มีหลายรุ่น — ตรวจจับคู่ SN/รุ่น/ราคาให้ถูก");
     return {
       brand: "HANGCHA", model: m, SN: sn, capacity: sp.capacity, fuel: sp.fuel, mast, fork_length, height,
-      cost_price: unitCost, pi_no, vendor: "HANGCHA",
+      cost_price: unitCost, pi_no, vendor: "HANGCHA", made_to_order: kd || undefined,
       flags: flags.length ? flags : undefined,
     };
   };

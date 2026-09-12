@@ -8,6 +8,7 @@ import { parseStaxxSerialSheet, parseStaxxProforma, normalizeStaxxModel } from "
 import { QuoteParseResult, QuoteVendor } from "./types";
 
 export * from "./types";
+export { isKdRef, hasKdMark, KD_LEAD_MIN_DAYS, KD_LEAD_MAX_DAYS } from "./madeToOrder";
 export { readPdfText, looksScanned } from "./pdfText";
 export { readExcelRows, isExcelFile } from "./excelRead";
 export { isImageFile, readImageText } from "./imageOcr";

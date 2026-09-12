@@ -44,3 +44,12 @@ export const specCode = (f: Partial<Forklift>): string =>
     .map(v => (v == null ? "" : String(v)).trim())
     .filter(Boolean)
     .join(" / ");
+
+/** บวกวันจากวันที่ ISO → ISO (คืน "" ถ้าวันที่ไม่ถูกรูปแบบ) — ใช้คำนวณวันคาดรับรถสั่งผลิต */
+export function addDays(iso: string | null | undefined, n: number): string {
+  const d = String(iso ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return "";
+  const dt = new Date(d + "T00:00:00");
+  dt.setDate(dt.getDate() + n);
+  return dt.toISOString().slice(0, 10);
+}

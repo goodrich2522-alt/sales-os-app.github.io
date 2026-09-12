@@ -3,6 +3,7 @@
 // ✅ แยกรุ่นตามรายการ: จับ SN เข้ากับรุ่นที่ถูกต้องต่อ item (เดิมเอารุ่นแรกไปใส่ทุกคัน → ผิดเมื่อใบมีหลายรุ่น)
 
 import { ParsedVehicle, QuoteParseResult } from "./types";
+import { isKdRef, hasKdMark } from "./madeToOrder";
 
 /** พลังงานจากคำในเอกสาร (อังกฤษ) → ไทย */
 function fuelFromText(s: string): string | undefined {
@@ -41,6 +42,9 @@ export function parseHeli(rawText: string): QuoteParseResult {
   const piFromRef = importRef ? "PI" + importRef.replace(/^[A-Z]\d{6,9}-/, "") : undefined;
   const date = text.match(/\b(\d{1,2}-[A-Z][a-z]{2}-\d{2,4})\b/)?.[1];
 
+  // ใบ KD = รถสั่งผลิต → ยังไม่มี SN เป็นเรื่องปกติ (ผู้ผลิตให้ SN ตอนผลิตเสร็จ ~60-90 วัน) ดู madeToOrder.ts
+  const isKd = isKdRef(importRef, piFromRef) || hasKdMark(text);
+
   const modelMatches = [...text.matchAll(MODEL_RE)];
   if (modelMatches.length === 0) {
     return { vendor: "HELI", pi_no: piFromRef, quote_date: date, vehicles: [], rawText };
@@ -66,13 +70,15 @@ export function parseHeli(rawText: string): QuoteParseResult {
     const sns = [...new Set([...seg.matchAll(SN_RE)].map((m) => m[1]))];
 
     const build = (sn?: string): ParsedVehicle => {
+      const kd = isKd && !sn;                      // ใบ KD + ยังไม่มี SN = รถสั่งผลิต
       const flags: string[] = [];
-      if (!sn) flags.push("ไม่พบ SN");
+      if (!sn && !kd) flags.push("ไม่พบ SN");       // KD ไม่ต้องเตือน — ยังไม่ถึงเวลามี SN
       if (!cost) flags.push("ไม่พบราคาทุน");
       if (!mast) flags.push("ไม่พบ MAST");
       return {
         brand: "HELI", model, SN: sn, capacity, fuel, mast, valve,
         cost_price: cost, pi_no: piFromRef, import_ref: importRef, vendor: "HELI",
+        made_to_order: kd || undefined,
         flags: flags.length ? flags : undefined,
       };
     };

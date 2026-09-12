@@ -5,11 +5,11 @@
 
 import { useState } from "react";
 import { useApp } from "@/lib/AppContext";
-import { readPdfText, looksScanned, parseQuoteText, detectVendor, parseQuoteExcel, readExcelRows, isExcelFile, isImageFile, readImageText, normalizeStaxxModel, ParsedVehicle } from "@/lib/quoteImport";
+import { readPdfText, looksScanned, parseQuoteText, detectVendor, parseQuoteExcel, readExcelRows, isExcelFile, isImageFile, readImageText, normalizeStaxxModel, ParsedVehicle, KD_LEAD_MIN_DAYS, KD_LEAD_MAX_DAYS } from "@/lib/quoteImport";
 import { categorizeModel } from "@/lib/constants";
-import { today } from "@/lib/format";
+import { today, addDays, thaiDate } from "@/lib/format";
 import { Forklift } from "@/lib/types";
-import { X, Upload, FileText, CheckCircle, AlertTriangle, Loader2, Trash2, Undo2, Plus } from "lucide-react";
+import { X, Upload, FileText, CheckCircle, AlertTriangle, Loader2, Trash2, Undo2, Plus, Factory } from "lucide-react";
 
 export function QuoteImport({ onClose }: { onClose: () => void }) {
   const { addForkliftsBulk, forklifts, deleteForklift } = useApp();
@@ -20,6 +20,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
   const [notice, setNotice] = useState("");
   const [saved, setSaved] = useState(0);
   const [skipped, setSkipped] = useState(0);         // จำนวนที่ข้ามเพราะ SN ซ้ำ
+  const [savedMto, setSavedMto] = useState(0);       // จำนวนรถสั่งผลิต (KD) ที่บันทึกจริง
   const [skippedSns, setSkippedSns] = useState<string[]>([]); // SN ที่ถูกข้าม (โชว์ให้เห็นชัด)
   const [importedIds, setImportedIds] = useState<string[]>([]); // สำหรับปุ่มยกเลิกการนำเข้า
   const [done, setDone] = useState(false);           // บันทึกเสร็จแล้ว → แสดงหน้าสรุป
@@ -28,6 +29,16 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
   const [lotStatus, setLotStatus] = useState<"auto" | "รอรับ" | "พร้อมขาย">("auto"); // สถานะเริ่มต้นของทั้งล็อต (auto = ตามแบรนด์)
 
   const existingIds = new Set(forklifts.map((f) => String(f.id)));
+
+  // ── รถสั่งผลิต (KD) — ใบที่เลข PI ลงท้าย KD ยังไม่มี SN ตอนนี้ · SN มาตอนผลิตเสร็จ 60-90 วัน ──
+  const isMto = (v: ParsedVehicle) => !!v.made_to_order && !String(v.SN ?? "").trim();
+  const kdBase = orderDate || today();                              // นับจากวันสั่งรถ (ไม่กรอก = วันนี้)
+  const kdFrom = addDays(kdBase, KD_LEAD_MIN_DAYS);
+  const kdTo   = addDays(kdBase, KD_LEAD_MAX_DAYS);
+  const mtoCount = rows.filter(isMto).length;
+  // ติ๊กเอง — เผื่อเอกสารไม่ได้เขียน KD ไว้ หรือ parser อ่านไม่เจอ
+  const toggleMto = (i: number) =>
+    setRows((r) => r.map((v, j) => (j === i ? { ...v, made_to_order: !v.made_to_order } : v)));
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -108,7 +119,9 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
 
   const toForklift = (v: ParsedVehicle, i: number): Forklift => {
     // สถานะเริ่มต้น: เลือกเอง (รอรับ/พร้อมขาย) หรือ auto → STAXX/CNC มาเป็นตู้ทั้งล็อต ลงวันรับแล้วขายได้เลย · แบรนด์อื่นต้องผ่านผู้รับรถ = รอรับ
+    // รถสั่งผลิต (KD) → สถานะ "สั่งผลิต" (ยังไม่เข้าคลัง · รอ SN) เว้นแต่ผู้ใช้เลือกสถานะล็อตเอง
     const finalStatus = lotStatus !== "auto" ? lotStatus
+      : isMto(v) ? "สั่งผลิต"
       : ((/^(STAXX|CNC)$/i.test(v.brand) && receivedDate) ? "พร้อมขาย" : "รอรับ");
     return {
     // id: SN จริง > เลข PI ที่คนกรอก > รหัสอ้างอิงนำเข้าจริง > "PI" (กันชนกัน + ไม่โชว์ "#PI" เปล่า)
@@ -130,6 +143,12 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
       ...(v.fobUsd ? { "ราคา FOB (USD)": String(v.fobUsd) } : {}),
       ...(v.import_ref ? { "รหัสอ้างอิงนำเข้า": v.import_ref } : {}), // ref จริงจากเอกสาร (เช่น C20726201-001)
       ...(orderDate ? { "วันสั่งรถ": orderDate } : {}), // วันสั่งซื้อรถ (ทั้งล็อต)
+      // รถสั่งผลิต (KD): จำไว้ว่า SN ยังไม่มา + ช่วงที่คาดว่าจะได้ (หน้าสต็อกใช้ "วันคาดรับรถสั่งผลิต" แจ้งเตือนอยู่แล้ว)
+      ...(isMto(v) ? {
+        "รถสั่งผลิต (KD)": "ใช่",
+        ...(kdFrom ? { "คาดได้ SN เร็วสุด": kdFrom } : {}),
+        ...(kdTo ? { "วันคาดรับรถสั่งผลิต": kdTo } : {}),
+      } : {}),
       ชีตต้นทาง: "ใบเสนอราคา",
     },
   } as Forklift;
@@ -140,12 +159,15 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
     const seen = new Set(existingIds);
     const fresh: Forklift[] = [];
     const skipSns: string[] = [];
+    let mto = 0;
     rows.forEach((v, i) => {
       const fk = toForklift(v, i);
       if (seen.has(fk.id)) { skipSns.push(String(fk.id)); return; }
       seen.add(fk.id);
+      if (isMto(v)) mto++;
       fresh.push(fk);
     });
+    setSavedMto(mto);
     if (fresh.length) addForkliftsBulk(fresh);
     setImportedIds(fresh.map((f) => String(f.id)));
     setSkipped(skipSns.length);
@@ -182,6 +204,11 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
             <div className="text-center py-10 text-emerald-700">
               <CheckCircle className="w-12 h-12 mx-auto mb-3" />
               <p className="font-bold">บันทึกเข้าสต็อกแล้ว {saved} คัน{lotStatus === "รอรับ" ? " (สถานะ \"รอรับ\")" : lotStatus === "พร้อมขาย" ? " (สถานะ \"พร้อมขาย\")" : " (สถานะตามแบรนด์)"}</p>
+              {savedMto > 0 && (
+                <p className="text-sm text-violet-700 mt-1">
+                  ในนี้เป็น <b>รถสั่งผลิต (KD) {savedMto} คัน</b> — สถานะ &ldquo;สั่งผลิต&rdquo; · คาดได้ SN {kdFrom ? thaiDate(kdFrom) : "?"} ถึง {kdTo ? thaiDate(kdTo) : "?"}
+                </p>
+              )}
               {skipped > 0 && (
                 <p className="text-sm text-amber-600 mt-1">
                   ข้าม {skipped} คัน — <b>SN ซ้ำกับที่มีในสต็อกแล้ว</b> ไม่นำเข้าซ้ำ<br />
@@ -228,6 +255,18 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                     <p className="text-sm font-semibold text-slate-700">อ่านได้ {rows.length} คัน — ตรวจ/แก้ก่อนบันทึก</p>
                     {dupCount > 0 && <span className="text-xs text-red-600 font-semibold">⚠️ {dupCount} คัน SN ซ้ำกับที่มีในสต็อก</span>}
                   </div>
+                  {/* รถสั่งผลิต (KD) — เอกสารลงท้าย KD = ยังไม่มี SN ตอนนี้ ไม่ใช่ข้อผิดพลาด */}
+                  {mtoCount > 0 && (
+                    <div className="text-xs bg-violet-50 border border-violet-200 text-violet-800 rounded-xl px-3 py-2.5 flex items-start gap-2">
+                      <Factory className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <span>
+                        พบ <b>รถสั่งผลิต (KD) {mtoCount} คัน</b> — เอกสารลงท้าย &ldquo;KD&rdquo; คือรถที่ยังไม่ผลิต จึงยังไม่มี SN (ไม่ใช่ข้อผิดพลาด)<br />
+                        บันทึกด้วยสถานะ <b>&ldquo;สั่งผลิต&rdquo;</b> · คาดได้ SN <b>{kdFrom ? thaiDate(kdFrom) : "?"}</b> ถึง <b>{kdTo ? thaiDate(kdTo) : "?"}</b> ({KD_LEAD_MIN_DAYS}-{KD_LEAD_MAX_DAYS} วันจาก{orderDate ? "วันสั่งรถ" : "วันนี้"})
+                        {!orderDate && <> · <b>กรอก &ldquo;วันสั่งซื้อรถ&rdquo; ด้านบน</b>ให้ตรง วันคาดรับจะแม่นขึ้น</>}<br />
+                        <span className="text-violet-600">เมื่อรถผลิตเสร็จ ผู้ขนส่งกรอก SN จริงตอนรับรถ ระบบเปลี่ยนรหัสให้เอง</span>
+                      </span>
+                    </div>
+                  )}
                   {/* วันสั่งซื้อรถ — วันที่สั่งซื้อ/ออก PI (ใส่ให้ทั้งล็อต ไม่บังคับ) */}
                   <div className="flex items-center gap-2 bg-violet-50/60 border border-violet-100 rounded-xl px-3 py-2.5">
                     <label className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 whitespace-nowrap">🏭 วันสั่งซื้อรถ (ทั้งล็อต)</label>
@@ -258,22 +297,31 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                       ))}
                     </div>
                     <span className="text-[11px] text-slate-400">
-                      {lotStatus === "auto" ? "STAXX/CNC (มีวันรับ) → พร้อมขาย · แบรนด์อื่น → รอรับ"
+                      {lotStatus === "auto" ? "รถสั่งผลิต (KD) → สั่งผลิต · STAXX/CNC (มีวันรับ) → พร้อมขาย · แบรนด์อื่น → รอรับ"
                         : lotStatus === "รอรับ" ? "ทุกคันต้องให้ผู้รับรถถ่ายรูปรับก่อนขึ้นขาย"
                         : "ทุกคันขึ้นขายทันที (ข้ามขั้นตอนรับรถ) — ใช้เมื่อรถอยู่ในคลังพร้อมแล้ว"}
+                      {lotStatus !== "auto" && mtoCount > 0 && <b className="text-violet-600"> · รถสั่งผลิต {mtoCount} คันจะใช้สถานะนี้แทน &ldquo;สั่งผลิต&rdquo;</b>}
                     </span>
                   </div>
                   {/* การ์ดต่อคัน — ช่องกว้าง มีป้ายกำกับ อ่าน/แก้ง่ายกว่าตารางแคบ */}
                   <div className="flex flex-col gap-3">
                     {rows.map((v, i) => {
                       const dup = existingIds.has(toForklift(v, i).id);
+                      const mto = isMto(v);
+                      const flags = (v.flags ?? []).filter((f) => !(mto && f === "ไม่พบ SN")); // KD ยังไม่มี SN = ปกติ
                       return (
-                        <div key={i} className={`rounded-2xl border p-4 ${dup ? "border-red-300 bg-red-50/50" : "border-slate-200 bg-slate-50/60"}`}>
+                        <div key={i} className={`rounded-2xl border p-4 ${dup ? "border-red-300 bg-red-50/50" : mto ? "border-violet-200 bg-violet-50/40" : "border-slate-200 bg-slate-50/60"}`}>
                           <div className="flex items-center justify-between gap-2 mb-3">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-sm font-bold text-slate-700">คันที่ {i + 1}</span>
                               {v.model?.trim() && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">{categorizeModel(v.model)}</span>}
                               {dup && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">⚠️ SN ซ้ำในสต็อก</span>}
+                              {/* กดสลับได้ — เผื่อเอกสารไม่ได้เขียน KD ไว้ หรืออ่านไม่เจอ · คันที่มี SN แล้วไม่ต้องถาม */}
+                              {!String(v.SN ?? "").trim() && <button onClick={() => toggleMto(i)}
+                                title={v.made_to_order ? "กดเพื่อยกเลิกการเป็นรถสั่งผลิต" : "กดถ้าคันนี้เป็นรถสั่งผลิต (SN มาทีหลัง)"}
+                                className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border transition-all ${mto ? "bg-violet-100 text-violet-700 border-violet-200 hover:bg-violet-200" : "bg-white text-slate-400 border-slate-200 hover:border-violet-300 hover:text-violet-600"}`}>
+                                {mto ? "🏭 รถสั่งผลิต (KD) · SN มาทีหลัง" : "🏭 ตั้งเป็นรถสั่งผลิต"}
+                              </button>}
                             </div>
                             <button onClick={() => removeRow(i)} title="ลบคันนี้"
                               className="text-slate-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition-colors flex-shrink-0"><Trash2 className="w-4 h-4" /></button>
@@ -281,7 +329,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                             <Field label="แบรนด์" val={v.brand ?? ""} onChange={(x) => edit(i, "brand", x)} ph="เช่น HELI" />
                             <Field label="รุ่น" val={v.model} onChange={(x) => edit(i, "model", x)} ph="เช่น CDD12J-M300" />
-                            <Field label="SN (เลขตัวถัง)" val={v.SN ?? ""} onChange={(x) => edit(i, "SN", x)} ph="SN จริงจากรถ" />
+                            <Field label={mto ? "SN (รอผลิต — เว้นว่างได้)" : "SN (เลขตัวถัง)"} val={v.SN ?? ""} onChange={(x) => edit(i, "SN", x)} ph={mto ? "SN มาตอนรถผลิตเสร็จ" : "SN จริงจากรถ"} />
                             <Field label="เลข PI" val={v.pi_no ?? ""} onChange={(x) => edit(i, "pi_no", x)} ph="เว้นได้ถ้ายังไม่มี" />
                             <Field label="พิกัดยก" val={v.capacity ?? ""} onChange={(x) => edit(i, "capacity", x)} ph="เช่น 2.5 ตัน" />
                             <Field label="พลังงาน" val={v.fuel ?? ""} onChange={(x) => edit(i, "fuel", x)} ph="ดีเซล / ไฟฟ้า" />
@@ -289,7 +337,8 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                             <Field label="Valve" val={v.valve ?? ""} onChange={(x) => edit(i, "valve", x)} ph="เช่น 3 วาล์ว" />
                             <Field label="ราคาทุน" val={v.cost_price ? String(v.cost_price) : ""} onChange={(x) => edit(i, "cost_price", x)} ph="บาท" />
                           </div>
-                          {v.flags?.length ? <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-2.5">⚠️ {v.flags.join(" · ")}</p> : null}
+                          {mto && <p className="text-[11px] text-violet-700 bg-violet-50 border border-violet-200 rounded-lg px-2.5 py-1.5 mt-2.5">🏭 รถสั่งผลิต — บันทึกเป็นสถานะ &ldquo;สั่งผลิต&rdquo; · คาดได้ SN {kdFrom ? thaiDate(kdFrom) : "?"} ถึง {kdTo ? thaiDate(kdTo) : "?"} · รหัสชั่วคราว {v.pi_no || v.import_ref || "PI"}#{i + 1}</p>}
+                          {flags.length ? <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-2.5">⚠️ {flags.join(" · ")}</p> : null}
                         </div>
                       );
                     })}
