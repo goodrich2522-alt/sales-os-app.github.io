@@ -31,7 +31,20 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
   const [orderDate, setOrderDate] = useState("");       // วันสั่งซื้อรถ (วันสั่งรถ) — ใส่ให้ทั้งล็อตตอนบันทึก
   const [lotStatus, setLotStatus] = useState<"auto" | "รอรับ" | "พร้อมขาย">("auto"); // สถานะเริ่มต้นของทั้งล็อต (auto = ตามแบรนด์)
 
-  const existingIds = new Set(forklifts.map((f) => String(f.id)));
+  // ── รหัส + SN ที่มีอยู่แล้ว — ต้องเช็ค **ทั้งสองอย่าง** ──
+  // เดิมเช็คแค่ id → รถที่ SN มาทีหลังจะมี id เป็นรหัสชั่วคราว (เช่น PI#6) แต่ SN = M1BDS410099
+  // นำเข้าใบที่มี SN เดิมอีกครั้งจึงไม่ชน id → สร้างรถซ้ำได้ (เจอจริง 12 ก.ย. 2569 · 2 คัน)
+  const taken = new Set<string>();
+  forklifts.forEach((f) => {
+    const id = String(f.id ?? "").trim().toUpperCase(); if (id) taken.add(id);
+    const sn = String(f.SN ?? "").trim().toUpperCase(); if (sn) taken.add(sn);
+  });
+  /** แถวนี้ซ้ำกับรถที่มีในสต็อกแล้วไหม (เทียบทั้งรหัสและ SN) */
+  const dupKeyOf = (v: ParsedVehicle, i: number) => {
+    const sn = String(v.SN ?? "").trim().toUpperCase();
+    const id = String(toForklift(v, i).id).trim().toUpperCase();
+    return taken.has(id) ? id : sn && taken.has(sn) ? sn : null;
+  };
 
   // ── รถสั่งผลิต (KD) — ใบที่เลข PI ลงท้าย KD ยังไม่มี SN ตอนนี้ · SN มาตอนผลิตเสร็จ 60-90 วัน ──
   const isMto = (v: ParsedVehicle) => !!v.made_to_order && !String(v.SN ?? "").trim();
@@ -178,15 +191,17 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
   };
 
   const save = () => {
-    // กัน SN ซ้ำ: ถ้ามีในสต็อกแล้ว หรือซ้ำภายในชุดเดียวกัน → ข้าม (ไม่นำเข้าครั้งที่ 2)
-    const seen = new Set(existingIds);
+    // กันรถซ้ำ: ซ้ำกับในสต็อก (เทียบทั้งรหัสและ SN) หรือซ้ำกันเองในชุด → ข้าม (ไม่นำเข้าครั้งที่ 2)
+    const seen = new Set(taken);
     const fresh: Forklift[] = [];
     const skipSns: string[] = [];
     let mto = 0;
     rows.forEach((v, i) => {
       const fk = toForklift(v, i);
-      if (seen.has(fk.id)) { skipSns.push(String(fk.id)); return; }
-      seen.add(fk.id);
+      const id = String(fk.id).trim().toUpperCase();
+      const sn = String(fk.SN ?? "").trim().toUpperCase();
+      if (seen.has(id) || (sn && seen.has(sn))) { skipSns.push(sn || String(fk.id)); return; }
+      seen.add(id); if (sn) seen.add(sn);
       if (isMto(v)) mto++;
       fresh.push(fk);
     });
@@ -206,7 +221,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
     onClose();
   };
 
-  const dupCount = rows.filter((v, i) => existingIds.has(toForklift(v, i).id)).length;
+  const dupCount = rows.filter((v, i) => dupKeyOf(v, i) !== null).length;
 
   // รถที่ยังไม่มี SN ต้องมีเลข PI — รหัสชั่วคราวคือ <เลข PI>#<ลำดับ> (SN-RULES ข้อ 5.ข)
   // ไม่มีทั้ง SN และ PI → รหัสจะกลายเป็น "PI#N" ซึ่งชนกันข้ามใบ (เจอของจริงในระบบ 4 คัน)
@@ -256,8 +271,8 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
               )}
               {skipped > 0 && (
                 <p className="text-sm text-amber-600 mt-1">
-                  ข้าม {skipped} คัน — <b>SN ซ้ำกับที่มีในสต็อกแล้ว</b> ไม่นำเข้าซ้ำ<br />
-                  <span className="text-xs text-amber-500">SN ที่ข้าม: {skippedSns.join(", ")}</span>
+                  ข้าม {skipped} คัน — <b>มีในสต็อกอยู่แล้ว</b> (เทียบทั้งรหัสรถและ SN) ไม่นำเข้าซ้ำ<br />
+                  <span className="text-xs text-amber-500">ที่ข้าม: {skippedSns.join(", ")}</span>
                 </p>
               )}
               <div className="flex items-center justify-center gap-2 mt-5">
@@ -402,7 +417,8 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                   {/* การ์ดต่อคัน — ช่องกว้าง มีป้ายกำกับ อ่าน/แก้ง่ายกว่าตารางแคบ */}
                   <div className="flex flex-col gap-3">
                     {rows.map((v, i) => {
-                      const dup = existingIds.has(toForklift(v, i).id);
+                      const dupKey = dupKeyOf(v, i);
+                      const dup = dupKey !== null;
                       const mto = isMto(v);
                       const flags = (v.flags ?? []).filter((f) => !(mto && f === "ไม่พบ SN")); // KD ยังไม่มี SN = ปกติ
                       return (
@@ -411,7 +427,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-sm font-bold text-slate-700">คันที่ {i + 1}</span>
                               {v.model?.trim() && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">{categorizeModel(v.model)}</span>}
-                              {dup && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">⚠️ SN ซ้ำในสต็อก</span>}
+                              {dup && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700" title={`ตรงกับ ${dupKey} ที่มีในสต็อกแล้ว`}>⚠️ มีในสต็อกแล้ว ({dupKey})</span>}
                               {/* กดสลับได้ — เผื่อเอกสารไม่ได้เขียน KD ไว้ หรืออ่านไม่เจอ · คันที่มี SN แล้วไม่ต้องถาม */}
                               {!String(v.SN ?? "").trim() && <button onClick={() => toggleMto(i)}
                                 title={v.made_to_order ? "กดเพื่อยกเลิกการเป็นรถสั่งผลิต" : "กดถ้าคันนี้เป็นรถสั่งผลิต (SN มาทีหลัง)"}
