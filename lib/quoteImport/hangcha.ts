@@ -1,39 +1,76 @@
 // lib/quoteImport/hangcha.ts — อ่านใบ HANGCHA Proforma Invoice / Sales Contract (text layer)
-// รองรับ 3 ฟอร์แมต:
-//  A: มี label "MODEL NO. 型号 X" · "Serial No. X" (มี SN) → แตกตาม SN
-//  B: รุ่นฝังในสเปก · หลายบรรทัด "Serial No. : SN1, SN2  qty  subtotal 7% vat total" (ราคาต่อกลุ่ม)
-//  C: ไม่มี SN — หลายรุ่น + จำนวน (qty) (รถสั่งผลิต) · แถวราคา "qty subtotal 7% vat total" ต่อรุ่น
-//     → แตกเป็นรายคันตามจำนวน · ต้นทุน = subtotal(ก่อน VAT) ÷ จำนวน · จับคู่รุ่นตามลำดับที่พบ
-// ต้นทุน = SUBTOTAL(ก่อน VAT) ÷ จำนวนคันในกลุ่มเสมอ
+//
+// ⭐ กติกา (12 ก.ย. 2569 — แก้บั๊กใบ HCTH-BFL2026091402):
+//    **1 รุ่น = 1 บล็อกในเอกสาร** — อ่าน SN/จำนวน/ราคาจาก "บล็อกของรุ่นนั้น" เท่านั้น
+//    ห้ามเอารุ่นแรก (firstModel) ไปใส่รถทุกคันเด็ดขาด
+//    เดิมทำแบบนั้น → ใบที่มี CBD15-WS 4 คัน + CBD20-WS 6 คัน กลายเป็น CBD15-WS อย่างเดียว จำนวนเพี้ยน
+//
+// ในบล็อกของแต่ละรุ่นมีได้ 2 กรณี:
+//    มี "Serial No." + SN จริง → แตกตาม SN (รถพร้อมส่ง)
+//    ไม่มี SN                  → แตกตาม QUANTITY (รถสั่งผลิต · ดู madeToOrder.ts)
+// ต้นทุนต่อคัน = SUBTOTAL (ก่อน VAT) ÷ จำนวนในบล็อกนั้นเสมอ
+//
+// ทุกใบคืน docCheck = "จำนวนที่เอกสารระบุเอง" ให้หน้าตรวจทานเทียบกับที่อ่านได้จริง (กันอ่านเกิน/ขาดเงียบๆ)
 
-import { ParsedVehicle, QuoteParseResult } from "./types";
+import { ParsedVehicle, QuoteParseResult, QuoteDocCheck } from "./types";
 import { isKdRef, hasKdMark } from "./madeToOrder";
 
 // รุ่น HANGCHA: CPD(ไฟฟ้า)/CPCD(ดีเซล)/CBD/CDD/CQD/CBS/XF ตามด้วยพิกัด เช่น CPD25-XAJ4-I, CBD15-WS
-const MODEL_RE = /\b((?:CPCD|CPD|CBD|CDD|CQD|CBS|XF)\d{1,3}[A-Z0-9-]*)/i;
 const MODEL_RE_G = /\b((?:CPCD|CPD|CBD|CDD|CQD|CBS|XF)\d{1,3}[A-Z0-9-]*)/gi;
-// กลุ่ม serial+ราคา (format B): "Serial No. : SN1 , SN2 , SN3   3   57,000.00 7%"
-const GROUP_RE = /Serial No\.?\s*:?\s*([A-Z0-9][A-Z0-9,\s]*?)\s+(\d{1,3})\s+([\d,]+\.\d{2})\s*7\s*%/gi;
-// serial เดี่ยว (format A / fallback)
-const SN_RE = /Serial No\.?\s*:?\s*([A-Z0-9]{6,})/gi;
-// แถวราคาต่อกลุ่ม (format C): "<qty>  <subtotal>.00  7%" — qty + ยอดก่อน VAT (ยอดรวมท้ายใบไม่มี 7% ต่อท้าย จึงไม่ชน)
+// SN ของ HANGCHA: อักษร+เลข+อักษร+เลข เช่น M1BFS7150 · M1BDS410099 · M1BFS07113
+const SN_SHAPE_G = /\b([A-Z]{1,2}\d[A-Z]{2,4}\d{3,7})\b/gi;
+// ป้าย "Serial No. : SN1 , SN2 , SN3" (รับหลายตัวต่อป้าย)
+const SN_LABEL_G = /Serial\s*No\.?\s*:?\s*((?:[A-Z0-9]{6,}\s*[,;]?\s*)+)/gi;
+// แถวสรุปต่อรุ่น "SUBTOTAL 小计 : 4 70,000.00" — (จำนวน, ยอดก่อน VAT)
+const SUBTOTAL_RE = /SUBTOTAL[^\dA-Za-z]{0,16}(\d{1,3})\s+([\d,]+\.\d{2})/i;
+// แถวสินค้า "17,500.00  4  70,000.00" — (ราคาต่อหน่วย, จำนวน, ยอดรวม) ใช้เมื่อไม่มีแถว SUBTOTAL
+const ITEM_ROW_RE = /([\d,]+\.\d{2})\s+(\d{1,3})\s+([\d,]+\.\d{2})/;
+// ยอดรวมท้ายใบ "TOTAL AMOUNT 总计 : 10 232,190.00" — มี "จำนวนรวม" นำหน้ายอด (แถวต่อรุ่นไม่มีจำนวน จึงไม่ชน)
+const GRAND_RE = /TOTAL\s*AMOUNT[^\d]{0,16}(\d{1,3})\s+([\d,]+\.\d{2})/gi;
+// สำรอง: กลุ่มราคาแบบ "<จำนวน> <ยอดก่อน VAT> 7%" (ใช้เมื่อแยกบล็อกตามรุ่นไม่ได้)
 const PRICE_GROUP_RE = /(\d{1,3})\s+([\d,]+\.\d{2})\s+7\s*%/g;
+
+const num = (s: string | undefined) => (s ? Number(s.replace(/,/g, "")) || undefined : undefined);
+
+/** ตัดเอกสารเป็นบล็อกละรุ่น — เริ่มบล็อกใหม่เมื่อ "เจอรุ่นที่ต่างจากบล็อกก่อนหน้า" */
+function modelBlocks(text: string): { model: string; seg: string }[] {
+  const hits = [...text.matchAll(MODEL_RE_G)];
+  const blocks: { model: string; start: number }[] = [];
+  for (const h of hits) {
+    const m = h[1].toUpperCase();
+    if (blocks.length && blocks[blocks.length - 1].model === m) continue; // รุ่นเดิมซ้ำในบล็อกเดียวกัน
+    blocks.push({ model: m, start: h.index ?? 0 });
+  }
+  return blocks.map((b, i) => ({
+    model: b.model,
+    seg: text.slice(b.start, i + 1 < blocks.length ? blocks[i + 1].start : text.length),
+  }));
+}
+
+/** SN ในบล็อกนี้ — เอาจากป้าย "Serial No." ก่อน ถ้าไม่มีค่อยหาจากรูปแบบ SN */
+function snsIn(seg: string): string[] {
+  const out: string[] = [];
+  for (const m of seg.matchAll(SN_LABEL_G)) {
+    for (const t of m[1].split(/[,;\s]+/)) {
+      const s = t.trim().toUpperCase();
+      // ต้องมีทั้งตัวอักษรและตัวเลข — กันคำหัวตารางอย่าง SUBTOTAL/QUANTITY หลุดมาเป็น SN
+      if (s.length >= 6 && /[A-Z]/.test(s) && /\d/.test(s)) out.push(s);
+    }
+  }
+  if (out.length === 0) {
+    for (const m of seg.matchAll(SN_SHAPE_G)) out.push(m[1].toUpperCase());
+  }
+  return [...new Set(out)];
+}
 
 export function parseHangcha(rawText: string): QuoteParseResult {
   const text = rawText.replace(/\s+/g, " ").trim();
 
-  const pi_no = text.match(/P\s*\/?\s*I\s*NO\.?\s*:?\s*(HCTH[-\w]+)/i)?.[1];
+  const pi_no = text.match(/P\s*\/?\s*I\s*NO\.?\s*:?\s*([A-Z]{2,}[-\w]+)/i)?.[1];
   const date = text.match(/DATE\s*:?\s*(\d{4}\.\d{2}\.\d{1,2})/i)?.[1];
 
   // ใบ KD = รถสั่งผลิต → ยังไม่มี SN เป็นเรื่องปกติ (SN มาตอนผลิตเสร็จ ~60-90 วัน) ดู madeToOrder.ts
   const isKd = isKdRef(pi_no) || hasKdMark(text);
-
-  const firstModel = text.match(MODEL_RE)?.[1]?.toUpperCase();
-  if (!firstModel) return { vendor: "HANGCHA", pi_no, quote_date: date, vehicles: [], rawText };
-
-  // รุ่นทั้งหมด (unique เรียงตามลำดับที่พบ) + เช็คว่าใบนี้มีหลายรุ่นไหม
-  const modelsU = [...new Set([...text.matchAll(MODEL_RE_G)].map((m) => m[1].toUpperCase()))];
-  const multiModel = new Set(modelsU.map((m) => m.replace(/-.*/, ""))).size > 1 || modelsU.length > 1;
 
   // สเปกร่วมทั้งใบ (ปกติเหมือนกันทุกรุ่น)
   const fork_length = text.match(/Fork length\s*(\d{3,4})\s*(?:x\s*\d{3,4}\s*)?mm/i)?.[1];
@@ -43,21 +80,23 @@ export function parseHangcha(rawText: string): QuoteParseResult {
   const mast = heightM && mastType ? `${heightM}m ${mastType}` : mastType || undefined;
 
   // สเปกเฉพาะรุ่น (พิกัดยก/พลังงาน) — จากตัวเลข+prefix ของรุ่นนั้น
-  const specOf = (m: string) => {
-    const num = m.match(/\d{1,3}/)?.[0];
-    const capacity = num ? `${(Number(num) / 10).toFixed(1)} ตัน` : undefined;
-    const fuel = /diesel/i.test(text) || /^CPCD/i.test(m) ? "ดีเซล"
-      : /electric|li-?ion|lithium|battery/i.test(text) || /^C[BPQD]|^XF/i.test(m) ? "ไฟฟ้า" : undefined;
+  const specOf = (m: string, seg: string) => {
+    const n = m.match(/\d{1,3}/)?.[0];
+    const capacity = n ? `${(Number(n) / 10).toFixed(1)} ตัน` : undefined;
+    const fuel = /diesel/i.test(seg) || /^CPCD/i.test(m) ? "ดีเซล"
+      : /electric|li-?ion|lithium|battery/i.test(seg) || /^C[BPQD]|^XF/i.test(m) ? "ไฟฟ้า" : undefined;
     return { capacity, fuel };
   };
 
-  const build = (m: string, sn: string | undefined, unitCost?: number): ParsedVehicle => {
-    const sp = specOf(m);
+  const vehicles: ParsedVehicle[] = [];
+  const byModel: QuoteDocCheck["byModel"] = [];
+
+  const build = (m: string, seg: string, sn: string | undefined, unitCost: number | undefined, extra: string[] = []): ParsedVehicle => {
+    const sp = specOf(m, seg);
     const kd = isKd && !sn;                        // ใบ KD + ยังไม่มี SN = รถสั่งผลิต
-    const flags: string[] = [];
+    const flags = [...extra];
     if (!sn && !kd) flags.push("ไม่พบ SN");        // KD ไม่ต้องเตือน — ยังไม่ถึงเวลามี SN
     if (!unitCost) flags.push("ไม่พบราคาทุน");
-    if (multiModel) flags.push("ใบนี้มีหลายรุ่น — ตรวจจับคู่ SN/รุ่น/ราคาให้ถูก");
     return {
       brand: "HANGCHA", model: m, SN: sn, capacity: sp.capacity, fuel: sp.fuel, mast, fork_length, height,
       cost_price: unitCost, pi_no, vendor: "HANGCHA", made_to_order: kd || undefined,
@@ -65,46 +104,57 @@ export function parseHangcha(rawText: string): QuoteParseResult {
     };
   };
 
-  const vehicles: ParsedVehicle[] = [];
+  const blocks = modelBlocks(text);
+  if (blocks.length === 0) {
+    return { vendor: "HANGCHA", pi_no, quote_date: date, vehicles: [], rawText };
+  }
 
-  // format B: หลายกลุ่ม serial+qty+ราคา (มี SN)
-  const groups = [...text.matchAll(GROUP_RE)];
-  const labeled = [...new Set([...text.matchAll(SN_RE)].map((m) => m[1]))];
+  // ── อ่านทีละบล็อก (= ทีละรุ่น) ──
+  let readAnyQty = false;
+  for (const { model, seg } of blocks) {
+    const sub = seg.match(SUBTOTAL_RE);
+    const row = sub ? null : seg.match(ITEM_ROW_RE);
+    const docQty = Number(sub?.[1] ?? row?.[2]) || undefined;      // จำนวนที่เอกสารระบุสำหรับรุ่นนี้
+    const subtotal = num(sub?.[2] ?? row?.[3]);                    // ยอดก่อน VAT ของรุ่นนี้
+    if (docQty) readAnyQty = true;
 
-  if (groups.length) {
-    for (const g of groups) {
-      const sns = g[1].split(/[,\s]+/).map((s) => s.trim()).filter((s) => /^[A-Z0-9]{6,}$/i.test(s));
-      const qty = Number(g[2]) || sns.length || 1;
-      const subtotal = Number(g[3].replace(/,/g, "")) || undefined;
-      const unit = subtotal ? Math.round(subtotal / Math.max(qty, 1)) : undefined;
-      (sns.length ? sns : [undefined]).forEach((sn) => vehicles.push(build(firstModel, sn, unit)));
-    }
-  } else if (labeled.length) {
-    // format A: มี label "Serial No." + SN จริง (ขยายจับ token รูปเดียวกันทั้งเอกสาร)
-    let sns = labeled;
-    const shapeRe = new RegExp("\\b" + labeled[0].split("").map((c) => (/[0-9]/.test(c) ? "[0-9]" : "[A-Za-z]")).join("") + "\\b", "g");
-    const found = [...new Set((text.match(shapeRe) || []).map((s) => s.toUpperCase()))]
-      .filter((s) => /[A-Z]/i.test(s) && /\d/.test(s));
-    if (found.length >= labeled.length) sns = found;
-    const subtotal = Number(text.match(/([\d,]+\.\d{2})\s*7\s*%/)?.[1]?.replace(/,/g, "")) || undefined;
-    const unit = subtotal ? Math.round(subtotal / Math.max(sns.length, 1)) : undefined;
-    sns.forEach((sn) => vehicles.push(build(firstModel, sn, unit)));
-  } else {
-    // format C: ไม่มี SN — รถสั่งผลิต · แตกตาม qty · จับคู่รุ่นตามลำดับกับแถวราคา
-    const priceGroups = [...text.matchAll(PRICE_GROUP_RE)].map((g) => ({
-      qty: Number(g[1]) || 1, subtotal: Number(g[2].replace(/,/g, "")) || undefined,
-    }));
+    const sns = snsIn(seg);
+    const count = sns.length || docQty || 1;
+    // ต้นทุนต่อคัน = SUBTOTAL ÷ "จำนวนตามเอกสาร" (ไม่ใช่จำนวน SN ที่อ่านได้ — SN มาไม่ครบจะทำให้ราคาเพี้ยน)
+    const unit = subtotal ? Math.round(subtotal / Math.max(docQty ?? count, 1)) : num(row?.[1]);
+
+    // SN ที่อ่านได้ไม่เท่าจำนวนในเอกสาร → ติดธงให้คนตรวจ (ไม่เดาเอง)
+    const extra = sns.length && docQty && sns.length !== docQty
+      ? [`เอกสารระบุ ${docQty} คัน แต่พบ SN ${sns.length} ตัว — ตรวจกับใบจริง`] : [];
+
+    if (sns.length) sns.forEach((sn) => vehicles.push(build(model, seg, sn, unit, extra)));
+    else for (let k = 0; k < count; k++) vehicles.push(build(model, seg, undefined, unit, extra));
+
+    byModel.push({ model, qty: docQty ?? count, subtotal });
+  }
+
+  // ── สำรอง: แยกจำนวนตามบล็อกไม่ได้เลย (ข้อความเรียงผิดคอลัมน์) → ใช้กลุ่มราคาจับคู่ตามลำดับ ──
+  if (!readAnyQty && vehicles.every((v) => !v.SN)) {
+    const priceGroups = [...text.matchAll(PRICE_GROUP_RE)].map((g) => ({ qty: Number(g[1]) || 1, subtotal: num(g[2]) }));
     if (priceGroups.length) {
+      vehicles.length = 0; byModel.length = 0;
       priceGroups.forEach((g, i) => {
-        const m = modelsU[i] ?? modelsU[modelsU.length - 1] ?? firstModel; // จับคู่รุ่นตามลำดับ (เกินก็ใช้รุ่นสุดท้าย)
+        const b = blocks[i] ?? blocks[blocks.length - 1];
         const unit = g.subtotal ? Math.round(g.subtotal / Math.max(g.qty, 1)) : undefined;
-        for (let k = 0; k < g.qty; k++) vehicles.push(build(m, undefined, unit));
+        for (let k = 0; k < g.qty; k++)
+          vehicles.push(build(b.model, b.seg, undefined, unit, ["อ่านจำนวนจากลำดับแถวราคา — ตรวจรุ่น/จำนวนกับใบจริง"]));
+        byModel.push({ model: b.model, qty: g.qty, subtotal: g.subtotal });
       });
-    } else {
-      // ไม่พบแถวราคาเลย → อย่างน้อยคืนรุ่นละ 1 คัน (ให้ผู้ใช้กรอกเอง)
-      (modelsU.length ? modelsU : [firstModel]).forEach((m) => vehicles.push(build(m, undefined, undefined)));
     }
   }
 
-  return { vendor: "HANGCHA", pi_no, quote_date: date, vehicles, rawText };
+  // ยอดรวมท้ายใบ — ใช้เทียบว่าอ่านครบทั้งใบไหม
+  const grand = [...text.matchAll(GRAND_RE)].pop();
+  const docCheck: QuoteDocCheck = {
+    totalQty: Number(grand?.[1]) || undefined,
+    totalAmount: num(grand?.[2]),
+    byModel,
+  };
+
+  return { vendor: "HANGCHA", pi_no, quote_date: date, vehicles, rawText, docCheck };
 }

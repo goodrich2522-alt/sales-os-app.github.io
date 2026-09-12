@@ -27,6 +27,17 @@ export interface ParsedVehicle {
   flags?: string[];
 }
 
+/**
+ * "จำนวนที่เอกสารระบุเอง" — ใช้เทียบกับจำนวนที่ parser อ่านได้จริง
+ * กติกา (12 ก.ย. 2569): ทุกครั้งที่นำเข้า ต้องเทียบตัวเลขนี้กับของจริงก่อนบันทึก (ดู QUOTE-IMPORT-RULES.md)
+ */
+export interface QuoteDocCheck {
+  totalQty?: number;        // จำนวนรวมทั้งใบ (แถว TOTAL AMOUNT ท้ายเอกสาร)
+  totalAmount?: number;     // ยอดเงินรวมทั้งใบ
+  /** จำนวน + ยอดก่อน VAT ที่เอกสารระบุ แยกตามรุ่น */
+  byModel: { model: string; qty: number; subtotal?: number }[];
+}
+
 /** ผลการอ่านใบเสนอราคา 1 ไฟล์ */
 export interface QuoteParseResult {
   vendor: QuoteVendor;
@@ -35,4 +46,6 @@ export interface QuoteParseResult {
   vehicles: ParsedVehicle[];
   /** ข้อความดิบที่อ่านได้ — เผื่อคนตรวจเทียบกับต้นฉบับ */
   rawText: string;
+  /** จำนวนที่เอกสารระบุ — หน้าตรวจทานเอาไปเทียบกับที่อ่านได้ (parser ที่ยังไม่รองรับจะเว้นว่าง) */
+  docCheck?: QuoteDocCheck;
 }

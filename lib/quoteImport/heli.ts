@@ -2,7 +2,7 @@
 // 1 ใบมีได้หลายรายการ (item) · แต่ละรายการ = 1 รุ่น + SN หลายตัว + ราคา/เสา/พิกัดของตัวเอง
 // ✅ แยกรุ่นตามรายการ: จับ SN เข้ากับรุ่นที่ถูกต้องต่อ item (เดิมเอารุ่นแรกไปใส่ทุกคัน → ผิดเมื่อใบมีหลายรุ่น)
 
-import { ParsedVehicle, QuoteParseResult } from "./types";
+import { ParsedVehicle, QuoteParseResult, QuoteDocCheck } from "./types";
 import { isKdRef, hasKdMark } from "./madeToOrder";
 
 /** พลังงานจากคำในเอกสาร (อังกฤษ) → ไทย */
@@ -33,6 +33,9 @@ const MODEL_RE = /\b((?:CPCD|CPD|PCD|CBD|CDD|CQD|CBS)\d{1,3}[A-Z0-9-]*)/gi;
 // SN HELI 2 รูปแบบ: 6ตัวเลข+1อักษร+4ตัวเลข (010353N6726) · 5ตัวเลข+3อักษร+3ตัวเลข (08015JVF574)
 const SN_RE = /\b(\d{4,6}[A-Z]{1,3}\d{3,4})\b/g;
 const MAST_RE = /\b(M\d{3}|ZSM\d{3,4}|ZM\d{3})\b/;
+// คอลัมน์จำนวนในเอกสาร: เลขที่ขั้นระหว่าง "ราคาต่อหน่วย THB x.xx" กับ "ยอดรวม THB y.yy"
+// (เดิมอ่านเฉพาะรายการที่ไม่มี SN · ตอนนี้อ่านทุกรายการเพื่อเอาไปเทียบจำนวนกับที่ parse ได้)
+const QTY_RE = /THB\s*[\d,]+\.\d{2}\s+(\d{1,3})\s+THB\s*[\d,]+\.\d{2}/;
 
 export function parseHeli(rawText: string): QuoteParseResult {
   const text = rawText.replace(/\s+/g, " ").trim();
@@ -52,6 +55,7 @@ export function parseHeli(rawText: string): QuoteParseResult {
 
   const vehicles: ParsedVehicle[] = [];
   const baseModels = new Set<string>();
+  const byModel: QuoteDocCheck["byModel"] = [];   // จำนวนที่ "คอลัมน์ QUANTITY ในเอกสาร" ระบุ — ใช้เทียบกับที่อ่านได้
 
   // แต่ละ item = ช่วงข้อความตั้งแต่รุ่นนี้ ถึงก่อนรุ่นถัดไป → มี SN/ราคา/เสาของ item นั้นเอง
   for (let i = 0; i < modelMatches.length; i++) {
@@ -68,6 +72,8 @@ export function parseHeli(rawText: string): QuoteParseResult {
     const valve = seg.match(/(\d+)\s*Valves?/i)?.[1];
     const cost = firstPrice(seg);
     const sns = [...new Set([...seg.matchAll(SN_RE)].map((m) => m[1]))];
+    const docQty = Number(seg.match(QTY_RE)?.[1]) || undefined;   // จำนวนที่เอกสารระบุสำหรับรายการนี้
+    if (docQty) byModel.push({ model, qty: docQty, subtotal: cost ? cost * docQty : undefined });
 
     const build = (sn?: string): ParsedVehicle => {
       const kd = isKd && !sn;                      // ใบ KD + ยังไม่มี SN = รถสั่งผลิต
@@ -84,12 +90,16 @@ export function parseHeli(rawText: string): QuoteParseResult {
     };
 
     if (sns.length === 0) {
-      // ไม่มี SN (รถสั่งผลิต/ยังไม่ออก SN) → อ่านจำนวน (qty) ท้ายรายการ สร้าง placeholder ตามจำนวน
-      // qty = เลขระหว่าง "ราคาต่อหน่วย THB x.xx" กับ "ยอดรวม THB y.yy" (เดิม [\d.,\s]+ greedy กิน qty → ได้ 0 ผิด)
-      const qty = Number(seg.match(/THB\s*[\d,]+\.\d{2}\s+(\d{1,3})\s+THB\s*[\d,]+\.\d{2}/)?.[1]) || 1;
-      for (let q = 0; q < qty; q++) vehicles.push(build(undefined));
+      // ไม่มี SN (รถสั่งผลิต/ยังไม่ออก SN) → แตก placeholder ตามจำนวนในเอกสาร (QTY_RE)
+      for (let q = 0; q < (docQty ?? 1); q++) vehicles.push(build(undefined));
     } else {
-      sns.forEach((sn) => vehicles.push(build(sn)));
+      // จำนวน SN ไม่ตรงคอลัมน์จำนวนในเอกสาร → ไม่เดาเอง ติดธงให้คนตรวจกับใบจริง
+      const warn = docQty && docQty !== sns.length ? `เอกสารระบุ ${docQty} คัน แต่พบ SN ${sns.length} ตัว — ตรวจกับใบจริง` : null;
+      sns.forEach((sn) => {
+        const v = build(sn);
+        if (warn) v.flags = [...(v.flags ?? []), warn];
+        vehicles.push(v);
+      });
     }
   }
 
@@ -98,5 +108,7 @@ export function parseHeli(rawText: string): QuoteParseResult {
     vehicles.forEach((v) => (v.flags = [...(v.flags ?? []), "ใบนี้มีหลายรุ่น — ระบบแยกให้แล้ว ตรวจว่าจับคู่ SN ถูก"]));
   }
 
-  return { vendor: "HELI", pi_no: piFromRef, quote_date: date, vehicles, rawText };
+  const docCheck: QuoteDocCheck | undefined = byModel.length
+    ? { byModel, totalQty: byModel.reduce((n, b) => n + b.qty, 0) } : undefined;
+  return { vendor: "HELI", pi_no: piFromRef, quote_date: date, vehicles, rawText, docCheck };
 }

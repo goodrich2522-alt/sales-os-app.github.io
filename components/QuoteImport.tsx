@@ -5,11 +5,11 @@
 
 import { useState } from "react";
 import { useApp } from "@/lib/AppContext";
-import { readPdfText, looksScanned, parseQuoteText, detectVendor, parseQuoteExcel, readExcelRows, isExcelFile, isImageFile, readImageText, normalizeStaxxModel, ParsedVehicle, KD_LEAD_MIN_DAYS, KD_LEAD_MAX_DAYS } from "@/lib/quoteImport";
+import { readPdfText, looksScanned, parseQuoteText, detectVendor, parseQuoteExcel, readExcelRows, isExcelFile, isImageFile, readImageText, normalizeStaxxModel, ParsedVehicle, QuoteDocCheck, KD_LEAD_MIN_DAYS, KD_LEAD_MAX_DAYS } from "@/lib/quoteImport";
 import { categorizeModel } from "@/lib/constants";
 import { today, addDays, thaiDate } from "@/lib/format";
 import { Forklift } from "@/lib/types";
-import { X, Upload, FileText, CheckCircle, AlertTriangle, Loader2, Trash2, Undo2, Plus, Factory } from "lucide-react";
+import { X, Upload, FileText, CheckCircle, AlertTriangle, Loader2, Trash2, Undo2, Plus, Factory, ClipboardCheck } from "lucide-react";
 
 export function QuoteImport({ onClose }: { onClose: () => void }) {
   const { addForkliftsBulk, forklifts, deleteForklift } = useApp();
@@ -21,6 +21,9 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
   const [saved, setSaved] = useState(0);
   const [skipped, setSkipped] = useState(0);         // จำนวนที่ข้ามเพราะ SN ซ้ำ
   const [savedMto, setSavedMto] = useState(0);       // จำนวนรถสั่งผลิต (KD) ที่บันทึกจริง
+  // ── ด่านตรวจจำนวน: เก็บ "จำนวนที่เอกสารระบุ" ของแต่ละไฟล์ ไว้เทียบกับที่อ่านได้ ──
+  const [docChecks, setDocChecks] = useState<{ file: string; check: QuoteDocCheck }[]>([]);
+  const [confirmDiff, setConfirmDiff] = useState(false); // ติ๊กยืนยันเมื่อจำนวนไม่ตรงกับเอกสาร
   const [skippedSns, setSkippedSns] = useState<string[]>([]); // SN ที่ถูกข้าม (โชว์ให้เห็นชัด)
   const [importedIds, setImportedIds] = useState<string[]>([]); // สำหรับปุ่มยกเลิกการนำเข้า
   const [done, setDone] = useState(false);           // บันทึกเสร็จแล้ว → แสดงหน้าสรุป
@@ -45,6 +48,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
     setBusy(true); setNotice("");
     const all: ParsedVehicle[] = [];
     const vendors = new Set<string>();
+    const checks: { file: string; check: QuoteDocCheck }[] = [];   // จำนวนที่เอกสารแต่ละใบระบุเอง
     for (const f of Array.from(files)) {
       try {
         // Excel = Serial No. List ของ STAXX (มี SN จริงเป็นช่วง)
@@ -61,6 +65,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
           const text = await readImageText(f, (pct) => setOcr({ name: f.name, pct }));
           setOcr(null);
           const res = parseQuoteText(text);
+          if (res.docCheck) checks.push({ file: f.name, check: res.docCheck });
           vendors.add(res.vendor === "unknown" ? "รูป (OCR)" : `${res.vendor} (OCR)`);
           if (res.vehicles.length === 0) {
             setNotice(`ℹ️ "${f.name}" อ่าน (OCR) แล้วยังจับรายการรถอัตโนมัติไม่ได้ (ภาพเอียง/ไม่ชัด/ตารางซับซ้อน) — กด "เพิ่มรถเอง" แล้วกรอกจากรูปได้`);
@@ -78,6 +83,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
           continue;
         }
         const res = parseQuoteText(text);
+        if (res.docCheck) checks.push({ file: f.name, check: res.docCheck });
         vendors.add(res.vendor);
         if (res.vendor === "unknown") { setNotice(`⚠️ "${f.name}" เดาผู้ผลิตไม่ได้`); continue; }
         if (res.vendor === "STAXX") { setNotice(`ℹ️ "${f.name}" เป็น STAXX — ใบ PDF ได้แค่รุ่น/ราคา · ใช้ไฟล์ Excel Serial List เพื่อดึง SN`); continue; }
@@ -106,6 +112,8 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
     }
     // ราคาทุนอิงตามเอกสารแต่ละชุดเท่านั้น (ไม่ดึงจากสต็อกเดิม เพราะต้นทุนขึ้นลงตามตลาด)
     setVendor([...vendors].join(", "));
+    setDocChecks(checks);
+    setConfirmDiff(false);
     setRows([...others, ...staxxRows]);
     setOcr(null);
     setBusy(false);
@@ -185,6 +193,24 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
 
   const dupCount = rows.filter((v, i) => existingIds.has(toForklift(v, i).id)).length;
 
+  // ── ด่านตรวจจำนวน (กติกา 12 ก.ย. 2569) — เทียบ "เอกสารระบุ" กับ "ระบบอ่านได้" ทีละรุ่น ──
+  // เหตุที่ต้องมี: ใบ HCTH-BFL2026091402 (2 รุ่น) เคยถูกอ่านเป็นรุ่นเดียวจำนวนผิด แล้วบันทึกลงสต็อกเงียบๆ
+  const MODEL_UNSET = "(ไม่ระบุรุ่น)";
+  const keyOf = (m: string) => (String(m ?? "").trim().toUpperCase() || MODEL_UNSET);
+  const expected = new Map<string, number>();      // เอกสารระบุ
+  docChecks.forEach((d) => d.check.byModel.forEach((b) => expected.set(keyOf(b.model), (expected.get(keyOf(b.model)) ?? 0) + b.qty)));
+  const actual = new Map<string, number>();        // ที่อ่านได้/แก้แล้วในตาราง
+  rows.forEach((v) => actual.set(keyOf(v.model), (actual.get(keyOf(v.model)) ?? 0) + 1));
+  const verifyRows = [...new Set([...expected.keys(), ...actual.keys()])]
+    .map((m) => ({ model: m, exp: expected.get(m), act: actual.get(m) ?? 0 }))
+    .sort((a, b) => a.model.localeCompare(b.model));
+  const hasDocQty = expected.size > 0;
+  // จำนวนรวมที่เอกสารระบุ (รวมทุกไฟล์) — ใช้ก็ต่อเมื่อทุกใบบอกยอดรวมมา
+  const docTotal = docChecks.length && docChecks.every((d) => d.check.totalQty)
+    ? docChecks.reduce((n, d) => n + (d.check.totalQty ?? 0), 0) : undefined;
+  const countMismatch = hasDocQty && (verifyRows.some((r) => r.exp != null && r.exp !== r.act) || (docTotal != null && docTotal !== rows.length));
+  const blockSave = countMismatch && !confirmDiff;
+
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -255,6 +281,57 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                     <p className="text-sm font-semibold text-slate-700">อ่านได้ {rows.length} คัน — ตรวจ/แก้ก่อนบันทึก</p>
                     {dupCount > 0 && <span className="text-xs text-red-600 font-semibold">⚠️ {dupCount} คัน SN ซ้ำกับที่มีในสต็อก</span>}
                   </div>
+                  {/* ── ด่านตรวจจำนวน: เทียบกับตัวเลขในเอกสาร ก่อนบันทึกทุกครั้ง (กติกา 12 ก.ย. 2569) ── */}
+                  <div className={`rounded-xl border px-3 py-2.5 ${countMismatch ? "bg-red-50 border-red-300" : hasDocQty ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-200"}`}>
+                    <p className={`text-xs font-bold flex items-center gap-1.5 ${countMismatch ? "text-red-700" : hasDocQty ? "text-emerald-700" : "text-slate-600"}`}>
+                      <ClipboardCheck className="w-4 h-4" />
+                      ตรวจจำนวนกับเอกสาร
+                      {hasDocQty
+                        ? countMismatch ? " — ⛔ ไม่ตรง! ตรวจก่อนบันทึก" : " — ✓ ตรงกับเอกสารทุกรุ่น"
+                        : " — เอกสารนี้ไม่ได้ระบุจำนวนรวม กรุณานับเทียบกับใบจริงเอง"}
+                    </p>
+                    <div className="overflow-x-auto mt-2">
+                      <table className="text-[11px] w-full min-w-[320px]">
+                        <thead className="text-slate-500">
+                          <tr><th className="text-left font-semibold py-1">รุ่น</th><th className="text-right font-semibold px-3">เอกสารระบุ</th><th className="text-right font-semibold px-3">ระบบอ่านได้</th><th className="text-left font-semibold pl-2">ผล</th></tr>
+                        </thead>
+                        <tbody>
+                          {verifyRows.map((r) => {
+                            const bad = r.exp != null && r.exp !== r.act;
+                            return (
+                              <tr key={r.model} className={bad ? "text-red-700 font-semibold" : "text-slate-700"}>
+                                <td className="py-0.5">{r.model}</td>
+                                <td className="text-right px-3">{r.exp ?? "—"}</td>
+                                <td className="text-right px-3">{r.act}</td>
+                                <td className="pl-2">{r.exp == null ? "ตรวจเอง" : bad ? `⛔ ต่าง ${r.act - r.exp > 0 ? "+" : ""}${r.act - r.exp}` : "✓"}</td>
+                              </tr>
+                            );
+                          })}
+                          {docTotal != null && (
+                            <tr className={`border-t border-slate-200 ${docTotal !== rows.length ? "text-red-700 font-bold" : "text-slate-700 font-semibold"}`}>
+                              <td className="py-1">รวมทั้งใบ</td><td className="text-right px-3">{docTotal}</td><td className="text-right px-3">{rows.length}</td>
+                              <td className="pl-2">{docTotal === rows.length ? "✓" : "⛔ ไม่ตรง"}</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    {docChecks.length > 0 && (
+                      <p className="text-[10px] text-slate-400 mt-1.5">
+                        อ้างอิงจาก: {docChecks.map((d) => `${d.file}${d.check.totalAmount ? ` (รวม ${d.check.totalAmount.toLocaleString("th-TH")} บาท)` : ""}`).join(" · ")}
+                      </p>
+                    )}
+                    {countMismatch && (
+                      <div className="mt-2 text-[11px] text-red-700">
+                        <p><b>ห้ามบันทึกจนกว่าจะตรวจ</b> — แก้จำนวนให้ตรงเอกสารด้วยปุ่ม &ldquo;เพิ่มรถเอง&rdquo; / ถังขยะบนการ์ด แล้วตัวเลขจะอัปเดตเอง</p>
+                        <label className="flex items-center gap-1.5 mt-1.5 font-semibold cursor-pointer">
+                          <input type="checkbox" checked={confirmDiff} onChange={(e) => setConfirmDiff(e.target.checked)} className="w-3.5 h-3.5 accent-red-600" />
+                          ตรวจกับใบจริงแล้ว ยืนยันบันทึกทั้งที่จำนวนไม่ตรง
+                        </label>
+                      </div>
+                    )}
+                  </div>
+
                   {/* รถสั่งผลิต (KD) — เอกสารลงท้าย KD = ยังไม่มี SN ตอนนี้ ไม่ใช่ข้อผิดพลาด */}
                   {mtoCount > 0 && (
                     <div className="text-xs bg-violet-50 border border-violet-200 text-violet-800 rounded-xl px-3 py-2.5 flex items-start gap-2">
@@ -353,8 +430,10 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
         {!done && rows.length > 0 && (
           <div className="px-6 py-3 border-t border-slate-100 flex-shrink-0 flex justify-end gap-2">
             <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100">ยกเลิก</button>
-            <button onClick={save} className="px-5 py-2 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5">
-              <CheckCircle className="w-4 h-4" />บันทึกเข้าสต็อก {rows.length} คัน
+            <button onClick={save} disabled={blockSave}
+              title={blockSave ? "จำนวนไม่ตรงกับเอกสาร — ตรวจและติ๊กยืนยันก่อน" : undefined}
+              className={`px-5 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 ${blockSave ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}>
+              <CheckCircle className="w-4 h-4" />{blockSave ? "จำนวนไม่ตรงเอกสาร — ตรวจก่อน" : `บันทึกเข้าสต็อก ${rows.length} คัน`}
             </button>
           </div>
         )}
