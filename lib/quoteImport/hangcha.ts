@@ -35,6 +35,25 @@ const num = (s: string | undefined) => (s ? Number(s.replace(/,/g, "")) || undef
 
 interface Block { seg: string; model?: string; qty?: number; subtotal?: number }
 
+/**
+ * สำรอง: หา "จำนวนรวมทั้งใบ" จากคอลัมน์ตัวเลขล้วน — ใช้ตอนจับคู่รุ่น↔จำนวนไม่ได้
+ * เก็บคู่ (จำนวน, ยอดเงิน) ตามลำดับ · คู่สุดท้ายคือยอดรวม ถ้าจำนวนเท่ากับผลรวมของคู่ก่อนหน้า
+ * เช่น (4, 70,000) (6, 147,000) (10, 232,190) → 4+6 = 10 ✓ คืน 10
+ * ตรวจสอบตัวเองด้วยการบวก จึงไม่หลงจับเลขมั่ว
+ */
+function totalFromNumberColumn(text: string): number | undefined {
+  const seen: { qty: number; amt: number }[] = [];
+  for (const m of text.matchAll(/(\d{1,3})\s+([\d,]+\.\d{2})/g)) {
+    const qty = Number(m[1]), amt = num(m[2]);
+    if (!qty || !amt) continue;
+    if (!seen.some((u) => u.qty === qty && u.amt === amt)) seen.push({ qty, amt });
+  }
+  if (seen.length < 2) return undefined;
+  const last = seen[seen.length - 1];
+  const sum = seen.slice(0, -1).reduce((n, x) => n + x.qty, 0);
+  return last.qty === sum ? last.qty : undefined;
+}
+
 /** ตัดเอกสารเป็นบล็อกรายการด้วยแถว SUBTOTAL · ไม่มี SUBTOTAL เลย → ตัดตามชื่อรุ่นแทน */
 function itemBlocks(text: string): Block[] {
   const blocks: Block[] = [];
@@ -97,6 +116,7 @@ export function parseHangcha(rawText: string): QuoteParseResult {
 
   const vehicles: ParsedVehicle[] = [];
   const byModel: QuoteDocCheck["byModel"] = [];
+  let gotQty = false;                 // อ่านจำนวนของรายการไหนได้บ้างไหม
 
   for (const b of blocks) {
     const model = b.model!;
@@ -115,6 +135,7 @@ export function parseHangcha(rawText: string): QuoteParseResult {
     const row = b.qty ? null : seg.match(ITEM_ROW_RE);
     const docQty = b.qty ?? (Number(row?.[2]) || undefined);
     const subtotal = b.subtotal ?? num(row?.[3]);
+    if (docQty) gotQty = true;
 
     const sns = snsIn(seg);
     const count = sns.length || docQty || 1;
@@ -144,7 +165,16 @@ export function parseHangcha(rawText: string): QuoteParseResult {
 
   // ยอดรวมท้ายใบ — ใช้เทียบว่าอ่านครบทั้งใบไหม (ตัวสุดท้าย = แถวรวมจริง)
   const grand = [...text.matchAll(GRAND_G)].pop();
-  const totalQty = Number(grand?.[1]) || byModel.reduce((n, b) => n + b.qty, 0) || undefined;
+  const colTotal = totalFromNumberColumn(text);
+  // ใช้ยอดจากคอลัมน์ตัวเลขก่อน เพราะตรวจสอบตัวเองด้วยการบวก (แถวที่มีป้ายกำกับอาจไปตรงกับหัวตาราง)
+  const totalQty = colTotal || Number(grand?.[1]) || byModel.reduce((n, b) => n + b.qty, 0) || undefined;
+
+  // ── ตาข่ายนิรภัย: จับคู่รุ่น↔จำนวนไม่ได้ หรือได้ไม่ครบตามที่ใบบอก → ห้ามเดา ให้ติดธงทุกคัน ──
+  // (เกิดกับ PDF ที่ฝังข้อความสลับคอลัมน์ · ปกติ pdfText.ts จัดเรียงให้แล้ว แต่กันไว้อีกชั้น)
+  if (!gotQty || (totalQty && totalQty !== vehicles.length)) {
+    const warn = "ลำดับข้อมูลในไฟล์สลับ — ระบบจับคู่รุ่นกับจำนวนไม่ได้ ตรวจรุ่น/จำนวน/ราคากับใบจริง";
+    vehicles.forEach((v) => (v.flags = [...(v.flags ?? []), warn]));
+  }
 
   return {
     vendor: "HANGCHA", pi_no, quote_date: date, vehicles, rawText,

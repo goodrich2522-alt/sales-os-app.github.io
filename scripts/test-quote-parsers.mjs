@@ -56,6 +56,19 @@ for (const file of readdirSync(SAMPLES).filter((f) => f.endsWith(".txt")).sort()
   const bad = [];
 
   if (r.pi_no !== exp.pi_no) bad.push(`เลข PI: ได้ "${r.pi_no}" คาด "${exp.pi_no}"`);
+
+  // เคส "อ่านไม่ครบแต่ต้องเตือน" — ไฟล์ที่ข้อความเรียงสลับ ต้องไม่เดามั่ว ต้องติดธง + บอกยอดจริงจากใบ
+  if (exp.degraded) {
+    if (r.docCheck?.totalQty !== exp.degraded.docTotal)
+      bad.push(`docCheck.totalQty: ได้ ${r.docCheck?.totalQty} คาด ${exp.degraded.docTotal} (ต้องรู้ยอดจริงจากใบเพื่อเตือน)`);
+    if (!r.vehicles.every((v) => (v.flags ?? []).some((f) => f.includes(exp.degraded.flag))))
+      bad.push(`ต้องติดธง "${exp.degraded.flag}" ทุกคัน`);
+    if (r.vehicles.length >= exp.degraded.docTotal)
+      bad.push("อ่านได้เท่า/เกินยอดในใบ — เคสนี้ต้องอ่านได้ไม่ครบ จึงจะทดสอบการเตือนได้");
+    if (bad.length) { fails.push(`${name}\n      - ${bad.join("\n      - ")}`); console.log(`  ไม่ผ่าน  ${name}`); }
+    else { pass++; console.log(`  ผ่าน     ${name} (เตือนถูกต้อง)`); }
+    continue;
+  }
   if (r.vehicles.length !== exp.total) bad.push(`จำนวนรวม: ได้ ${r.vehicles.length} คาด ${exp.total}`);
   if (r.docCheck && r.docCheck.totalQty !== exp.total) bad.push(`docCheck.totalQty: ได้ ${r.docCheck.totalQty} คาด ${exp.total}`);
 
