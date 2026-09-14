@@ -65,7 +65,7 @@ export function PaymentImport({ pending, onClose }: { pending: Sale[]; onClose: 
     setErr(warns.join(" · "));
     // ติ๊กให้อัตโนมัติ: ความมั่นใจสูง/กลาง และงวดยังไม่ล็อก · ต่ำ/งวดล็อก ให้คนตัดสินเอง
     const r = matchPayments(pending, docList);
-    setPicked(new Set(r.matches.filter((m) => m.level !== "ต่ำ" && !isLocked(m.doc.paidDate)).map((m) => m.sale.id)));
+    setPicked(new Set(r.matches.filter((m) => m.level !== "ต่ำ" && !isLocked(m.paidDate)).map((m) => m.sale.id)));
     setBusy(false);
   };
 
@@ -77,10 +77,10 @@ export function PaymentImport({ pending, onClose }: { pending: Sale[]; onClose: 
     for (const m of result.matches) {
       if (!picked.has(m.sale.id)) continue;
       const cf = { ...(m.sale.custom_fields || {}) };
-      // เลขที่ใบกำกับว่าง + จับคู่ด้วยหลักฐานแน่น → เติมให้ (รอบหน้าจับคู่ด้วยเลขเอกสารได้ทันที)
-      if (m.level === "สูง" && !String(cf["เลขที่ใบกำกับภาษี"] || "").trim()) cf["เลขที่ใบกำกับภาษี"] = m.doc.docNo;
-      cf["อ้างอิงรับเงิน"] = [m.doc.docNo, m.doc.channel].filter(Boolean).join(" · ");
-      updateSale({ ...m.sale, payment_received_date: m.doc.paidDate, custom_fields: cf });
+      // ใบเสร็จ/ใบแจ้งหนี้จับคู่ระดับสูง + ช่องเลขใบกำกับว่าง → เติมให้ (ใบมัดจำไม่ใช่ใบกำกับ ไม่เติม)
+      if (m.level === "สูง" && !m.doc.isDeposit && !String(cf["เลขที่ใบกำกับภาษี"] || "").trim()) cf["เลขที่ใบกำกับภาษี"] = m.doc.docNo;
+      cf["อ้างอิงรับเงิน"] = [m.docs.map((d) => d.docNo).join(", "), m.doc.channel].filter(Boolean).join(" · ");
+      updateSale({ ...m.sale, payment_received_date: m.paidDate, custom_fields: cf });
       n++;
     }
     setSaved(n);
@@ -117,7 +117,7 @@ export function PaymentImport({ pending, onClose }: { pending: Sale[]; onClose: 
                 <input type="file" accept=".xlsx,.xls" multiple className="hidden" onChange={(e) => handleFiles(e.target.files)} />
                 {busy ? <Loader2 className="w-8 h-8 mx-auto text-emerald-600 animate-spin" /> : <Upload className="w-8 h-8 mx-auto text-slate-400" />}
                 <p className="text-sm font-semibold text-slate-600 mt-2">{busy ? "กำลังอ่าน..." : files.length ? `อ่านแล้ว: ${files.join(", ")}` : "ลากไฟล์ Excel รับเงินมาวาง หรือกดเลือก"}</p>
-                <p className="text-xs text-slate-400 mt-0.5">เลือกหลายเดือนพร้อมกันได้ · ใช้ชีต ใบเสร็จรับเงิน / ใบแจ้งหนี้ · ข้ามใบรับมัดจำ (ยังไม่ใช่รับเงินครบ)</p>
+                <p className="text-xs text-slate-400 mt-0.5">เลือกหลายเดือนพร้อมกันได้ · ใช้ชีต ใบเสร็จรับเงิน / ใบแจ้งหนี้ · ใบรับมัดจำนับเฉพาะเมื่อรวมกันครบยอดขาย</p>
               </label>
 
               {err && <div className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-3 py-2 flex items-start gap-1.5"><AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />{err}</div>}
@@ -132,7 +132,7 @@ export function PaymentImport({ pending, onClose }: { pending: Sale[]; onClose: 
                     <div className="rounded-xl bg-amber-50 border border-amber-200 p-2.5"><p className="text-lg font-bold text-amber-700">{byLevel("ต่ำ")}</p><p className="text-[11px] text-amber-600">ต่ำ (ชื่ออย่างเดียว) — ตรวจก่อน</p></div>
                   </div>
                   <p className="text-[11px] text-slate-400">
-                    ข้ามเอกสาร: ใบรับมัดจำ {result.skipped.deposit} · งานเช่า/ซ่อม {result.skipped.otherKind} · ยังไม่มีวันรับเงิน {result.skipped.noDate}
+                    ไม่ได้ใช้: ใบรับมัดจำที่ยังไม่ครบยอด/ไม่ตรงดีล {result.skipped.deposit} · งานเช่า/ซ่อม {result.skipped.otherKind} · ยังไม่มีวันรับเงิน {result.skipped.noDate}
                     {" · "}ผ่อนหลายงวดใช้ <b>วันรับเงินงวดล่าสุด</b> (= รับเงินครบ)
                   </p>
 
@@ -140,7 +140,7 @@ export function PaymentImport({ pending, onClose }: { pending: Sale[]; onClose: 
                   {result.matches.length > 0 && (
                     <div className="flex flex-col gap-2">
                       {result.matches.map((m) => {
-                        const locked = isLocked(m.doc.paidDate);
+                        const locked = isLocked(m.paidDate);
                         const on = picked.has(m.sale.id);
                         return (
                           <label key={m.sale.id}
@@ -160,21 +160,44 @@ export function PaymentImport({ pending, onClose }: { pending: Sale[]; onClose: 
                               <div className="min-w-0">
                                 <p className="text-[10px] font-bold text-slate-400 uppercase">เอกสารในไฟล์</p>
                                 <p className="text-sm font-semibold text-slate-800">
-                                  {m.doc.docNo} → รับเงิน <span className="text-emerald-700">{thaiDate(m.doc.paidDate)}</span>
+                                  {m.docs.length > 1 ? `ใบมัดจำ ${m.docs.length} ใบ` : m.doc.docNo} → รับเงิน <span className="text-emerald-700">{thaiDate(m.paidDate)}</span>
                                 </p>
-                                <p className="text-[11px] text-slate-500 truncate">{m.doc.customer} · ก่อน VAT {fmt(m.doc.net)} · รวม {fmt(m.doc.total)}</p>
-                                {m.doc.paidDates.length > 1 && <p className="text-[11px] text-slate-400">ผ่อน {m.doc.paidDates.length} งวด: {m.doc.paidDates.map(thaiDate).join(", ")}</p>}
+                                <p className="text-[11px] text-slate-500 truncate">{m.doc.customer} · ก่อน VAT {fmt(m.docs.reduce((n, d) => n + d.net, 0))}{m.docs.length === 1 ? ` · รวม ${fmt(m.doc.total)}` : ""}</p>
+                                {m.docs.length > 1 && (
+                                  <p className="text-[11px] text-slate-400">{m.docs.map((d) => `${d.docNo} (${thaiDate(d.paidDate)} · ${fmt(d.net)})`).join(" · ")}</p>
+                                )}
+                                {m.docs.length === 1 && m.doc.paidDates.length > 1 && <p className="text-[11px] text-slate-400">ผ่อน {m.doc.paidDates.length} งวด: {m.doc.paidDates.map(thaiDate).join(", ")} → ใช้งวดสุดท้าย</p>}
                                 {m.doc.channel && <p className="text-[11px] text-slate-400 truncate">{m.doc.channel}</p>}
                               </div>
                               <div className="sm:col-span-2 flex items-center gap-1.5 flex-wrap mt-0.5">
                                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${LEVEL_STYLE[m.level]}`}>มั่นใจ{m.level}</span>
                                 <span className="text-[11px] text-slate-500">{m.reason}</span>
-                                {locked && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-red-100 text-red-700 border-red-200">🔒 งวด {m.doc.paidDate.slice(0, 7)} ล็อก (จ่ายค่าคอมแล้ว) — ติ๊กเองถ้าแน่ใจ</span>}
+                                {m.doc.isDeposit && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-violet-100 text-violet-700 border-violet-200">💰 ครบยอดจากใบมัดจำ</span>}
+                                {locked && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-red-100 text-red-700 border-red-200">🔒 งวด {m.paidDate.slice(0, 7)} ล็อก (จ่ายค่าคอมแล้ว) — ติ๊กเองถ้าแน่ใจ</span>}
                               </div>
                             </div>
                           </label>
                         );
                       })}
+                    </div>
+                  )}
+
+                  {/* มีใบมัดจำแล้ว แต่ยอดยังไม่ครบ → ยังไม่คิดค่าคอม */}
+                  {result.partial.length > 0 && (
+                    <div className="rounded-2xl border border-violet-200 bg-violet-50/40 p-3">
+                      <p className="text-xs font-bold text-violet-700 mb-1.5">💰 รับมัดจำแล้วแต่ยังไม่ครบยอด {result.partial.length} ดีล — ยังไม่คิดค่าคอม</p>
+                      <div className="flex flex-col gap-1">
+                        {result.partial.map((pt) => {
+                          const amt = Number(pt.sale.actual_sale) || 0;
+                          return (
+                            <p key={pt.sale.id} className="text-[11px] text-slate-600">
+                              {pt.sale.forklift_brand} {pt.sale.forklift_model} · {pt.sale.customer_name || "—"} · ได้รับแล้ว <b>{fmt(pt.received)}</b> จาก {fmt(amt)} บาท
+                              {amt > 0 && <span className="text-violet-600"> ({Math.round((pt.received / amt) * 100)}%)</span>}
+                              <span className="text-slate-400"> · {pt.docs.map((d) => d.docNo).join(", ")}</span>
+                            </p>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
 

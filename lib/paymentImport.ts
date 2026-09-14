@@ -143,17 +143,30 @@ export async function readPaymentWorkbook(file: File): Promise<PaymentReadResult
 }
 
 // ───────────────────────── จับคู่กับดีล ─────────────────────────
+//
+// กติกาที่ผู้ใช้เคาะ (14 ก.ย. 2569):
+//   1) ผ่อนหลายงวด → ใช้ "วันรับเงินงวดสุดท้าย" (= วันที่รับเงินครบ)
+//   2) ใบรับมัดจำ (AI-) ไม่นับเป็นวันรับเงิน — มัดจำยังไม่ใช่รับเงินครบ
+//      **ยกเว้น** ใบมัดจำของดีลนั้นรวมกันแล้ว "ครบยอดขาย" → ถือว่ารับเงินครบ จ่ายค่าคอมได้
+//      วันรับเงิน = วันที่ยอดมัดจำสะสมถึงยอดขาย
+//   เทียบยอดด้วย "ยอดก่อน VAT" เพราะ actual_sale ในแอปเก็บเป็นยอดก่อน VAT
+//   (ถ้าเทียบยอดรวม VAT จะนับว่าครบตั้งแต่จ่ายไป ~93% → จ่ายค่าคอมก่อนเงินเข้าครบ)
 
 export type MatchLevel = "สูง" | "กลาง" | "ต่ำ";
 export interface PaymentMatch {
   sale: Sale;
-  doc: PaymentDoc;
+  doc: PaymentDoc;          // เอกสารหลัก (ใบที่ทำให้รับเงินครบ)
+  docs: PaymentDoc[];       // เอกสารทั้งหมดที่ใช้ (ใบมัดจำอาจมีหลายใบ)
+  paidDate: string;         // วันรับเงินที่จะบันทึกลงดีล
   level: MatchLevel;
   reason: string;
 }
+/** มีใบมัดจำแล้วแต่ยังไม่ครบยอด — ยังไม่คิดค่าคอม โชว์ให้รู้ว่าได้เงินมาเท่าไหร่แล้ว */
+export interface DepositPartial { sale: Sale; docs: PaymentDoc[]; received: number; }
 export interface MatchResult {
   matches: PaymentMatch[];
   unmatched: Sale[];
+  partial: DepositPartial[];
   skipped: { deposit: number; otherKind: number; noDate: number };
 }
 
@@ -173,34 +186,65 @@ const sameName = (a: string, b: string) => {
   return x === y || (Math.min(x.length, y.length) >= 5 && (x.includes(y) || y.includes(x)));
 };
 
-/** ยอดใกล้กัน — เทียบทั้งยอดก่อน VAT และรวม VAT (หารตามจำนวนคันถ้าใบเดียวหลายคัน) · คลาด ≤ 1% หรือ 500 บาท */
+/** คลาดเคลื่อนยอดที่ยอมรับ — 1% หรือ 500 บาท (เศษสตางค์/ปัดเศษ VAT) */
+const tolOf = (amt: number) => Math.max(500, amt * 0.01);
+
+/** ยอดใกล้กัน — เทียบทั้งยอดก่อน VAT และรวม VAT (หารตามจำนวนคันถ้าใบเดียวหลายคัน) */
 const closeAmount = (sale: Sale, doc: PaymentDoc) => {
   const amt = Number(sale.actual_sale) || 0;
   if (!amt) return false;
   const share = Math.max(1, doc.sns.length);
   return [doc.net, doc.total, doc.net / share, doc.total / share]
     .filter((v) => v > 0)
-    .some((v) => Math.abs(v - amt) <= Math.max(500, amt * 0.01));
+    .some((v) => Math.abs(v - amt) <= tolOf(amt));
 };
 
 const invoiceOf = (s: Sale) =>
   clean(s.custom_fields?.["เลขที่ใบกำกับภาษี"] || s.custom_fields?.["เลขที่เอกสาร"]).toUpperCase().replace(/\s+/g, "");
 
+const one = (sale: Sale, doc: PaymentDoc, level: MatchLevel, reason: string): PaymentMatch =>
+  ({ sale, doc, docs: [doc], paidDate: doc.paidDate, level, reason });
+
+/**
+ * คลาดเคลื่อนที่ยอมรับตอนตัดสินว่า "รับเงินครบ" — แคบกว่าตอนจับคู่ยอดมาก
+ * เผื่อแค่เศษสตางค์/ปัดเศษ VAT · ถ้ากว้าง (500 บาท/1%) งวดสุดท้ายยอดน้อยจะถูกมองข้าม
+ * = นับว่าครบก่อนเงินเข้าจริง → จ่ายค่าคอมก่อนเวลา (เจอจากทดสอบข้อมูลจริง 14 ก.ย. 2569)
+ */
+const doneTolOf = (amt: number) => Math.max(50, amt * 0.002);
+
+/**
+ * ใบมัดจำรวมกันครบยอดขายไหม — เรียงตามวันรับเงิน สะสมยอดก่อน VAT
+ * ครบ → คืนวันที่ยอดสะสมถึงยอดขาย + ใบที่ใช้ · ไม่ครบ → คืนยอดที่ได้รับแล้ว
+ */
+function depositsCover(sale: Sale, deps: PaymentDoc[]) {
+  const amt = Number(sale.actual_sale) || 0;
+  const sorted = [...deps].sort((a, b) => a.paidDate.localeCompare(b.paidDate));
+  let sum = 0;
+  const used: PaymentDoc[] = [];
+  for (const d of sorted) {
+    sum += d.net || 0;
+    used.push(d);
+    if (amt > 0 && sum >= amt - doneTolOf(amt)) return { full: true as const, paidDate: d.paidDate, used, received: sum };
+  }
+  return { full: false as const, paidDate: "", used, received: sum };
+}
+
 /**
  * จับคู่เอกสารรับเงินกับดีลที่รอรับเงิน — เรียงความมั่นใจ:
- *   สูง = เลขที่เอกสารตรง · หรือ SN ในใบตรงกับรถของดีล
- *   กลาง = ชื่อลูกค้าตรง + ยอดเงินใกล้กัน
- *   ต่ำ = ชื่อลูกค้าตรงอย่างเดียว (มีเอกสารเดียวที่เข้าข่าย)
- * ใช้เฉพาะเอกสาร "งานขาย" ที่มีวันรับเงิน · ข้ามใบรับมัดจำ (เงินมัดจำยังไม่ใช่รับเงินครบ)
+ *   สูง = เลขที่เอกสารตรง · SN ในใบตรงกับรถ · ใบมัดจำที่มี SN ของรถรวมกันครบยอด
+ *   กลาง = ชื่อลูกค้าตรง + ยอดใกล้กัน · ใบมัดจำใบเดียว (จับด้วยชื่อ) ครบยอด
+ *   ต่ำ = ชื่อลูกค้าตรงอย่างเดียว · ใบมัดจำหลายใบ (จับด้วยชื่อ) รวมกันครบยอด
+ * ใช้เฉพาะเอกสาร "งานขาย" ที่มีวันรับเงิน
  */
 export function matchPayments(pending: Sale[], allDocs: PaymentDoc[]): MatchResult {
   const skipped = { deposit: 0, otherKind: 0, noDate: 0 };
-  const docs = allDocs.filter((d) => {
-    if (d.isDeposit) { skipped.deposit++; return false; }
-    if (d.kind && d.kind !== "งานขาย") { skipped.otherKind++; return false; }
-    if (!d.paidDate) { skipped.noDate++; return false; }
-    return true;
-  });
+  const docs: PaymentDoc[] = [];
+  const deposits: PaymentDoc[] = [];
+  for (const d of allDocs) {
+    if (d.kind && d.kind !== "งานขาย") { skipped.otherKind++; continue; }
+    if (!d.paidDate) { skipped.noDate++; continue; }
+    (d.isDeposit ? deposits : docs).push(d);
+  }
 
   const byDocNo = new Map(docs.map((d) => [d.docNo.replace(/\s+/g, ""), d]));
   const bySn = new Map<string, PaymentDoc>();
@@ -208,39 +252,71 @@ export function matchPayments(pending: Sale[], allDocs: PaymentDoc[]): MatchResu
 
   const matches: PaymentMatch[] = [];
   const unmatched: Sale[] = [];
-  const usedWeak = new Set<string>();   // เอกสารที่จับคู่ด้วยชื่อแล้ว — ไม่ให้ดีลอื่นใช้ซ้ำ
+  const partial: DepositPartial[] = [];
+  const usedWeak = new Set<string>();      // เอกสารที่จับคู่ด้วยชื่อแล้ว — ไม่ให้ดีลอื่นใช้ซ้ำ
+  const usedDeposit = new Set<string>();   // ใบมัดจำที่ถูกนับครบยอดให้ดีลใดดีลหนึ่งแล้ว
 
-  // รอบ 1: หลักฐานแน่น (เลขที่เอกสาร / SN)
+  // รอบ 1: หลักฐานแน่น (เลขที่เอกสาร / SN) บนใบเสร็จ/ใบแจ้งหนี้
   const rest: Sale[] = [];
   for (const s of pending) {
     const inv = invoiceOf(s);
     const sn = clean(s.forklift_unit_no).toUpperCase();
-    if (inv && byDocNo.has(inv)) { matches.push({ sale: s, doc: byDocNo.get(inv)!, level: "สูง", reason: `เลขที่เอกสารตรง (${inv})` }); continue; }
-    if (sn && bySn.has(sn)) { matches.push({ sale: s, doc: bySn.get(sn)!, level: "สูง", reason: `SN ในใบตรงกับรถ (${sn})` }); continue; }
+    if (inv && byDocNo.has(inv)) { matches.push(one(s, byDocNo.get(inv)!, "สูง", `เลขที่เอกสารตรง (${inv})`)); continue; }
+    if (sn && bySn.has(sn)) { matches.push(one(s, bySn.get(sn)!, "สูง", `SN ในใบตรงกับรถ (${sn})`)); continue; }
     rest.push(s);
   }
   const strongDocs = new Set(matches.map((m) => m.doc.docNo));
 
-  // รอบ 2: ชื่อ + ยอด → ชื่ออย่างเดียว (เฉพาะเอกสารที่ยังไม่ถูกจับด้วยหลักฐานแน่น)
+  // ⚠️ ลำดับรอบสำคัญ: หลักฐานที่มี "ยอดเงินยืนยัน" ต้องมาก่อน "ชื่อตรงอย่างเดียว" เสมอ
+  //    เดิมจับชื่ออย่างเดียวก่อนดูใบมัดจำ → แย่งใบเสร็จของลูกค้าชื่อคล้ายกันไป ทั้งที่ใบมัดจำรวมครบยอดชัดเจน
+
+  // รอบ 2: ชื่อลูกค้า + ยอดใกล้กัน (บนใบเสร็จ/ใบแจ้งหนี้ ที่ยังไม่ถูกจับด้วยหลักฐานแน่น)
+  const rest2: Sale[] = [];
   for (const s of rest) {
-    const cands = docs.filter((d) => !strongDocs.has(d.docNo) && !usedWeak.has(d.docNo) && sameName(d.customer, s.customer_name));
-    const withAmt = cands.filter((d) => closeAmount(s, d));
-    if (withAmt.length) {
-      // หลายใบเข้าข่าย → เลือกใบที่รับเงินหลังวันปิดการขายและใกล้ที่สุด
-      const close = clean(s.delivery_date || s.created_at).slice(0, 10);
-      const best = [...withAmt].sort((a, b) =>
-        Math.abs(Date.parse(a.paidDate) - Date.parse(close || a.paidDate)) - Math.abs(Date.parse(b.paidDate) - Date.parse(close || b.paidDate)))[0];
-      usedWeak.add(best.docNo);
-      matches.push({ sale: s, doc: best, level: "กลาง", reason: "ชื่อลูกค้าตรง + ยอดเงินใกล้กัน" });
-      continue;
-    }
-    if (cands.length === 1) {
-      usedWeak.add(cands[0].docNo);
-      matches.push({ sale: s, doc: cands[0], level: "ต่ำ", reason: "ชื่อลูกค้าตรง แต่ยอดเงินไม่ตรง — ตรวจก่อน" });
-      continue;
-    }
-    unmatched.push(s);
+    const withAmt = docs.filter((d) => !strongDocs.has(d.docNo) && !usedWeak.has(d.docNo)
+      && sameName(d.customer, s.customer_name) && closeAmount(s, d));
+    if (!withAmt.length) { rest2.push(s); continue; }
+    // หลายใบเข้าข่าย → เลือกใบที่วันรับเงินใกล้วันปิดการขายที่สุด
+    const close = clean(s.delivery_date || s.created_at).slice(0, 10);
+    const best = [...withAmt].sort((a, b) =>
+      Math.abs(Date.parse(a.paidDate) - Date.parse(close || a.paidDate)) - Math.abs(Date.parse(b.paidDate) - Date.parse(close || b.paidDate)))[0];
+    usedWeak.add(best.docNo);
+    matches.push(one(s, best, "กลาง", "ชื่อลูกค้าตรง + ยอดเงินใกล้กัน"));
   }
 
-  return { matches, unmatched, skipped };
+  // รอบ 3: ใบมัดจำของดีลนี้รวมกันครบยอดขายไหม (ยอดเงินยืนยันการรับเงินครบ)
+  const rest3: Sale[] = [];
+  for (const s of rest2) {
+    const sn = clean(s.forklift_unit_no).toUpperCase();
+    const bySnDeps = sn ? deposits.filter((d) => !usedDeposit.has(d.docNo) && d.sns.includes(sn)) : [];
+    const deps = bySnDeps.length
+      ? bySnDeps
+      : deposits.filter((d) => !usedDeposit.has(d.docNo) && sameName(d.customer, s.customer_name));
+    if (!deps.length) { rest3.push(s); continue; }
+
+    const cover = depositsCover(s, deps);
+    // มีมัดจำแต่ยังไม่ครบ = รู้แน่ว่ายังไม่รับเงินครบ → ไม่เดาด้วยชื่ออย่างเดียวต่อ
+    if (!cover.full) { partial.push({ sale: s, docs: cover.used, received: cover.received }); unmatched.push(s); continue; }
+
+    cover.used.forEach((d) => usedDeposit.add(d.docNo));
+    const last = cover.used[cover.used.length - 1];
+    const n = cover.used.length;
+    const level: MatchLevel = bySnDeps.length ? "สูง" : n === 1 ? "กลาง" : "ต่ำ";
+    const how = bySnDeps.length ? `SN ${sn}` : "ชื่อลูกค้า";
+    matches.push({
+      sale: s, doc: last, docs: cover.used, paidDate: cover.paidDate, level,
+      reason: `รับเงินครบจากใบรับมัดจำ ${n} ใบ (จับด้วย${how}) — ยอดสะสมครบวันที่ ${cover.paidDate}`,
+    });
+  }
+
+  // รอบ 4 (หลักฐานอ่อนสุด): ชื่อลูกค้าตรงอย่างเดียว มีใบเสร็จที่เข้าข่ายใบเดียว → ให้คนตรวจเอง
+  for (const s of rest3) {
+    const cands = docs.filter((d) => !strongDocs.has(d.docNo) && !usedWeak.has(d.docNo) && sameName(d.customer, s.customer_name));
+    if (cands.length !== 1) { unmatched.push(s); continue; }
+    usedWeak.add(cands[0].docNo);
+    matches.push(one(s, cands[0], "ต่ำ", "ชื่อลูกค้าตรง แต่ยอดเงินไม่ตรง — ตรวจก่อน"));
+  }
+
+  skipped.deposit = deposits.filter((d) => !usedDeposit.has(d.docNo)).length;
+  return { matches, unmatched, partial, skipped };
 }
