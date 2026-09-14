@@ -251,11 +251,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // ── Realtime (Supabase) — เปลี่ยนที่ไหนเด้งทุกเครื่องทันที ──
+  // ⚠️ บทเรียน 14 ก.ย. 2569: Supabase ระงับทั้งโปรเจกต์ (HTTP 402 exceed_egress_quota) ล็อกอินไม่ได้ทุกคน
+  //    ต้นเหตุ: ทุกแท็บที่เปิดค้างโหลด "ข้อมูลทั้งหมด" (รถ ~1,000 คัน + ดีล + บันทึกรับรถพร้อมรูป + ลูกค้า)
+  //    ใหม่ทุก 30 วิ (ผู้ขนส่ง 20 วิ) และโหลดใหม่ทั้งก้อนทุกครั้งที่ใครแก้อะไร 1 แถว → ดาต้าขาออกทะลุโควตา
+  //    แก้: (1) realtime อัปเดตเฉพาะแถวที่เปลี่ยนจาก payload ไม่โหลดใหม่ทั้งหมด
+  //         (2) poll เหลือเป็นแค่ตาข่ายกันพลาด — 5 นาที (ผู้ขนส่งไม่มี realtime = 2 นาที)
+  //         (3) กลับมาที่แท็บ ดึงสดได้แต่ห่างกันอย่างน้อย 1 นาที
   useEffect(() => {
     if (!mounted || !api.apiEnabled) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let lastPull = Date.now();                 // เพิ่งโหลดตอนเปิดหน้า
 
     const pull = async () => {
+      lastPull = Date.now();
       try {
         const data = await api.bootstrap();
         setForklifts(data.forklifts ?? []);
@@ -266,7 +274,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // ไม่อัปเดต fieldConfig จาก realtime — กัน loop การเซฟกลับ
       } catch (e) { console.warn("realtime pull", e); }
     };
-    const onChange = () => { clearTimeout(timer); timer = setTimeout(pull, 300); }; // debounce รวมหลาย event
+    // สำรอง: payload ไม่มีข้อมูลแถว (RLS กรอง/ผิดรูปแบบ) → ค่อยโหลดทั้งหมด แบบรวบหลาย event เป็นครั้งเดียว
+    const fullPullSoon = () => { clearTimeout(timer); timer = setTimeout(pull, 1500); };
+
+    // ── อัปเดตเฉพาะแถวที่เปลี่ยน (แทนการโหลดทั้งตาราง) ──
+    type Row = Record<string, unknown> & { id?: unknown };
+    type RtPayload = { eventType?: string; new?: Row; old?: Row };
+    const upsert = <T extends { id: string }>(list: T[], row: Row): T[] => {
+      const i = list.findIndex((x) => String(x.id) === String(row.id));
+      if (i < 0) return [row as unknown as T, ...list];
+      const next = list.slice();
+      next[i] = { ...list[i], ...(row as unknown as T) };
+      return next;
+    };
+    const drop = <T extends { id: string }>(list: T[], id: unknown): T[] => list.filter((x) => String(x.id) !== String(id));
+    const applyRow = <T extends { id: string }>(set: React.Dispatch<React.SetStateAction<T[]>>) => (p: RtPayload) => {
+      const ev = p.eventType;
+      if (ev === "DELETE") { if (p.old?.id == null) return fullPullSoon(); set((l) => drop(l, p.old!.id)); return; }
+      if (!p.new || p.new.id == null) return fullPullSoon();
+      set((l) => upsert(l, p.new!));
+    };
+    // บันทึกรับรถลบแบบ soft (deleted_at) → ย้ายระหว่างรายการปกติกับถังขยะ
+    const applyInspection = (p: RtPayload) => {
+      if (p.eventType === "DELETE") {
+        if (p.old?.id == null) return fullPullSoon();
+        setInspections((l) => drop(l, p.old!.id));
+        setDeletedInspections((l) => drop(l, p.old!.id));
+        return;
+      }
+      const row = p.new;
+      if (!row || row.id == null) return fullPullSoon();
+      if (row.deleted_at) {
+        setInspections((l) => drop(l, row.id));
+        setDeletedInspections((l) => upsert(l, { ...row, deletedAt: row.deleted_at }));
+      } else {
+        setDeletedInspections((l) => drop(l, row.id));
+        setInspections((l) => upsert(l, row));
+      }
+    };
 
     // ⭐ ส่ง JWT ล็อกอินให้ realtime ก่อน subscribe — RLS เปิดอยู่ ถ้าไม่ setAuth event จะถูกบล็อก (anon เห็น 0 แถว) = ไม่ instant
     let channel: ReturnType<NonNullable<typeof supabase>["channel"]> | undefined;
@@ -277,21 +322,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (data.session?.access_token) supabase!.realtime.setAuth(data.session.access_token);
       } catch {}
       channel = supabase?.channel("salesos-db")
-        .on("postgres_changes", { event: "*", schema: "public", table: "forklifts" }, onChange)
-        .on("postgres_changes", { event: "*", schema: "public", table: "sales" }, onChange)
-        .on("postgres_changes", { event: "*", schema: "public", table: "inspections" }, onChange)
-        .on("postgres_changes", { event: "*", schema: "public", table: "customers" }, onChange)
+        .on("postgres_changes", { event: "*", schema: "public", table: "forklifts" }, applyRow(setForklifts))
+        .on("postgres_changes", { event: "*", schema: "public", table: "sales" }, applyRow(setSales))
+        .on("postgres_changes", { event: "*", schema: "public", table: "inspections" }, applyInspection)
+        .on("postgres_changes", { event: "*", schema: "public", table: "customers" }, applyRow(setCustomers))
         .subscribe();
       // token refresh → อัปเดตให้ realtime ด้วย (กัน event หลุดหลัง token หมดอายุ)
       authSub = supabase?.auth.onAuthStateChange((_e, s) => { if (s?.access_token) supabase!.realtime.setAuth(s.access_token); }).data;
     })();
 
-    // สำรอง: กลับมาที่แท็บ = ดึงสด + poll กัน realtime หลุด
-    // หน้าผู้ขนส่ง (anon) ไม่ได้ realtime (RLS) → poll ถี่ขึ้น 20 วิ ให้ข้อมูลข้ามฝ่ายอัพเดตพร้อมกัน · หน้าอื่นมี realtime อยู่แล้ว = 60 วิพอ
+    // ตาข่ายกันพลาด (realtime หลุด/พลาด event) — ไม่ใช่ช่องทางหลักอีกต่อไป
+    // หน้าผู้ขนส่ง (anon) ไม่ได้ realtime (RLS) จึงถี่กว่า แต่ก็ไม่ถี่แบบเดิม
     const isAnonTransporter = typeof window !== "undefined" && window.location.pathname.includes("/transporter");
-    const onVisible = () => { if (document.visibilityState === "visible") pull(); };
+    const POLL_MS = isAnonTransporter ? 2 * 60_000 : 5 * 60_000;
+    const MIN_GAP_MS = 60_000;                 // กลับมาที่แท็บ: ดึงสดได้ แต่ห่างจากครั้งก่อนอย่างน้อย 1 นาที
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && Date.now() - lastPull > MIN_GAP_MS) pull();
+    };
     document.addEventListener("visibilitychange", onVisible);
-    const id = setInterval(() => { if (document.visibilityState === "visible") pull(); }, isAnonTransporter ? 20_000 : 30_000);
+    const id = setInterval(() => { if (document.visibilityState === "visible") pull(); }, POLL_MS);
 
     return () => {
       if (channel) supabase?.removeChannel(channel);
