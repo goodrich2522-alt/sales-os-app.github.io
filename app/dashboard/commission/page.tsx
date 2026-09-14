@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState, useMemo } from "react";
 import {
   ArrowLeft, DollarSign, Download, ChevronDown, ChevronRight,
-  User, AlertCircle, Award, Calendar, Lock, Unlock, X,
+  User, AlertCircle, Award, Calendar, Lock, Unlock, X, FileSpreadsheet,
 } from "lucide-react";
 import { useApp } from "@/lib/AppContext";
 import { MoneyInput } from "@/components/ui/MoneyInput";
@@ -16,6 +16,7 @@ import {
 } from "@/lib/commission";
 import { DEFAULT_WARRANTY, emptySvcRounds } from "@/lib/warranty";
 import { DashboardGuard } from "@/components/DashboardGuard";
+import { PaymentImport } from "@/components/PaymentImport";
 import { staffLabel, canonicalStaff } from "@/lib/constants";
 import { supabase } from "@/lib/supabaseClient";
 import type { Sale, Forklift } from "@/lib/types";
@@ -64,6 +65,7 @@ function CommissionPageInner() {
   const [warrantyDeal, setWarrantyDeal] = useState<{ saleId: string; sn: string; brand: string; model: string } | null>(null);
   const [showBooked, setShowBooked] = useState(false); // กาง/พับ ส่วนดีลจอง/มัดจำ รอปิดการขาย
   const [showPending, setShowPending] = useState(false); // กาง/พับ ส่วนดีลรอรับเงิน
+  const [showPayImport, setShowPayImport] = useState(false); // หน้าต่างนำเข้าไฟล์ Excel รับเงิน
   const [detailSaleId, setDetailSaleId] = useState<string | null>(null); // ดีลที่เปิดดูรายละเอียด
   // ลงข้อมูลรับประกัน/บริการหลังการขาย → เขียนลง forklift.custom_fields["บริการหลังการขาย"] (ปลดล็อกค่าคอม)
   const saveWarranty = (sn: string, start: string, terms: string) => {
@@ -312,6 +314,14 @@ function CommissionPageInner() {
               </div>
               {showPending ? <ChevronDown className="w-5 h-5 text-amber-400 flex-shrink-0" /> : <ChevronRight className="w-5 h-5 text-amber-400 flex-shrink-0" />}
             </button>
+            {/* นำเข้าไฟล์ Excel รับเงินจากระบบบัญชี → จับคู่เติมวันรับเงินให้หลายดีลพร้อมกัน */}
+            <div className="px-4 pb-3 -mt-1 flex items-center gap-2 flex-wrap">
+              <button onClick={() => setShowPayImport(true)}
+                className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-white hover:bg-emerald-50 border border-emerald-300 rounded-lg px-3 py-1.5 transition-colors">
+                <FileSpreadsheet className="w-3.5 h-3.5" />นำเข้าไฟล์รับเงิน (Excel)
+              </button>
+              <span className="text-[11px] text-amber-600">ไฟล์ &ldquo;รายงานภาษีขาย ... -รับเงิน&rdquo; จากระบบบัญชี → ระบบจับคู่กับดีลและเติมวันรับเงินให้</span>
+            </div>
             {showPending && (
               <div className="border-t border-amber-100 divide-y divide-amber-100/70 bg-white/50">
                 {pendingDeals.map(s => (
@@ -332,6 +342,8 @@ function CommissionPageInner() {
             )}
           </div>
         )}
+
+        {showPayImport && <PaymentImport pending={pendingDeals} onClose={() => setShowPayImport(false)} />}
 
         {/* ── ดีลจอง/มัดจำ รอปิดการขาย (สั่งผลิต ฯลฯ) — ยังไม่คิดค่าคอม ── */}
         {bookedDeals.length > 0 && (
