@@ -31,15 +31,26 @@ const H = { apikey: KEY, Authorization: `Bearer ${KEY}` };
 
 let rows = [];
 try {
-  const r = await fetch(`${root}/rest/v1/forklifts?select=id,SN,brand,model,pi_no,status&limit=5000`, { headers: H });
-  if (r.ok) rows = await r.json();
+  // อ่านตารางตรง (ใช้ได้เมื่อมี service key) — วนทีละ 1,000 แถว
+  for (let offset = 0; ; offset += 1000) {
+    const r = await fetch(`${root}/rest/v1/forklifts?select=id,SN,brand,model,pi_no,status&offset=${offset}&limit=1000`, { headers: H });
+    if (!r.ok) break;
+    const page = await r.json();
+    rows.push(...page);
+    if (page.length < 1000) break;
+  }
 } catch { /* RLS ปิด */ }
 if (rows.length === 0) {
-  const r = await fetch(`${root}/rest/v1/rpc/transporter_stock`, {
-    method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: "{}",
-  });
-  if (!r.ok) { console.error(`อ่านข้อมูลไม่ได้: HTTP ${r.status}`); process.exit(1); }
-  rows = await r.json();
+  // ⚠️ Supabase ส่งครั้งละสูงสุด 1,000 แถว → วนดึงทีละหน้า (เดิมตกหล่น 100 จาก 1,100 คัน)
+  for (let offset = 0; ; offset += 1000) {
+    const r = await fetch(`${root}/rest/v1/rpc/transporter_stock?offset=${offset}&limit=1000`, {
+      method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: "{}",
+    });
+    if (!r.ok) { console.error(`อ่านข้อมูลไม่ได้: HTTP ${r.status}`); process.exit(1); }
+    const page = await r.json();
+    rows.push(...page);
+    if (page.length < 1000) break;
+  }
 }
 
 const cars = rows

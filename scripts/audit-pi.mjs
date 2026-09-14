@@ -31,18 +31,36 @@ if (!BASE || !KEY) {
 const root = BASE.replace(/\/+$/, "");
 const H = { apikey: KEY, Authorization: `Bearer ${KEY}` };
 
+// อ่านตารางตรง (ใช้ได้เมื่อมี service key) — วนทีละ 1,000 แถว เพราะ Supabase ตัดที่ 1,000 ต่อครั้ง
 const getTable = async (t, q) => {
-  const r = await fetch(`${root}/rest/v1/${t}?${q}`, { headers: H });
-  if (!r.ok) throw new Error(`${t}: HTTP ${r.status}`);
-  return r.json();
+  const out = [];
+  for (let offset = 0; ; offset += 1000) {
+    const r = await fetch(`${root}/rest/v1/${t}?${q}&offset=${offset}&limit=1000`, { headers: H });
+    if (!r.ok) throw new Error(`${t}: HTTP ${r.status}`);
+    const page = await r.json();
+    out.push(...page);
+    if (page.length < 1000) break;
+  }
+  return out;
 };
-/** สำรองเมื่อ RLS ปิดการอ่านตรง — RPC ผู้ขนส่ง (anon เรียกได้ · ตัดราคาทุน/ลูกค้าออก) */
+/**
+ * สำรองเมื่อ RLS ปิดการอ่านตรง — RPC ผู้ขนส่ง (anon เรียกได้ · ตัดราคาทุน/ลูกค้าออก)
+ * ⚠️ Supabase ส่งมาครั้งละสูงสุด 1,000 แถว → ต้องวนดึงทีละหน้า
+ *    (เดิมดึงครั้งเดียว ได้ 1,000 จาก 1,100 คัน ตกหล่น 100 คันโดยไม่รู้ตัว — แก้ 14 ก.ย. 2569)
+ */
 const getViaRpc = async () => {
-  const r = await fetch(`${root}/rest/v1/rpc/transporter_stock`, {
-    method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: "{}",
-  });
-  if (!r.ok) throw new Error(`RPC transporter_stock: HTTP ${r.status}`);
-  return r.json();
+  const PAGE = 1000;
+  const out = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const r = await fetch(`${root}/rest/v1/rpc/transporter_stock?offset=${offset}&limit=${PAGE}`, {
+      method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: "{}",
+    });
+    if (!r.ok) throw new Error(`RPC transporter_stock: HTTP ${r.status}`);
+    const rows = await r.json();
+    out.push(...rows);
+    if (rows.length < PAGE) break;
+  }
+  return out;
 };
 
 const norm = (v) => String(v ?? "").trim();
@@ -53,7 +71,7 @@ const vendorDocPi = (pi) => /^(HCTH|EPZL|NBPI|HC|C\d)/i.test(pi);
 let forklifts = [];
 let viaRpc = false;
 try {
-  forklifts = await getTable("forklifts", "select=id,SN,brand,model,pi_no,status,cost_price,custom_fields&limit=5000");
+  forklifts = await getTable("forklifts", "select=id,SN,brand,model,pi_no,status,cost_price,custom_fields");
 } catch { /* RLS ปิด → ลองทาง RPC */ }
 if (forklifts.length === 0) { forklifts = await getViaRpc(); viaRpc = true; }
 if (forklifts.length === 0) {
