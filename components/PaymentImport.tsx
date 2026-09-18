@@ -97,7 +97,7 @@ export function PaymentImport({ pending, onClose }: { pending: Sale[]; onClose: 
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
           <div className="min-w-0">
             <h3 className="text-base font-bold text-slate-800 flex items-center gap-2"><FileSpreadsheet className="w-4 h-4 text-emerald-600" />นำเข้าไฟล์รับเงิน → เติมวันรับเงินให้ดีล</h3>
-            <p className="text-xs text-slate-500 mt-0.5">ไฟล์ &ldquo;รายงานภาษีขาย ... -รับเงิน&rdquo; จากระบบบัญชี · อ่านในเครื่อง 100% · ดีลรอรับเงิน {pending.length} ดีล</p>
+            <p className="text-xs text-slate-500 mt-0.5"><span className="text-slate-300" title="เวอร์ชันโค้ดที่เครื่องนี้โหลดอยู่">v{process.env.NEXT_PUBLIC_BUILD}</span> · ไฟล์ &ldquo;รายงานภาษีขาย ... -รับเงิน&rdquo; จากระบบบัญชี · อ่านในเครื่อง 100% · ดีลรอรับเงิน {pending.length} ดีล</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl p-2"><X className="w-5 h-5" /></button>
         </div>
