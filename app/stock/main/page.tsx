@@ -6,7 +6,7 @@ import {
   Package, Plus, LogOut, CheckCircle, AlertCircle, List, X,
   TrendingUp, Boxes, Trash2, Settings, Pencil, Check, ChevronDown, ChevronRight,
   Clock, Hash, Camera, ImageOff, Eye, Bell, MapPin, History,
-  Download, Upload, FileText, ShoppingCart, User, QrCode, PackageCheck, ClipboardList, RotateCcw
+  Download, Upload, FileText, ShoppingCart, User, QrCode, PackageCheck, ClipboardList, RotateCcw, RefreshCw
 } from "lucide-react";
 import { Forklift, Sale, STOCK_APPROVAL_FIELD, isVoidSale } from "@/lib/types";
 import { COMMISSION_FIELD, COMMISSION_CATEGORIES, isClosedSale, isForkliftVehicle } from "@/lib/commission";
@@ -78,7 +78,7 @@ function fmtAdded(iso?: string) {
 export default function StockMain() {
   const router = useRouter();
   const {
-    forklifts, addForkliftsBulk, updateForklift, deleteForklift, inspections, addInspection, sales, updateSale,
+    forklifts, addForkliftsBulk, updateForklift, deleteForklift, inspections, addInspection, sales, updateSale, refresh,
     returnSale, approveStockSale, rejectStockSale, setActor,
     exportData, importData,
     fieldConfig, updateFieldOptions,
@@ -106,6 +106,14 @@ export default function StockMain() {
   const [bulkMode, setBulkMode]     = useState(false);              // โหมดเลือกหลายคัน
   const [selIds, setSelIds]         = useState<Set<string>>(new Set()); // รถที่เลือกไว้
   const [bulkDelConfirm, setBulkDelConfirm] = useState(false);
+  // ดึงข้อมูลล่าสุดด้วยมือ — ปกติข้อมูลเด้งเองผ่าน realtime และมีดึงสำรองทุก 5 นาที
+  // แต่ถ้าฝ่ายอื่นเพิ่งบันทึก (เช่น ผู้ขนส่งรับรถ) แล้วอยากเห็นทันที กดปุ่มนี้
+  const [refreshing, setRefreshing] = useState(false);
+  const doRefresh = async () => {
+    setRefreshing(true);
+    try { await refresh(); showToast("ดึงข้อมูลล่าสุดแล้ว ✓"); }
+    finally { setRefreshing(false); }
+  };
   // ── แก้สเปก/ราคาหลายคันพร้อมกัน — ช่องที่เว้นว่าง = ไม่แก้ (ใช้ซ่อมข้อมูลที่นำเข้าผิดทั้งล็อต) ──
   const [bulkEdit, setBulkEdit] = useState<null | { model: string; capacity: string; cost: string; cat: string; pi: string }>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
@@ -955,6 +963,11 @@ export default function StockMain() {
             <button onClick={() => setShowSaleHistory(true)}
               className="flex items-center gap-1.5 text-slate-600 hover:text-indigo-700 hover:bg-indigo-50 text-sm font-medium px-3 py-1.5 rounded-lg transition-all border border-transparent hover:border-indigo-200">
               <ShoppingCart className="w-4 h-4" /><span className="hidden sm:inline">ประวัติการขาย</span>
+            </button>
+            {/* ดึงข้อมูลล่าสุด — ใช้เมื่อฝ่ายอื่นเพิ่งบันทึกแล้วอยากเห็นทันที */}
+            <button onClick={doRefresh} disabled={refreshing} title="ดึงข้อมูลล่าสุดจากเซิร์ฟเวอร์"
+              className="flex items-center gap-1.5 text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 text-sm font-medium px-3 py-1.5 rounded-lg transition-all border border-transparent hover:border-emerald-200">
+              <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin text-emerald-600" : ""}`} /><span className="hidden sm:inline">รีเฟรช</span>
             </button>
             {/* ประวัติการรับรถเข้าคลัง — ไปหน้าแกลเลอรีตรวจรับรถ (ใคร/เมื่อไหร่/รูป 6 ช่อง + Export Excel) */}
             <button onClick={() => router.push("/dashboard/inspections")}
