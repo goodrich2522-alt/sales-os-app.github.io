@@ -34,9 +34,21 @@ function firstPrice(s: string): number | undefined {
 // SN HELI 2 รูปแบบ: 6ตัวเลข+1อักษร+4ตัวเลข (010353N6726) · 5ตัวเลข+3อักษร+3ตัวเลข (08015JVF574)
 const SN_RE = /\b(\d{4,6}[A-Z]{1,3}\d{3,4})\b/g;
 const MAST_RE = /\b(M\d{3}|ZSM\d{3,4}|ZM\d{3})\b/;
-// คอลัมน์จำนวนในเอกสาร: เลขที่ขั้นระหว่าง "ราคาต่อหน่วย THB x.xx" กับ "ยอดรวม THB y.yy"
-// (เดิมอ่านเฉพาะรายการที่ไม่มี SN · ตอนนี้อ่านทุกรายการเพื่อเอาไปเทียบจำนวนกับที่ parse ได้)
-const QTY_RE = /THB\s*[\d,]+\.\d{2}\s+(\d{1,3})\s+THB\s*[\d,]+\.\d{2}/;
+// แถวจำนวน/ราคาในเอกสาร: "THB <ราคาสุทธิต่อคัน> <จำนวน> THB <ยอดรวม>"
+// จับทั้ง 3 ค่าเพื่อ **ตรวจสอบตัวเองด้วยการคูณ** (ราคา × จำนวน = ยอดรวม) — กันจับเลขมั่ว
+// ⚠️ ต้องใช้ "ราคาสุทธิ" (Final price) ไม่ใช่ THB ตัวแรกที่เจอ:
+//    ใบที่มีส่วนลด (unit promo) เขียน "THB 222,000 THB 1,000 THB 221,000 5 THB 1,105,000"
+//    THB ตัวแรก = ราคาป้าย · ที่ต้องใช้คือ 221,000 (หลังหักส่วนลด)
+const QTY_ROW_RE = /THB\s*([\d,]+\.\d{2})\s+(\d{1,3})\s+THB\s*([\d,]+\.\d{2})/;
+
+/** อ่านราคาสุทธิ/จำนวน/ยอดรวม จากแถวราคา — คืนค่าเมื่อคูณแล้วตรงเท่านั้น */
+function qtyRow(seg: string): { unit: number; qty: number } | undefined {
+  const m = seg.match(QTY_ROW_RE);
+  if (!m) return undefined;
+  const unit = Number(m[1].replace(/,/g, "")), qty = Number(m[2]), total = Number(m[3].replace(/,/g, ""));
+  if (!unit || !qty || !total) return undefined;
+  return Math.abs(unit * qty - total) <= Math.max(1, total * 0.005) ? { unit, qty } : undefined;
+}
 
 export function parseHeli(rawText: string): QuoteParseResult {
   const text = rawText.replace(/\s+/g, " ").trim();
@@ -59,11 +71,17 @@ export function parseHeli(rawText: string): QuoteParseResult {
   const baseModels = new Set<string>();
   const byModel: QuoteDocCheck["byModel"] = [];   // จำนวนที่ "คอลัมน์ QUANTITY ในเอกสาร" ระบุ — ใช้เทียบกับที่อ่านได้
 
-  // แต่ละ item = ช่วงข้อความตั้งแต่รุ่นนี้ ถึงก่อนรุ่นถัดไป → มี SN/ราคา/เสาของ item นั้นเอง
+  // ⚠️ ใบมีรุ่นเดียว → ใช้ "ทั้งใบ" เป็นช่วงของรายการนั้น ห้ามตัดที่ตำแหน่งชื่อรุ่น
+  //    เหตุ (18 ก.ย. 2569 · ใบ C20726201-134): ช่องในตารางจัดกึ่งกลางแนวตั้ง พอเรียงข้อความ
+  //    ตามตำแหน่งจริง ข้อมูลแถวเดียวกันจึงกระจายคนละบรรทัด — SN 2 ตัวแรกและแถวราคา
+  //    ไปอยู่ "ก่อน" ชื่อรุ่น การตัดตั้งแต่ชื่อรุ่นจึงทิ้งของไป (อ่านได้ 3 จาก 5 คัน
+  //    และไปหยิบยอดรวม 1,105,000 มาเป็นราคาต่อคันแทน 221,000)
+  const single = modelMatches.length === 1;
+  // ใบหลายรุ่น = ตัดช่วงตั้งแต่รุ่นนี้ถึงก่อนรุ่นถัดไป (แต่ละรายการมี SN/ราคา/เสาของตัวเอง)
   for (let i = 0; i < modelMatches.length; i++) {
     const start = modelMatches[i].index ?? 0;
     const end = i + 1 < modelMatches.length ? (modelMatches[i + 1].index ?? text.length) : text.length;
-    const seg = text.slice(start, end);
+    const seg = single ? text : text.slice(start, end);
 
     const model = modelMatches[i][1].toUpperCase();
     baseModels.add(model.replace(/-.*$/, ""));
@@ -71,9 +89,10 @@ export function parseHeli(rawText: string): QuoteParseResult {
     const fuel = fuelFromText(seg) ?? fuelFromModel(model);
     const mast = seg.match(MAST_RE)?.[1];
     const valve = seg.match(/(\d+)\s*Valves?/i)?.[1];
-    const cost = firstPrice(seg);
+    const row = qtyRow(seg);                            // ราคาสุทธิ/คัน + จำนวน (ตรวจด้วยการคูณแล้ว)
+    const cost = row?.unit ?? firstPrice(seg);          // ไม่มีแถวราคาที่คูณลงตัว → ใช้ THB ตัวแรก
     const sns = [...new Set([...seg.matchAll(SN_RE)].map((m) => m[1]))];
-    const docQty = Number(seg.match(QTY_RE)?.[1]) || undefined;   // จำนวนที่เอกสารระบุสำหรับรายการนี้
+    const docQty = row?.qty;                            // จำนวนที่เอกสารระบุสำหรับรายการนี้
     if (docQty) byModel.push({ model, qty: docQty, subtotal: cost ? cost * docQty : undefined });
 
     const build = (sn?: string): ParsedVehicle => {
