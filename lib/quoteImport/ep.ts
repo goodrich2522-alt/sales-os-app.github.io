@@ -39,13 +39,28 @@ function capacityOf(block: string, title: string): { text?: string; kg?: string 
   return {};
 }
 
-/** ความสูงยก: "3F4500mm" → 4.50 ม. · "2-standard mast 2.5M" → 2.50 ม. */
-function heightOf(mast?: string): string | undefined {
-  if (!mast) return undefined;
+/** ความสูงเสาเป็นเมตร: "3F4500mm" → 4.5 · "2-standard mast 2.5M" → 2.5 */
+function mastMeters(mast: string): number | undefined {
   const mm = mast.match(/(\d{3,5})\s*mm/i)?.[1];
-  if (mm) return `${(Number(mm) / 1000).toFixed(2)} ม.`;
+  if (mm) return Number(mm) / 1000;
   const m = mast.match(/(\d(?:\.\d)?)\s*M\b/i)?.[1];
-  return m ? `${Number(m).toFixed(2)} ม.` : undefined;
+  return m ? Number(m) : undefined;
+}
+/** ความสูงยกแบบข้อความ — "4.50 ม." */
+function heightOf(mast?: string): string | undefined {
+  const m = mast ? mastMeters(mast) : undefined;
+  return m ? `${m.toFixed(2)} ม.` : undefined;
+}
+/**
+ * ย่อสเปกเสาให้อ่านง่ายในหน้าสต็อก (เก็บชนิด + ความสูง)
+ * "Mast:Triplex 3F4500mm" → "Triplex 4.5M" · "Mast: 2-standard mast 2.5M" → "Standard 2.5M"
+ */
+function mastLabel(mast?: string): string | undefined {
+  if (!mast) return undefined;
+  const type = mast.match(/\b(Triplex|Duplex|Simplex|Full[- ]?Free|Standard)\b/i)?.[1];
+  const m = mastMeters(mast);
+  const short = [type ? type[0].toUpperCase() + type.slice(1).toLowerCase() : "", m ? `${m}M` : ""].filter(Boolean).join(" ");
+  return short || mast;
 }
 
 // แถวจำนวน/ราคาในรายการ: "<จำนวน> ฿<ราคาต่อคัน> ฿<ยอดรายการ>"
@@ -121,7 +136,7 @@ export function parseEp(rawText: string): QuoteParseResult {
       capacity_kg: cap.kg,
       fork_length: fork || undefined,
       height: heightOf(mast),
-      mast: mast || undefined,
+      mast: mastLabel(mast),
       fuel,
       cost_price: row?.unit,
       pi_no: piNo,
