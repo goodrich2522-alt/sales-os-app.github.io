@@ -29,7 +29,7 @@ const req = createRequire(import.meta.url);
 try {
   // เรียก tsc ตรงๆ ด้วย node (ไม่ผ่าน shell — เลี่ยงปัญหา quoting/คำเตือน deprecated)
   execFileSync(process.execPath, [req.resolve("typescript/bin/tsc"),
-    "lib/quoteImport/hangcha.ts", "lib/quoteImport/heli.ts", "lib/quoteImport/hangchaTax.ts",
+    "lib/quoteImport/hangcha.ts", "lib/quoteImport/heli.ts", "lib/quoteImport/hangchaTax.ts", "lib/quoteImport/ep.ts",
     "--outDir", out, "--module", "commonjs", "--target", "es2022", "--moduleResolution", "node", "--skipLibCheck"],
     { stdio: "pipe" });
 } catch (e) {
@@ -40,6 +40,7 @@ try {
 const { parseHangcha } = req(join(out, "hangcha.js"));
 const { parseHangchaTax } = req(join(out, "hangchaTax.js"));
 const { parseHeli } = req(join(out, "heli.js"));
+const { parseEp } = req(join(out, "ep.js"));
 
 const expected = JSON.parse(readFileSync(EXPECTED, "utf8"));
 const up = (v) => String(v ?? "").toUpperCase();
@@ -51,7 +52,8 @@ for (const file of readdirSync(SAMPLES).filter((f) => f.endsWith(".txt")).sort()
   const exp = expected[name];
   if (!exp) { fails.push(`${name}: ไม่มีผลที่คาดไว้ใน ${EXPECTED}`); console.log(`  ?? ${name}`); continue; }
 
-  const parser = exp.vendor === "HELI" ? parseHeli : exp.vendor === "HANGCHA-TAX" ? parseHangchaTax : parseHangcha;
+  const parser = exp.vendor === "HELI" ? parseHeli : exp.vendor === "EP" ? parseEp
+    : exp.vendor === "HANGCHA-TAX" ? parseHangchaTax : parseHangcha;
   const r = parser(readFileSync(join(SAMPLES, file), "utf8"));
   const bad = [];
 

@@ -42,15 +42,43 @@ const MAST_RE = /\b(M\d{3}|ZSM\d{3,4}|ZM\d{3})\b/;
 const QTY_ROW_RE = /THB\s*([\d,]+\.\d{2})\s+(\d{1,3})\s+THB\s*([\d,]+\.\d{2})/;
 
 /** อ่านราคาสุทธิ/จำนวน/ยอดรวม จากแถวราคา — คืนค่าเมื่อคูณแล้วตรงเท่านั้น */
-function qtyRow(seg: string): { unit: number; qty: number } | undefined {
+function qtyRow(seg: string): { unit: number; qty: number; total: number } | undefined {
   const m = seg.match(QTY_ROW_RE);
   if (!m) return undefined;
   const unit = Number(m[1].replace(/,/g, "")), qty = Number(m[2]), total = Number(m[3].replace(/,/g, ""));
   if (!unit || !qty || !total) return undefined;
-  return Math.abs(unit * qty - total) <= Math.max(1, total * 0.005) ? { unit, qty } : undefined;
+  return Math.abs(unit * qty - total) <= Math.max(1, total * 0.005) ? { unit, qty, total } : undefined;
+}
+
+/** ระยะบรรทัดสูงสุดที่ยังนับว่า "อยู่ในช่องตารางเดียวกัน" กับแถวรายการ */
+const ROW_SPAN = 6;
+
+/**
+ * แถวที่ "จำนวนอยู่ท้ายบรรทัดรุ่น แต่ราคาอยู่คนละบรรทัด"
+ * เช่น ใบ C20726201-017 รายการ 3: บรรทัดบนเป็น "THB 248,700.00 THB 248,700.00 THB 497,400.00"
+ * ส่วนบรรทัดรุ่นลงท้ายด้วย "2" → จับคู่ราคา×จำนวน=ยอดรวม ในช่องเดียวกันให้ตรงก่อนจึงรับค่า
+ */
+function qtyFromTrailing(rowLine: string, seg: string): { unit: number; qty: number; total: number } | undefined {
+  const qty = Number(rowLine.match(/\s(\d{1,3})\s*$/)?.[1]);
+  if (!qty) return undefined;
+  const amounts = [...seg.matchAll(/THB\s*([\d,]+\.\d{2})/gi)].map((m) => Number(m[1].replace(/,/g, "")));
+  for (let i = 0; i < amounts.length; i++) {
+    for (let j = i + 1; j < amounts.length; j++) {
+      if (Math.abs(amounts[i] * qty - amounts[j]) <= Math.max(1, amounts[j] * 0.005)) {
+        return { unit: amounts[i], qty, total: amounts[j] };
+      }
+    }
+  }
+  return undefined;
+}
+
+/** SN ทั้งหมดในข้อความ เรียงตามที่เจอ (ไม่ซ้ำ) */
+function snsIn(s: string): string[] {
+  return [...new Set([...s.matchAll(SN_RE)].map((m) => m[1]))];
 }
 
 export function parseHeli(rawText: string): QuoteParseResult {
+  const lines = rawText.split(/\r?\n/);
   const text = rawText.replace(/\s+/g, " ").trim();
 
   // รหัสอ้างอิง C20726201-125 → ตั้งเลข PI = PI125 (ท้ายรหัส = เลข PI จริง · แก้ได้ในหน้าตรวจ)
@@ -62,61 +90,124 @@ export function parseHeli(rawText: string): QuoteParseResult {
   const isKd = isKdRef(importRef, piFromRef) || hasKdMark(text);
   const lead = leadDaysFrom(text);          // "Delivery: 75-90 days" — ใช้แทนค่าคงที่ถ้าใบเขียนไว้
 
-  const modelMatches = [...text.matchAll(modelRe("gi"))];
-  if (modelMatches.length === 0) {
-    return { vendor: "HELI", pi_no: piFromRef, quote_date: date, vehicles: [], rawText };
-  }
+  // ── แบ่งรายการตาม "แถวในตาราง" ──
+  // ⭐ (18 ก.ย. 2569 · ใบ C20726201-134): ช่องในตาราง HELI จัดกึ่งกลางแนวตั้ง SN ของรายการหนึ่ง
+  //    จึงกระจายอยู่ **ทั้งเหนือและใต้** บรรทัดที่มีชื่อรุ่น การตัดช่วงตั้งแต่ชื่อรุ่นไปข้างหน้า
+  //    จะดึง SN ของรายการถัดไปมาปนและทิ้ง SN ของตัวเอง (ใบ 134 อ่านได้ 5 จาก 10 คัน)
+  //    → ตอนนี้: หา "แถวรายการ" (บรรทัดที่มีทั้งชื่อรุ่นและแถวราคา) แล้วให้ทุกบรรทัดไปอยู่กับ
+  //      แถวที่ **ใกล้ที่สุด** เหมือนที่คนกวาดตาอ่านตาราง
+  // "แถวรายการ" = ทุกบรรทัดที่มีชื่อรุ่น — ราคา/จำนวนอาจไม่ได้อยู่บรรทัดเดียวกัน
+  // (บางใบตัวเลขตกไปบรรทัดบน/ล่างของช่อง) จึงหาจากช่องรอบๆ ให้ด้วย
+  const rowLines = lines
+    .map((l, i) => ({ i, l }))
+    .filter(({ l }) => modelRe("i").test(l));
 
   const vehicles: ParsedVehicle[] = [];
   const baseModels = new Set<string>();
-  const byModel: QuoteDocCheck["byModel"] = [];   // จำนวนที่ "คอลัมน์ QUANTITY ในเอกสาร" ระบุ — ใช้เทียบกับที่อ่านได้
+  const byModel: QuoteDocCheck["byModel"] = [];   // จำนวนที่ "คอลัมน์ QUANTITY ในเอกสาร" ระบุ
 
-  // ⚠️ ใบมีรุ่นเดียว → ใช้ "ทั้งใบ" เป็นช่วงของรายการนั้น ห้ามตัดที่ตำแหน่งชื่อรุ่น
-  //    เหตุ (18 ก.ย. 2569 · ใบ C20726201-134): ช่องในตารางจัดกึ่งกลางแนวตั้ง พอเรียงข้อความ
-  //    ตามตำแหน่งจริง ข้อมูลแถวเดียวกันจึงกระจายคนละบรรทัด — SN 2 ตัวแรกและแถวราคา
-  //    ไปอยู่ "ก่อน" ชื่อรุ่น การตัดตั้งแต่ชื่อรุ่นจึงทิ้งของไป (อ่านได้ 3 จาก 5 คัน
-  //    และไปหยิบยอดรวม 1,105,000 มาเป็นราคาต่อคันแทน 221,000)
-  const single = modelMatches.length === 1;
-  // ใบหลายรุ่น = ตัดช่วงตั้งแต่รุ่นนี้ถึงก่อนรุ่นถัดไป (แต่ละรายการมี SN/ราคา/เสาของตัวเอง)
-  for (let i = 0; i < modelMatches.length; i++) {
-    const start = modelMatches[i].index ?? 0;
-    const end = i + 1 < modelMatches.length ? (modelMatches[i + 1].index ?? text.length) : text.length;
-    const seg = single ? text : text.slice(start, end);
+  if (rowLines.length > 0) {
+    // แต่ละบรรทัดไปอยู่กับแถวรายการที่ใกล้ที่สุด (ไม่เกิน ROW_SPAN บรรทัด = ความสูงของช่อง)
+    const blocks: string[][] = rowLines.map(() => []);
+    const inTable: boolean[] = lines.map(() => false);
+    // แถวไหนมี "ราคา+จำนวน" อยู่ในบรรทัดตัวเองแล้ว (ใช้ตัดสินตอนระยะเท่ากัน)
+    const hasOwnRow = rowLines.map(({ l }) => QTY_ROW_RE.test(l));
+    lines.forEach((l, i) => {
+      let best = -1, bd = Infinity;
+      rowLines.forEach((r, k) => {
+        const d = Math.abs(r.i - i);
+        if (d < bd) { bd = d; best = k; }
+        // ระยะเท่ากันระหว่างแถวบน/ล่าง → ยกให้แถวล่าง **เฉพาะเมื่อแถวบนมีราคาของตัวเองแล้ว**
+        // (ใบ 017: บรรทัดราคาของรายการ 3 อยู่กึ่งกลางระหว่างรายการ 2 กับ 3 — รายการ 2 มีราคาครบแล้ว
+        //  ส่วนใบที่พิมพ์ราคาไว้ "ใต้" บรรทัดรุ่น บรรทัดนั้นต้องเป็นของแถวบน)
+        else if (d === bd && best >= 0 && hasOwnRow[best]) best = k;
+      });
+      if (best >= 0 && bd <= ROW_SPAN) { blocks[best].push(l); inTable[i] = true; }
+    });
 
-    const model = modelMatches[i][1].toUpperCase();
-    baseModels.add(model.replace(/-.*$/, ""));
-    const capacity = capacityFromModel(model);          // พิกัดยกจากรหัสรุ่น (models.ts)
-    const fuel = fuelFromText(seg) ?? fuelFromModel(model);
-    const mast = seg.match(MAST_RE)?.[1];
-    const valve = seg.match(/(\d+)\s*Valves?/i)?.[1];
-    const row = qtyRow(seg);                            // ราคาสุทธิ/คัน + จำนวน (ตรวจด้วยการคูณแล้ว)
-    const cost = row?.unit ?? firstPrice(seg);          // ไม่มีแถวราคาที่คูณลงตัว → ใช้ THB ตัวแรก
-    const sns = [...new Set([...seg.matchAll(SN_RE)].map((m) => m[1]))];
-    const docQty = row?.qty;                            // จำนวนที่เอกสารระบุสำหรับรายการนี้
-    if (docQty) byModel.push({ model, qty: docQty, subtotal: cost ? cost * docQty : undefined });
-
-    const build = (sn?: string): ParsedVehicle => {
-      const kd = isKd && !sn;                      // ใบ KD + ยังไม่มี SN = รถสั่งผลิต
-      const flags: string[] = [];
-      if (!sn && !kd) flags.push("ไม่พบ SN");       // KD ไม่ต้องเตือน — ยังไม่ถึงเวลามี SN
-      if (!cost) flags.push("ไม่พบราคาทุน");
-      if (!mast) flags.push("ไม่พบ MAST");
+    const items = rowLines.map((r, k) => {
+      const seg = blocks[k].join(" ");
       return {
-        brand: "HELI", model, SN: sn, capacity, fuel, mast, valve,
-        cost_price: cost, pi_no: piFromRef, import_ref: importRef, vendor: "HELI",
+        r, seg,
+        model: r.l.match(modelRe("i"))![1].toUpperCase(),
+        row: qtyRow(r.l) ?? qtyRow(seg) ?? qtyFromTrailing(r.l, seg),   // บรรทัดรุ่น → ช่องรอบๆ → จำนวนท้ายบรรทัด
+        sns: snsIn(seg),
+      };
+    });
+
+    // ⭐ แบ่ง SN ตาม "จำนวนในเอกสาร" เมื่อจำนวนรวมตรงกับ SN ที่อ่านได้ทั้งใบ
+    //    ช่อง SN ในตาราง HELI จัดกึ่งกลางแนวตั้ง SN ตัวบนสุด/ล่างสุดจึงอยู่ใกล้แถวข้างเคียง
+    //    มากกว่าแถวของตัวเอง (ใบ 034: ควรเป็น 2/5/3 แต่แบ่งตามระยะบรรทัดได้ 3/3/4)
+    //    แต่ลำดับของ SN ในหน้ากระดาษเรียงตามรายการเสมอ → ตัดตามจำนวนทีละรายการแม่นกว่า
+    const ordered = snsIn(lines.filter((_, i) => inTable[i]).join(" "));
+    const qtySum = items.every((it) => it.row) ? items.reduce((n, it) => n + it.row!.qty, 0) : 0;
+    if (qtySum > 0 && qtySum === ordered.length) {
+      let at = 0;
+      for (const it of items) { it.sns = ordered.slice(at, at + it.row!.qty); at += it.row!.qty; }
+    }
+
+    items.forEach((it) => {
+      baseModels.add(it.model.replace(/-.*$/, ""));
+      if (it.row) byModel.push({ model: it.model, qty: it.row.qty, subtotal: it.row.total });
+      pushItem({
+        model: it.model, cost: it.row?.unit ?? firstPrice(it.seg), docQty: it.row?.qty, sns: it.sns,
+        mast: it.r.l.match(MAST_RE)?.[1], valve: it.seg.match(/(\d+)\s*Valves?/i)?.[1],
+        fuel: fuelFromText(it.r.l) ?? fuelFromText(it.seg) ?? fuelFromModel(it.model),
+      });
+    });
+  } else {
+    // ── ทางสำรอง: ใบที่เรียงบรรทัดไม่ได้ (ข้อความสลับ/สแกน) — ตัดช่วงตามตำแหน่งชื่อรุ่นแบบเดิม ──
+    const modelMatches = [...text.matchAll(modelRe("gi"))];
+    if (modelMatches.length === 0) {
+      return { vendor: "HELI", pi_no: piFromRef, quote_date: date, vehicles: [], rawText };
+    }
+    const single = modelMatches.length === 1;   // ใบรุ่นเดียว → ใช้ทั้งใบเป็นช่วงของรายการนั้น
+    for (let i = 0; i < modelMatches.length; i++) {
+      const start = modelMatches[i].index ?? 0;
+      const end = i + 1 < modelMatches.length ? (modelMatches[i + 1].index ?? text.length) : text.length;
+      const seg = single ? text : text.slice(start, end);
+      const model = modelMatches[i][1].toUpperCase();
+      baseModels.add(model.replace(/-.*$/, ""));
+      const row = qtyRow(seg);
+      const cost = row?.unit ?? firstPrice(seg);
+      if (row) byModel.push({ model, qty: row.qty, subtotal: row.total });
+      pushItem({
+        model, cost, docQty: row?.qty,
+        sns: [...new Set([...seg.matchAll(SN_RE)].map((m) => m[1]))],
+        mast: seg.match(MAST_RE)?.[1], valve: seg.match(/(\d+)\s*Valves?/i)?.[1],
+        fuel: fuelFromText(seg) ?? fuelFromModel(model),
+      });
+    }
+  }
+
+  /** สร้างรถของรายการหนึ่ง (แตกตาม SN ที่มี · ไม่มี SN ก็แตกตามจำนวนในเอกสาร) */
+  function pushItem(it: {
+    model: string; cost?: number; docQty?: number; sns: string[];
+    mast?: string; valve?: string; fuel?: string;
+  }) {
+    const capacity = capacityFromModel(it.model);       // พิกัดยกจากรหัสรุ่น (models.ts)
+    const build = (sn?: string): ParsedVehicle => {
+      const kd = isKd && !sn;                           // ใบ KD + ยังไม่มี SN = รถสั่งผลิต
+      const flags: string[] = [];
+      if (!sn && !kd) flags.push("ไม่พบ SN");            // KD ไม่ต้องเตือน — ยังไม่ถึงเวลามี SN
+      if (!it.cost) flags.push("ไม่พบราคาทุน");
+      if (!it.mast) flags.push("ไม่พบ MAST");
+      return {
+        brand: "HELI", model: it.model, SN: sn, capacity,
+        fuel: it.fuel, mast: it.mast, valve: it.valve,
+        cost_price: it.cost, pi_no: piFromRef, import_ref: importRef, vendor: "HELI",
         made_to_order: kd || undefined,
         lead_days: kd ? lead : undefined,
         flags: flags.length ? flags : undefined,
       };
     };
-
-    if (sns.length === 0) {
-      // ไม่มี SN (รถสั่งผลิต/ยังไม่ออก SN) → แตก placeholder ตามจำนวนในเอกสาร (QTY_RE)
-      for (let q = 0; q < (docQty ?? 1); q++) vehicles.push(build(undefined));
+    if (it.sns.length === 0) {
+      for (let q = 0; q < (it.docQty ?? 1); q++) vehicles.push(build(undefined));
     } else {
       // จำนวน SN ไม่ตรงคอลัมน์จำนวนในเอกสาร → ไม่เดาเอง ติดธงให้คนตรวจกับใบจริง
-      const warn = docQty && docQty !== sns.length ? `เอกสารระบุ ${docQty} คัน แต่พบ SN ${sns.length} ตัว — ตรวจกับใบจริง` : null;
-      sns.forEach((sn) => {
+      const warn = it.docQty && it.docQty !== it.sns.length
+        ? `เอกสารระบุ ${it.docQty} คัน แต่พบ SN ${it.sns.length} ตัว — ตรวจกับใบจริง` : null;
+      it.sns.forEach((sn) => {
         const v = build(sn);
         if (warn) v.flags = [...(v.flags ?? []), warn];
         vehicles.push(v);

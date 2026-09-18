@@ -24,7 +24,7 @@ export async function getPdfjs() {
   return lib;
 }
 
-interface Cell { x: number; y: number; h: number; s: string }
+interface Cell { x: number; y: number; h: number; w: number; s: string }
 
 /**
  * จัดข้อความเป็นบรรทัดตามตำแหน่งจริง — คืนข้อความแบบที่ "ตาอ่าน" ไม่ใช่ลำดับที่ฝังในไฟล์
@@ -33,13 +33,16 @@ interface Cell { x: number; y: number; h: number; s: string }
 export function orderTextItems(items: unknown[]): string {
   const cells: Cell[] = [];
   for (const it of items) {
-    const o = it as { str?: string; transform?: number[]; height?: number };
+    const o = it as { str?: string; transform?: number[]; height?: number; width?: number };
     const s = typeof o.str === "string" ? o.str : "";
-    if (!s.trim() || !Array.isArray(o.transform)) continue;
+    // เก็บชิ้นที่เป็น "ช่องว่างล้วน" ไว้ด้วย — ใบที่ฝังมาทีละตัวอักษร ช่องว่างระหว่างคำ
+    // ก็เป็นชิ้นของมันเอง ถ้าทิ้งไปคำจะติดกันหมด
+    if (!s || !Array.isArray(o.transform)) continue;
     cells.push({
       x: o.transform[4],
       y: o.transform[5],
       h: Math.abs(o.height || o.transform[3]) || 10,
+      w: Math.abs(o.width ?? 0),
       s,
     });
   }
@@ -55,9 +58,34 @@ export function orderTextItems(items: unknown[]): string {
     else lines[lines.length - 1].push(c);
   }
   return lines
-    .map((l) => l.sort((a, b) => a.x - b.x).map((c) => c.s).join(" ").replace(/\s+/g, " ").trim())
+    .map(joinLine)
     .filter(Boolean)
     .join("\n");
+}
+
+/**
+ * ต่อชิ้นข้อความในบรรทัดเดียวกันตาม "ระยะห่างจริง" ไม่ใช่ใส่ช่องว่างคั่นทุกชิ้น
+ *
+ * ⭐ สำคัญ (18 ก.ย. 2569 · ใบ EP SALES LIST-0002): PDF บางใบฝังข้อความ **ทีละตัวอักษร**
+ *    (หน้าเดียว 1,739 ชิ้น) เดิมต่อด้วย join(" ") จึงได้ "E P  D i s t r i b u t i o n"
+ *    → เดาผู้ผลิตไม่ออก อ่านรุ่น/ราคาไม่ได้สักตัว = ต้นตออาการ "อ่านเอกสารไม่ได้เลย"
+ *    ตอนนี้ดูระยะห่าง: ชิดกัน = คำเดียวกันต่อตรงๆ · ห่างเกินความกว้างช่องว่าง = คนละคำ/คนละช่อง
+ *    (เท่ากับอ่านตามที่ตาเห็นบนกระดาษ · ใบที่ฝังมาเป็นคำอยู่แล้วผลลัพธ์ไม่เปลี่ยน)
+ */
+function joinLine(cells: Cell[]): string {
+  const l = [...cells].sort((a, b) => a.x - b.x);
+  let out = "";
+  let end: number | null = null;              // ขอบขวาของชิ้นก่อนหน้า
+  for (const c of l) {
+    const gap = end === null ? 0 : c.x - end;
+    // ช่องว่างในฟอนต์ทั่วไปกว้างราว 0.25-0.3 เท่าของความสูงตัวอักษร
+    const needSpace = end !== null && gap > c.h * 0.25 && !/\s$/.test(out) && !/^\s/.test(c.s);
+    if (needSpace) out += " ";
+    out += c.s;
+    // บาง PDF ไม่ส่ง width มา → ประมาณจากความสูง × จำนวนตัวอักษร
+    end = c.x + (c.w || c.h * 0.5 * c.s.length);
+  }
+  return out.replace(/\s+/g, " ").trim();
 }
 
 /** อ่านข้อความทั้งหมดจาก PDF (ทุกหน้า) — คืน "" ถ้าเป็นสแกนไม่มี text layer */
