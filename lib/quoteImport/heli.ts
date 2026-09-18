@@ -47,7 +47,9 @@ function qtyRow(seg: string): { unit: number; qty: number; total: number } | und
   if (!m) return undefined;
   const unit = Number(m[1].replace(/,/g, "")), qty = Number(m[2]), total = Number(m[3].replace(/,/g, ""));
   if (!unit || !qty || !total) return undefined;
-  return Math.abs(unit * qty - total) <= Math.max(1, total * 0.005) ? { unit, qty, total } : undefined;
+  // เกณฑ์แค่ "เศษสตางค์" (1 สตางค์/คัน) — หลวมกว่านี้ราคาป้ายจะผ่านแทนราคาสุทธิ
+  // (ใบ 137: 217,000 x 5 = 1,085,000 ต่างจากยอดจริง 1,080,000 อยู่ 5,000 = 0.46% ซึ่งเดิมยอมรับ)
+  return Math.abs(unit * qty - total) <= Math.max(1, qty * 0.01) ? { unit, qty, total } : undefined;
 }
 
 /** ระยะบรรทัดสูงสุดที่ยังนับว่า "อยู่ในช่องตารางเดียวกัน" กับแถวรายการ */
@@ -64,7 +66,7 @@ function qtyFromTrailing(rowLine: string, seg: string): { unit: number; qty: num
   const amounts = [...seg.matchAll(/THB\s*([\d,]+\.\d{2})/gi)].map((m) => Number(m[1].replace(/,/g, "")));
   for (let i = 0; i < amounts.length; i++) {
     for (let j = i + 1; j < amounts.length; j++) {
-      if (Math.abs(amounts[i] * qty - amounts[j]) <= Math.max(1, amounts[j] * 0.005)) {
+      if (Math.abs(amounts[i] * qty - amounts[j]) <= Math.max(1, qty * 0.01)) {
         return { unit: amounts[i], qty, total: amounts[j] };
       }
     }

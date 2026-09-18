@@ -56,7 +56,7 @@ function qtyRow(block: string): { qty: number; unit: number; total: number } | u
   for (const m of block.matchAll(ROW_RE)) {
     const qty = Number(m[1]), unit = toBaht(m[2]) ?? 0, total = toBaht(m[3]) ?? 0;
     if (!qty || !unit || !total) continue;
-    if (Math.abs(unit * qty - total) <= Math.max(1, total * 0.005)) return { qty, unit, total };
+    if (Math.abs(unit * qty - total) <= Math.max(1, qty * 0.01)) return { qty, unit, total };
   }
   return undefined;
 }
