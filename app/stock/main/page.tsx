@@ -96,13 +96,14 @@ export default function StockMain() {
   const [listModel, setListModel]   = useState("all");                                       // กรองรุ่น
   const [listMast, setListMast]     = useState("all");                                       // กรองเสา (MAST)
   const [listFuel, setListFuel]     = useState("all");                                       // กรองพลังงาน
+  const [listNoCost, setListNoCost] = useState(false);                                       // เฉพาะคันที่ยังไม่มีราคาทุน
   const [listSort, setListSort]     = useState<"recent" | "model" | "remain" | "sn" | "pi">("recent"); // การเรียง
   const [listView, setListView]     = useState<"list" | "table" | "byModel" | "aging">("list");  // มุมมอง: รายคัน / ตาราง / รวมตามรุ่น / ค้างนาน
   const [collapsedBrands, setCollapsedBrands] = useState<Set<string>>(new Set()); // แบรนด์ที่ยุบไว้ในมุมมองตามรุ่น
   const toggleBrand = (b: string) => setCollapsedBrands(prev => { const n = new Set(prev); n.has(b) ? n.delete(b) : n.add(b); return n; });
   const [showCount, setShowCount] = useState(100); // แสดงทีละกี่คัน (มุมมองรายคัน/ตาราง) · Infinity = ทั้งหมด
   // เปลี่ยนตัวกรอง/ค้นหา/มุมมอง → รีเซ็ตจำนวนที่แสดงกลับค่าเริ่ม (กันค้างที่ "ทั้งหมด" แล้วช้า)
-  useEffect(() => { setShowCount(c => (c === Infinity ? Infinity : 100)); }, [listSearch, listCat, listStatus, listBrand, listModel, listMast, listView]);
+  useEffect(() => { setShowCount(c => (c === Infinity ? Infinity : 100)); }, [listSearch, listCat, listStatus, listBrand, listModel, listMast, listView, listNoCost]);
   const [bulkMode, setBulkMode]     = useState(false);              // โหมดเลือกหลายคัน
   const [selIds, setSelIds]         = useState<Set<string>>(new Set()); // รถที่เลือกไว้
   const [bulkDelConfirm, setBulkDelConfirm] = useState(false);
@@ -550,6 +551,8 @@ export default function StockMain() {
   const baseModel = (s: string) => s.replace(/[-\s]*(m\d+|zsm\d+|ws\d\w*)$/i, "").trim();
   const isAvailable = (s: unknown) => String(s ?? "") === "พร้อมขาย"; // "ยังเหลือในสต็อก"
   const mastOf = (f: Forklift) => String((f.custom_fields as Record<string, unknown> | undefined)?.["MAST"] ?? "").trim();
+  // จำนวนรถที่ยังไม่ได้กรอกราคาทุน — โชว์บนปุ่มกรอง เพื่อรู้ว่าเหลือต้องกรอกอีกกี่คัน
+  const noCostCount = useMemo(() => forklifts.filter(f => (Number(f.cost_price) || 0) <= 0).length, [forklifts]);
   const listFiltered = useMemo(() => {
     const q = listSearch.trim().toLowerCase();
     const qBase = baseModel(q); // ฐานรุ่นของคำค้น (ตัด MAST) → เจอทุก MAST ของรุ่นเดียวกัน
@@ -562,7 +565,9 @@ export default function StockMain() {
       const okMast = listMast === "all" || String((f.custom_fields as Record<string, unknown> | undefined)?.["MAST"] ?? "").trim() === listMast;
       const okFuel = listFuel === "all" || f.fuel === listFuel;
       const okStatus = listStatus === "all" || f.status === listStatus;
-      return okQ && okCat && okBrand && okModel && okMast && okFuel && okStatus;
+      // ไล่กรอกราคาทุน: กรองเฉพาะคันที่ทุนยังว่าง/เป็น 0 (หน้าวางแผนสั่งสต็อกจะได้คำนวณกำไรได้)
+      const okCost = !listNoCost || (Number(f.cost_price) || 0) <= 0;
+      return okQ && okCat && okBrand && okModel && okMast && okFuel && okStatus && okCost;
     });
     const recent = (a: Forklift, b: Forklift) => String(b.created_at || "").localeCompare(String(a.created_at || ""));
     if (listSort === "model") rows.sort((a, b) => String(a.model || "").localeCompare(String(b.model || "")) || recent(a, b));
@@ -578,7 +583,7 @@ export default function StockMain() {
     }
     else rows.sort(recent); // recent / remain (remain ใช้ในมุมมอง byModel)
     return rows;
-  }, [forklifts, listSearch, listCat, listBrand, listModel, listMast, listFuel, listStatus, listSort]);
+  }, [forklifts, listSearch, listCat, listBrand, listModel, listMast, listFuel, listStatus, listSort, listNoCost]);
 
   // รายการที่แสดงจริง (มุมมองรายคัน/ตาราง) — จำกัดตาม showCount กันโหลดพันแถวรวดเดียว
   const pagedList = showCount === Infinity ? listFiltered : listFiltered.slice(0, showCount);
@@ -1315,6 +1320,12 @@ export default function StockMain() {
                   <option value="all">ทุกพลังงาน</option>
                   {fuelOpts.map(f => <option key={f} value={f}>{f}</option>)}
                 </select>
+                {/* ไล่กรอกราคาทุน — หน้าวางแผนสั่งสต็อกจะคำนวณกำไรได้ต่อเมื่อทุนครบทุกคันของรุ่นนั้น */}
+                <button onClick={() => setListNoCost(v => !v)}
+                  title="แสดงเฉพาะรถที่ยังไม่ได้กรอกราคาทุน (รวมรถที่ขายไปแล้ว)"
+                  className={`rounded-lg px-2.5 py-1.5 text-xs font-bold border transition-all ${listNoCost ? "bg-amber-500 text-white border-amber-500" : "bg-white text-slate-600 border-slate-200 hover:border-amber-300 hover:text-amber-700"}`}>
+                  💰 ยังไม่มีทุน{noCostCount > 0 ? ` (${noCostCount})` : ""}
+                </button>
               </div>
               {/* สถานะ + เรียง + มุมมอง */}
               <div className="flex items-center gap-2 flex-wrap">
