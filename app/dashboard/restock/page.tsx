@@ -40,9 +40,18 @@ interface ModelRow {
   coverage: number;       // พอขายอีกกี่เดือน (available / avgMonth)
   needQty: number;        // แนะนำสั่งเพิ่ม (คัน)
   needCost: number;       // งบสั่งเพิ่มโดยประมาณ
-  avgProfit: number;      // กำไรเฉลี่ย/คัน (ประมาณ)
-  totalProfit: number;    // กำไรรวมในช่วง (ประมาณ)
-  hasCost: boolean;       // มีข้อมูลทุนพอคำนวณกำไรไหม
+  avgProfit: number;      // กำไรเฉลี่ย/คัน (คิดจากทุนจริงเท่านั้น)
+  totalProfit: number;    // กำไรรวมในช่วง (คิดจากทุนจริงเท่านั้น)
+  hasCost: boolean;       // ทุนครบทุกคันไหม — ไม่ครบ = ไม่โชว์กำไร (ไม่เดาแทน)
+  noCostUnits: number;    // จำนวนคันที่ขายแล้วแต่ยังไม่มีราคาทุน
+}
+
+/** รุ่นที่ยังกรอกราคาทุนไม่ครบ — เอาไว้ไล่กรอกให้จบ กำไรถึงจะคำนวณได้ */
+interface NoCostRow {
+  brand: string; model: string;
+  sold: number;        // ขายแล้ว แต่รถคันนั้นในทะเบียนยังไม่มีทุน
+  stock: number;       // รถในทะเบียนที่ยังไม่มีทุน (ทุกสถานะ)
+  unlinked: number;    // ดีลที่หารถในทะเบียนไม่เจอเลย (ส่วนใหญ่คือบิลภาษีนำเข้า)
 }
 
 function RestockPageInner() {
@@ -53,6 +62,7 @@ function RestockPageInner() {
   const [target, setTarget] = useState(3);       // เป้าหมาย 3 เดือน
   const [sortBy, setSortBy] = useState<"units" | "totalProfit" | "avgProfit">("units");
   const [expandedBrand, setExpandedBrand] = useState<string | null>(null);
+  const [showAllNoCost, setShowAllNoCost] = useState(false);   // รายการรุ่นที่ไม่มีทุน — ย่อ/ขยาย
 
   // ดีลปิดจริงทั้งหมด (รวมบิล GR เพราะสะท้อน "ดีมานด์จริง" ที่ต้องเตรียมสต็อก)
   const closed = useMemo(() => sales.filter(isClosedSale), [sales]);
@@ -124,26 +134,27 @@ function RestockPageInner() {
       const avgCost = st.costN > 0 ? Math.round(st.costSum / st.costN) : 0;
       const coverage = avgMonth > 0 ? st.available / avgMonth : Infinity;
       const needQty = Math.max(0, Math.ceil(avgMonth * target) - st.available - st.incoming);
-      // กำไรประมาณ = ราคาขาย − ทุน − อุปกรณ์เสริม − ของแถม − ค่าขนส่ง
-      // ถ้าดีลไม่มีทุน (บิล GR ทุน=0) ใช้ทุนเฉลี่ยของรุ่นแทน กันกำไรเพี้ยนสูง
-      let profitSum = 0, hasCost = avgCost > 0;
+      // กำไร = ราคาขาย − ทุนจริงของคันนั้น − อุปกรณ์เสริม − ของแถม − ค่าขนส่ง
+      // ⚠️ (22 ก.ย. 2569) **ไม่เดาทุนแทนแล้ว** — เดิมคันไหนไม่มีทุน (บิลภาษีนำเข้า ทุน=0)
+      //    จะเอา "ทุนเฉลี่ยของรุ่น" มาใส่ให้ ทำให้กำไรที่เห็นเป็นตัวเลขปลอมปนกับของจริง
+      //    ตอนนี้: ทุนไม่ครบทุกคัน = ไม่โชว์กำไรเลย แล้วไปขึ้นในรายการ "รุ่นที่ยังไม่มีต้นทุน" ให้ไปกรอก
+      let profitSum = 0, noCostUnits = 0;
       g.sales.forEach(s => {
-        const f = fkById.get(s.forklift_id);
-        let cost = Number(f?.cost_price) || 0;
-        if (cost <= 0) cost = avgCost;
-        if (cost > 0) hasCost = true;
+        const cost = Number(fkById.get(s.forklift_id)?.cost_price) || 0;
+        if (cost <= 0) { noCostUnits += 1; return; }
         const addOns = (s.add_ons ?? []).reduce((t, a) => t + (Number(a.price) || 0), 0);
         const free = s.freebie ? 2800 : 0;
         const ship = Number(s.shipping_cost) || 0;
         profitSum += (Number(s.actual_sale) || 0) - cost - addOns - free - ship;
       });
+      const hasCost = noCostUnits === 0;
       out.push({
         brand: g.brand, model: g.model, units: g.units, revenue: g.revenue,
         avgMonth, available: st.available, incoming: st.incoming, avgCost,
         coverage, needQty, needCost: needQty * avgCost,
         avgProfit: hasCost ? Math.round(profitSum / g.units) : 0,
         totalProfit: hasCost ? Math.round(profitSum) : 0,
-        hasCost,
+        hasCost, noCostUnits,
       });
     });
     const cmp = (a: ModelRow, b: ModelRow) => sortBy === "units" ? b.units - a.units : sortBy === "avgProfit" ? b.avgProfit - a.avgProfit : b.totalProfit - a.totalProfit;
@@ -162,6 +173,41 @@ function RestockPageInner() {
     });
     return [...m.values()].sort((a, b) => b.revenue - a.revenue);
   }, [rows]);
+
+  // ── รุ่นที่ยังไม่มีต้นทุน — กรอกให้ครบแล้วกำไรถึงจะคำนวณได้ ──
+  // ดู "ดีลที่ปิดแล้วทุกช่วงเวลา" (ไม่อิงช่วงที่เลือก เพราะเป็นงานกรอกข้อมูล ไม่ใช่การวิเคราะห์)
+  // + "รถในทะเบียนที่ราคาทุนยังเป็น 0"
+  const noCostRows = useMemo(() => {
+    const m = new Map<string, NoCostRow>();
+    const take = (brand: string, model: string) => {
+      const key = `${brand}|${model}`;
+      const g = m.get(key) ?? { brand, model, sold: 0, stock: 0, unlinked: 0 };
+      m.set(key, g);
+      return g;
+    };
+    const brandOf = (model: string, fallback?: string) =>
+      String(fallback ?? "").trim() || brandByModel.get(model.trim().toUpperCase()) || "ไม่ระบุ";
+
+    forklifts.forEach(f => {
+      if ((Number(f.cost_price) || 0) > 0) return;
+      const model = String(f.model ?? "").trim();
+      if (!model) return;
+      take(brandOf(model, f.brand), model).stock += 1;
+    });
+    closed.forEach(s => {
+      const model = String(s.forklift_model ?? "").trim();
+      if (!model) return;
+      const f = fkById.get(s.forklift_id);
+      // ดีลที่หารถในทะเบียนไม่เจอ = ไม่มีที่ให้กรอกทุน (ต้องผูกรถหรือเพิ่มคันนั้นเข้าทะเบียนก่อน)
+      if (!f) { take(brandOf(model, s.forklift_brand), model).unlinked += 1; return; }
+      if ((Number(f.cost_price) || 0) > 0) return;
+      take(brandOf(model, f.brand || s.forklift_brand), model).sold += 1;
+    });
+    const total = (r: NoCostRow) => r.sold + r.stock + r.unlinked;
+    return [...m.values()].sort((a, b) => total(b) - total(a));
+  }, [forklifts, closed, fkById, brandByModel]);
+
+  const noCostUnits = noCostRows.reduce((n, r) => n + r.sold + r.stock + r.unlinked, 0);
 
   const totalUnits = rows.reduce((s, r) => s + r.units, 0);
   const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
@@ -192,6 +238,19 @@ function RestockPageInner() {
     ws["!cols"] = [12, 20, 14, 18, 16, 16, 14, 14, 14, 14, 16, 16, 20].map(w => ({ wch: w }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "วางแผนสั่งสต็อก");
+    // ชีตที่ 2 — รายการที่ต้องไปกรอกราคาทุน (ไม่งั้นกำไรคำนวณไม่ได้)
+    if (noCostRows.length > 0) {
+      const ws2 = XLSX.utils.json_to_sheet(noCostRows.map(r => ({
+        "ยี่ห้อ": r.brand, "รุ่น": r.model,
+        "ขายแล้ว—รถไม่มีทุน (คัน)": r.sold,
+        "ในทะเบียนไม่มีทุน (คัน)": r.stock,
+        "ดีลที่ไม่มีรถผูก (คัน)": r.unlinked,
+        "รวม (คัน)": r.sold + r.stock + r.unlinked,
+        "แก้ที่ไหน": r.stock > 0 || r.sold > 0 ? "หน้าสต็อก → แก้หลายคัน → ช่องราคาทุน" : "ผูกรถกับดีล หรือเพิ่มคันนั้นเข้าทะเบียนก่อน",
+      })));
+      ws2["!cols"] = [12, 20, 22, 20, 20, 12, 40].map(w => ({ wch: w }));
+      XLSX.utils.book_append_sheet(wb, ws2, "รุ่นที่ยังไม่มีต้นทุน");
+    }
     XLSX.writeFile(wb, `วางแผนสั่งสต็อก_${WINDOWS[winIdx].label}.xlsx`);
   };
 
@@ -264,7 +323,7 @@ function RestockPageInner() {
             <p className="text-2xl font-bold text-slate-800 mt-1">฿{fmt(totalRevenue)}</p>
           </div>
           <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
-            <p className="text-xs text-slate-500">กำไรรวม (ประมาณ)</p>
+            <p className="text-xs text-slate-500">กำไรรวม <span className="text-slate-400">(เฉพาะรุ่นที่มีทุนครบ)</span></p>
             <p className="text-2xl font-bold text-emerald-600 mt-1">฿{fmt(totalProfit)}</p>
           </div>
           <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
@@ -290,6 +349,51 @@ function RestockPageInner() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* ── รุ่นที่ยังไม่มีราคาทุน — กรอกให้ครบ กำไรถึงจะคำนวณได้ (ระบบไม่เดาทุนแทน) ── */}
+        {noCostRows.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+            <div className="flex items-center gap-2 flex-wrap mb-2">
+              <p className="text-sm font-bold text-amber-800 flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4" />รุ่นที่ยังไม่มีราคาทุน — {noCostRows.length} รุ่น · {fmt(noCostUnits)} คัน
+              </p>
+              <span className="text-xs text-amber-700">กรอกทุนครบเมื่อไหร่ กำไรของรุ่นนั้นจะคำนวณให้ทันที · นับจากดีลที่ปิดแล้วทุกช่วงเวลา ไม่ใช่เฉพาะช่วงที่เลือก</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[600px]">
+                <thead>
+                  <tr className="text-xs text-amber-800/70 border-b border-amber-200">
+                    <th className="text-left py-1.5 px-2 font-semibold">ยี่ห้อ / รุ่น</th>
+                    <th className="text-right py-1.5 px-2 font-semibold">ขายแล้ว · รถไม่มีทุน</th>
+                    <th className="text-right py-1.5 px-2 font-semibold">ในทะเบียนไม่มีทุน</th>
+                    <th className="text-right py-1.5 px-2 font-semibold">ดีลไม่มีรถผูก</th>
+                    <th className="text-left py-1.5 px-2 font-semibold">กรอกที่ไหน</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(showAllNoCost ? noCostRows : noCostRows.slice(0, 15)).map(r => (
+                    <tr key={`${r.brand}|${r.model}`} className="border-b border-amber-100">
+                      <td className="py-1.5 px-2 font-semibold text-slate-800">{r.brand} {r.model}</td>
+                      <td className="py-1.5 px-2 text-right text-slate-700">{r.sold || "—"}</td>
+                      <td className="py-1.5 px-2 text-right text-slate-700">{r.stock || "—"}</td>
+                      <td className="py-1.5 px-2 text-right text-slate-700">{r.unlinked || "—"}</td>
+                      <td className="py-1.5 px-2 text-xs text-slate-600">
+                        {r.stock + r.sold > 0
+                          ? <Link href="/stock/main" className="text-sky-700 font-semibold hover:underline">หน้าสต็อก → แก้หลายคัน → ราคาทุน</Link>
+                          : "ดีลนี้ยังไม่ได้ผูกกับรถในทะเบียน — ผูกรถก่อนจึงกรอกทุนได้"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {noCostRows.length > 15 && (
+              <button onClick={() => setShowAllNoCost(v => !v)} className="mt-2 text-xs font-bold text-amber-800 hover:underline">
+                {showAllNoCost ? "ย่อรายการ" : `ดูทั้งหมด ${noCostRows.length} รุ่น`}
+              </button>
+            )}
           </div>
         )}
 
@@ -330,7 +434,7 @@ function RestockPageInner() {
                             <td className="px-3 py-2.5 font-semibold text-slate-800 whitespace-nowrap">{r.model}</td>
                             <td className="px-3 py-2.5 whitespace-nowrap"><span className="text-slate-700 font-bold">{fmt(r.units)}</span> <span className="text-[11px] text-slate-400">คัน</span></td>
                             <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">฿{fmt(r.revenue)}</td>
-                            <td className="px-3 py-2.5 whitespace-nowrap">{r.hasCost ? <span className={`font-semibold ${r.avgProfit >= 0 ? "text-emerald-700" : "text-red-600"}`}>฿{fmt(r.avgProfit)}</span> : <span className="text-slate-300">—</span>}</td>
+                            <td className="px-3 py-2.5 whitespace-nowrap">{r.hasCost ? <span className={`font-semibold ${r.avgProfit >= 0 ? "text-emerald-700" : "text-red-600"}`}>฿{fmt(r.avgProfit)}</span> : <span className="text-amber-600 text-xs" title="ยังไม่มีราคาทุนบางคัน — ระบบไม่เดาให้">ยังไม่มีทุน {r.noCostUnits} คัน</span>}</td>
                             <td className="px-3 py-2.5 whitespace-nowrap">{r.hasCost ? <span className={`font-semibold ${r.totalProfit >= 0 ? "text-emerald-600" : "text-red-600"}`}>฿{fmt(r.totalProfit)}</span> : <span className="text-slate-300">—</span>}</td>
                             <td className="px-3 py-2.5 whitespace-nowrap"><span className="text-slate-600">{wrate(r.avgMonth)}</span> <span className="text-[11px] text-slate-400">คัน/ด.</span></td>
                             <td className="px-3 py-2.5 whitespace-nowrap"><span className={`font-bold ${r.available === 0 ? "text-red-600" : "text-slate-700"}`}>{fmt(r.available)}</span> <span className="text-[11px] text-slate-400">คัน</span></td>
