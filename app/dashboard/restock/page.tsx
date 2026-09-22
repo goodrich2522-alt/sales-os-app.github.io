@@ -80,13 +80,36 @@ function RestockPageInner() {
     return m;
   }, [forklifts]);
 
+  // ยี่ห้อของแต่ละรุ่นจากทะเบียนรถ — ใช้เติมให้ใบขายที่ไม่ได้กรอกยี่ห้อไว้
+  // เก็บเฉพาะรุ่นที่มียี่ห้อเดียวชัดเจน (รุ่นที่ซ้ำข้ามยี่ห้อ เช่น PS400-1500 มีทั้ง STAXX และ CNC → ไม่เดา)
+  const brandByModel = useMemo(() => {
+    const seen = new Map<string, Set<string>>();
+    forklifts.forEach(f => {
+      const model = String(f.model ?? "").trim().toUpperCase();
+      const brand = String(f.brand ?? "").trim();
+      if (!model || !brand) return;
+      if (!seen.has(model)) seen.set(model, new Set());
+      seen.get(model)!.add(brand);
+    });
+    const m = new Map<string, string>();
+    seen.forEach((brands, model) => { if (brands.size === 1) m.set(model, [...brands][0]); });
+    return m;
+  }, [forklifts]);
+
   // จัดกลุ่มยอดขายในช่วง → รุ่น → คำนวณตัวชี้วัดสั่งสต็อก
   const rows = useMemo(() => {
     const m = new Map<string, { brand: string; model: string; units: number; revenue: number; sales: typeof closed }>();
     closed.filter(s => winSet.has(closeMonth(s))).forEach(s => {
-      const brand = s.forklift_brand || "ไม่ระบุ";
       const model = s.forklift_model || "";
       if (!model) return;
+      // ⭐ ยี่ห้อ: ใบขายก่อน → ทะเบียนรถของคันนั้น → รุ่นนั้นเป็นของยี่ห้อไหน
+      //    (22 ก.ย. 2569) ใบขายเก่า/บิล GR หลายใบไม่ได้กรอกยี่ห้อ เดิมจึงตกไปอยู่กลุ่ม "ไม่ระบุ"
+      //    ซึ่งไม่ใช่แค่ชื่อกลุ่มผิด — คีย์จับคู่สต็อกคือ "ยี่ห้อ|รุ่น" พอยี่ห้อว่างเลยหาสต็อกไม่เจอ
+      //    คงเหลือขึ้น 0 · ทุนขึ้น "—" · ติดป้าย "ควรสั่งด่วน" ทั้งที่ของมีในคลัง
+      const brand = s.forklift_brand
+        || fkById.get(s.forklift_id)?.brand
+        || brandByModel.get(model.trim().toUpperCase())
+        || "ไม่ระบุ";
       const key = `${brand}|${model}`;
       const g = m.get(key) ?? { brand, model, units: 0, revenue: 0, sales: [] as typeof closed };
       g.units += 1;
@@ -125,7 +148,7 @@ function RestockPageInner() {
     });
     const cmp = (a: ModelRow, b: ModelRow) => sortBy === "units" ? b.units - a.units : sortBy === "avgProfit" ? b.avgProfit - a.avgProfit : b.totalProfit - a.totalProfit;
     return out.sort(cmp);
-  }, [closed, winSet, stockByModel, denom, target, sortBy, fkById]);
+  }, [closed, winSet, stockByModel, denom, target, sortBy, fkById, brandByModel]);
 
   // จัดกลุ่มตามแบรนด์ (เรียงแบรนด์ตามยอดขายรวม)
   const byBrand = useMemo(() => {
