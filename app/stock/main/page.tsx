@@ -320,14 +320,15 @@ export default function StockMain() {
     if (!bulkEdit) return;
     const model = bulkEdit.model.trim(), capacity = bulkEdit.capacity.trim();
     const cat = bulkEdit.cat.trim(), pi = bulkEdit.pi.trim();
-    const cost = bulkEdit.cost.trim() === "" ? null : Number(bulkEdit.cost.replace(/[^d.-]/g, ""));
+    const cost = bulkEdit.cost.trim() === "" ? null : Number(bulkEdit.cost.replace(/[^\d.-]/g, ""));
     selForklifts().forEach(f => updateForklift({
       ...f,
       ...(model ? { model } : {}),
       ...(capacity ? { capacity } : {}),
       ...(cat ? { vehicle_category: cat as Forklift["vehicle_category"] } : {}),
       ...(pi ? { pi_no: pi } : {}),
-      ...(cost != null && Number.isFinite(cost) ? { cost_price: cost } : {}),
+      // ต้องเป็นตัวเลขมากกว่า 0 เท่านั้น — กันกรอกผิดแล้วไปลบทุนเดิมให้กลายเป็น 0
+      ...(cost != null && Number.isFinite(cost) && cost > 0 ? { cost_price: cost } : {}),
     }));
     showToast(`แก้ ${selIds.size} คันแล้ว ✓`);
     setBulkEdit(null); clearSel();
@@ -1915,7 +1916,7 @@ export default function StockMain() {
           e.model.trim() && `รุ่น → ${e.model.trim()}`,
           e.capacity.trim() && `พิกัด → ${e.capacity.trim()}`,
           e.cat.trim() && `หมวดรถ → ${e.cat.trim()}`,
-          e.cost.trim() && `ราคาทุน → ${Number(e.cost.replace(/[^d.-]/g, "")).toLocaleString("th-TH")}`,
+          e.cost.trim() && `ราคาทุน → ${Number(e.cost.replace(/[^\d.-]/g, "")).toLocaleString("th-TH")}`,
           e.pi.trim() && `เลข PI → ${e.pi.trim()}`,
         ].filter(Boolean) as string[];
         const inp = "w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 bg-white placeholder:text-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 focus:outline-none";
