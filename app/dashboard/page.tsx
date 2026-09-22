@@ -146,13 +146,33 @@ export default function Dashboard() {
     })).sort((a, b) => b.count - a.count);
   }, [sales]);
 
-  // ข้อมูลรถต่อคัน (เสา/ชนิด) — ใช้แยกรุ่นขายดีของ forklift ตามความสูงเสา (MAST)
+  // ข้อมูลรถต่อคัน (เสา/พิกัด/ชนิด) — ใช้แยกรุ่นขายดีตามความสูงเสา (MAST) ในแต่ละพิกัดยก
   const fkMeta = useMemo(() => {
-    const m = new Map<string, { mast: string; cat: string }>();
+    const m = new Map<string, { mast: string; cap: string; cat: string }>();
     forklifts.forEach(f => m.set(f.id, {
       mast: String((f.custom_fields as Record<string, unknown> | undefined)?.["MAST"] ?? "").trim(),
+      cap: String(f.capacity ?? "").trim(),
       cat: f.vehicle_category ?? "Forklift",
     }));
+    return m;
+  }, [forklifts]);
+
+  // สเปกประจำรุ่น — "รุ่นนี้มีเสาไหม" และ "พิกัดยกเท่าไร"
+  // ⭐ (22 ก.ย. 2569) เดิมต่อท้ายความสูงเสาเฉพาะหมวด Forklift รถคลัง (CDD/CBD stacker) จึงถูกยุบรวม
+  //    ทั้งที่ความสูงเสาต่างกัน (M200/M250/M300) — ของคนละแบบ ราคาคนละราคา
+  //    ตอนนี้ดูจากข้อมูลจริง: รุ่นไหนมีคันที่กรอก MAST ไว้ = รุ่นที่ "เสา" เป็นตัวแยก
+  //    พิกัดยกเอาจากทะเบียนรถ ใช้เมื่อทุกคันของรุ่นนั้นพิกัดเดียวกัน (ไม่งั้นไม่เดา)
+  const modelSpec = useMemo(() => {
+    const m = new Map<string, { hasMast: boolean; caps: Set<string> }>();
+    forklifts.forEach(f => {
+      const model = String(f.model ?? "").trim().toUpperCase();
+      if (!model) return;
+      const g = m.get(model) ?? { hasMast: false, caps: new Set<string>() };
+      if (String((f.custom_fields as Record<string, unknown> | undefined)?.["MAST"] ?? "").trim()) g.hasMast = true;
+      const cap = String(f.capacity ?? "").trim();
+      if (cap) g.caps.add(cap);
+      m.set(model, g);
+    });
     return m;
   }, [forklifts]);
 
@@ -168,11 +188,16 @@ export default function Dashboard() {
     const map = new Map<string, Sale[]>();
     modelSales.forEach(s => {
       const meta = fkMeta.get(s.forklift_id);
-      const isForklift = (meta?.cat ?? s.vehicle_type) === "Forklift";
+      const model = s.forklift_model || "";
+      const spec = modelSpec.get(model.trim().toUpperCase());
+      // กรองแบรนด์แล้ว → ตัดชื่อแบรนด์ออกจากป้าย (ไม่ต้องซ้ำ)
+      const label = modelBrand ? model : `${s.forklift_brand} ${model}`;
+      // พิกัดยก: ใช้ของประจำรุ่น (ทุกคันตรงกัน) ไม่งั้นใช้ของคันนั้น — ป้ายรุ่นเดียวกันจะได้ไม่แตกเป็นหลายแถว
+      const cap = spec && spec.caps.size === 1 ? [...spec.caps][0] : (meta?.cap ?? "");
       const mast = meta?.mast ?? "";
-      // กรองแบรนด์แล้ว → ตัดชื่อแบรนด์ออกจากป้าย (ไม่ต้องซ้ำ) · forklift แยกตามความสูงเสา
-      const label = modelBrand ? (s.forklift_model || "") : `${s.forklift_brand} ${s.forklift_model}`;
-      const key = isForklift && mast ? `${label} · เสา ${mast}` : `${label}`;
+      // รุ่นที่ "เสา" เป็นตัวแยก → คันที่ยังไม่กรอกเสาแยกเป็น "เสาไม่ระบุ" ไม่ยุบรวมกับคันที่รู้เสา
+      const mastPart = spec?.hasMast ? (mast ? `เสา ${mast}` : "เสาไม่ระบุ") : "";
+      const key = [label, cap, mastPart].filter(Boolean).join(" · ");
       const list = map.get(key) ?? [];
       list.push(s);
       map.set(key, list);
@@ -180,12 +205,12 @@ export default function Dashboard() {
     const total = modelSales.length || 1; // สัดส่วนเทียบ "ภายในแบรนด์" เมื่อกรอง
     return [...map.entries()]
       .sort((a, b) => b[1].length - a[1].length)
-      .slice(0, modelBrand ? 8 : 6)
+      .slice(0, modelBrand ? 12 : 8)   // แยกละเอียดขึ้น (พิกัด+เสา) จึงโชว์มากแถวขึ้น
       .map(([model, list]) => ({
         model, count: list.length, pct: Math.round((list.length / total) * 100),
         sales: [...list].sort((a, b) => closeDate(b).localeCompare(closeDate(a))),   // ปิดล่าสุดขึ้นก่อน
       }));
-  }, [modelSales, fkMeta, modelBrand]);
+  }, [modelSales, fkMeta, modelSpec, modelBrand]);
 
   // ── FIFO เฟส 5: สุขภาพสต็อก (อายุค้าง) — จากรถ "พร้อมขาย" ปัจจุบัน (ไม่ขึ้นกับตัวกรองปี) ──
   const agingMetrics = useMemo(() => {
@@ -589,7 +614,7 @@ export default function Dashboard() {
           </div>
           <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
             <div className="flex items-center justify-between gap-2 flex-wrap">
-              <SectionHeader icon={<BarChart3 className="w-4 h-4 text-indigo-600" />} title="รุ่นขายดี" sub="Top Selling Models — คลิกยี่ห้อด้านซ้ายเพื่อดูเฉพาะแบรนด์" iconBg="bg-indigo-50" />
+              <SectionHeader icon={<BarChart3 className="w-4 h-4 text-indigo-600" />} title="รุ่นขายดี" sub="แยกตามพิกัดยก + ความสูงเสา · กดที่แถวเพื่อดูรายคัน · คลิกยี่ห้อด้านซ้ายเพื่อดูเฉพาะแบรนด์" iconBg="bg-indigo-50" />
               {modelBrand && (
                 <div className="flex items-center gap-2 text-xs">
                   <span className="font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-full">เฉพาะ {modelBrand}</span>
