@@ -137,7 +137,8 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
       staxxRows = staxxSN.length ? staxxSN : staxxPF;
     }
     // ราคาทุนอิงตามเอกสารแต่ละชุดเท่านั้น (ไม่ดึงจากสต็อกเดิม เพราะต้นทุนขึ้นลงตามตลาด)
-    setVendor([...vendors].join(", "));
+    // ใบของ cnc-moving ในไฟล์เขียนว่า ROCKMAN แต่ในระบบเราใช้ชื่อยี่ห้อ "CNC" — โชว์ให้ตรงกัน
+    setVendor([...vendors].map(v => (v === "ROCKMAN" ? "CNC" : v)).join(", "));
     setDocChecks(checks);
     setConfirmDiff(false);
     setRows([...others, ...staxxRows]);
@@ -253,7 +254,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
           <div>
             <h3 className="text-base font-bold text-slate-800 flex items-center gap-2"><FileText className="w-4 h-4 text-emerald-600" />นำเข้าจากใบเสนอราคา</h3>
-            <p className="text-xs text-slate-500 mt-0.5"><span className="text-slate-300" title="เวอร์ชันโค้ดที่เครื่องนี้โหลดอยู่ — ถ้าไม่ตรงกับที่ทีมแจ้ง ให้กด Ctrl+Shift+R">v{process.env.NEXT_PUBLIC_BUILD}</span> · อ่านไฟล์ในเครื่อง 100% · รองรับ HELI / HANGCHA / ROCKMAN (PDF) · ใบกำกับภาษี HANGCHA · STAXX (Excel Serial List){vendor ? ` · อ่านได้: ${vendor}` : ""}</p>
+            <p className="text-xs text-slate-500 mt-0.5"><span className="text-slate-300" title="เวอร์ชันโค้ดที่เครื่องนี้โหลดอยู่ — ถ้าไม่ตรงกับที่ทีมแจ้ง ให้กด Ctrl+Shift+R">v{process.env.NEXT_PUBLIC_BUILD}</span> · อ่านไฟล์ในเครื่อง 100% · รองรับ HELI / HANGCHA / EP / CNC (PDF) · ใบกำกับภาษี HANGCHA · STAXX (Excel Serial List){vendor ? ` · อ่านได้: ${vendor}` : ""}</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl p-2 transition-all"><X className="w-5 h-5" /></button>
         </div>

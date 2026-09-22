@@ -1,6 +1,7 @@
 import { Forklift, Sale, InspectionRecord } from "./types";
 
-export const BRANDS = ["HELI", "TOYOTA", "MITSUBISHI", "KOMATSU", "LINDE", "CROWN", "HYSTER", "YALE", "DOOSAN", "CLARK"];
+// ยี่ห้อที่บริษัทขายจริง (เรียงตามจำนวนที่ขาย) — STAXX/CNC/เจนบรรเจิด = ล็อตตู้ ข้ามขั้นรับรถ
+export const BRANDS = ["HELI", "STAXX", "CNC", "HANGCHA", "EP", "เจนบรรเจิด", "TOYOTA", "MITSUBISHI", "KOMATSU", "LINDE"];
 export const FUEL_TYPES = ["ไฟฟ้า", "ดีเซล", "กึ่งไฟฟ้า", "น้ำมัน", "แก๊ส LPG", "มือโยก"];
 // ชุดปุ่มสเปกให้สต๊อกเลือก (เซลล์ใช้กรองด้วยชุดเดียวกัน) — แก้ได้ในหน้าจัดการตัวเลือก
 // น้ำหนักยก: เก็บเป็น "กิโลกรัม" ครอบทั้งแฮนด์ลิฟท์ (กก.ย่อย) และโฟล์คลิฟท์ (ตัน)
