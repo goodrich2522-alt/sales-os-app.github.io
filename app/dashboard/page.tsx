@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useState, useEffect, useMemo } from "react";
 import {
   ArrowLeft, TrendingUp, Package, Users, BarChart3, DollarSign, Award,
-  ChevronRight, User, X, Calendar, MapPin, Clock, ShieldCheck, Boxes,
+  ChevronRight, ChevronDown, User, X, Calendar, MapPin, Clock, ShieldCheck, Boxes,
 } from "lucide-react";
 import { useApp } from "@/lib/AppContext";
 import { getRegion } from "@/lib/mockData";
@@ -13,7 +13,8 @@ import { displayCode } from "@/lib/productId";
 import { buildStaffMonthly, buildStaffWeekly, buildAllMonthlyWeekly } from "@/components/charts/Charts";
 import { CONTACT_SOURCE_COLORS, paymentBadgeClass, staffLabel } from "@/lib/constants";
 import { parseSvc, nextDue, daysUntil, SVC_SOON_DAYS } from "@/lib/warranty";
-import { isForkliftVehicle } from "@/lib/commission";
+import { isForkliftVehicle, closeDate } from "@/lib/commission";
+import { thaiDateShort } from "@/lib/format";
 import { Sale, Forklift, isVoidSale } from "@/lib/types";
 import GoogleLoginButton, { type GoogleUser } from "@/components/GoogleLoginButton";
 import { checkAccess, hasActiveSession } from "@/lib/auth";
@@ -157,12 +158,14 @@ export default function Dashboard() {
 
   // กรอง "รุ่นขายดี" ตามแบรนด์ ("" = ทุกแบรนด์) — คลิกยี่ห้อที่ legend ใต้โดนัท
   const [modelBrand, setModelBrand] = useState<string>("");
+  const [expandedModel, setExpandedModel] = useState<string | null>(null);  // รุ่นที่กดขยายดูรายการขาย
   const modelSales = useMemo(
     () => (modelBrand ? sales.filter(s => (s.forklift_brand || "อื่นๆ") === modelBrand) : sales),
     [sales, modelBrand]
   );
   const liveTopModels = useMemo(() => {
-    const map: Record<string, number> = {};
+    // เก็บ "รายการขายจริง" ของแต่ละรุ่นไว้ด้วย — กดที่แถวแล้วขยายดูได้ว่าขายให้ใคร คันไหน เมื่อไหร่
+    const map = new Map<string, Sale[]>();
     modelSales.forEach(s => {
       const meta = fkMeta.get(s.forklift_id);
       const isForklift = (meta?.cat ?? s.vehicle_type) === "Forklift";
@@ -170,13 +173,18 @@ export default function Dashboard() {
       // กรองแบรนด์แล้ว → ตัดชื่อแบรนด์ออกจากป้าย (ไม่ต้องซ้ำ) · forklift แยกตามความสูงเสา
       const label = modelBrand ? (s.forklift_model || "") : `${s.forklift_brand} ${s.forklift_model}`;
       const key = isForklift && mast ? `${label} · เสา ${mast}` : `${label}`;
-      map[key] = (map[key] ?? 0) + 1;
+      const list = map.get(key) ?? [];
+      list.push(s);
+      map.set(key, list);
     });
     const total = modelSales.length || 1; // สัดส่วนเทียบ "ภายในแบรนด์" เมื่อกรอง
-    return Object.entries(map)
-      .sort((a, b) => b[1] - a[1])
+    return [...map.entries()]
+      .sort((a, b) => b[1].length - a[1].length)
       .slice(0, modelBrand ? 8 : 6)
-      .map(([model, count]) => ({ model, count, pct: Math.round((count / total) * 100) }));
+      .map(([model, list]) => ({
+        model, count: list.length, pct: Math.round((list.length / total) * 100),
+        sales: [...list].sort((a, b) => closeDate(b).localeCompare(closeDate(a))),   // ปิดล่าสุดขึ้นก่อน
+      }));
   }, [modelSales, fkMeta, modelBrand]);
 
   // ── FIFO เฟส 5: สุขภาพสต็อก (อายุค้าง) — จากรถ "พร้อมขาย" ปัจจุบัน (ไม่ขึ้นกับตัวกรองปี) ──
@@ -591,24 +599,65 @@ export default function Dashboard() {
             </div>
             <div className="flex flex-col gap-3.5 mt-5">
               {liveTopModels.length === 0 && <p className="text-xs text-slate-400 text-center py-4">ยังไม่มีข้อมูลการขาย</p>}
-              {liveTopModels.map((m, i) => (
-                <div key={m.model} className="flex items-center gap-3">
-                  <span className={`text-xs font-bold w-6 text-center flex-shrink-0 ${i === 0 ? "text-amber-500" : "text-slate-400"}`}>#{i + 1}</span>
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <p className="text-sm font-semibold text-slate-800">{m.model}</p>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">{m.pct}%</span>
-                        <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full">{m.count} คัน</span>
+              {liveTopModels.map((m, i) => {
+                const open = expandedModel === m.model;
+                return (
+                <div key={m.model}>
+                  {/* กดที่แถว = ขยายดูรายการขายของรุ่นนั้น (ขายให้ใคร คันไหน เมื่อไหร่ ราคาเท่าไร) */}
+                  <button onClick={() => setExpandedModel(open ? null : m.model)}
+                    className="flex items-center gap-3 w-full text-left group" title="กดเพื่อดูรายการขายของรุ่นนี้">
+                    <span className={`text-xs font-bold w-6 text-center flex-shrink-0 ${i === 0 ? "text-amber-500" : "text-slate-400"}`}>#{i + 1}</span>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between mb-1.5 gap-2">
+                        <p className="text-sm font-semibold text-slate-800 group-hover:text-indigo-700 flex items-center gap-1 min-w-0">
+                          {open ? <ChevronDown className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
+                                : <ChevronRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-indigo-400 flex-shrink-0" />}
+                          <span className="truncate">{m.model}</span>
+                        </p>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <span className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">{m.pct}%</span>
+                          <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full">{m.count} คัน</span>
+                        </div>
+                      </div>
+                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-blue-500"
+                          style={{ width: `${m.pct}%` }} />
                       </div>
                     </div>
-                    <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-blue-500"
-                        style={{ width: `${m.pct}%` }} />
+                  </button>
+                  {open && (
+                    <div className="ml-9 mt-2.5 border border-slate-100 rounded-xl overflow-hidden">
+                      <div className="max-h-72 overflow-y-auto overflow-x-auto">
+                        <table className="w-full text-xs min-w-[460px]">
+                          <thead className="bg-slate-50 sticky top-0">
+                            <tr className="text-slate-500">
+                              <th className="text-left px-2.5 py-1.5 font-semibold whitespace-nowrap">วันที่ปิด</th>
+                              <th className="text-left px-2.5 py-1.5 font-semibold whitespace-nowrap">รหัสรถ</th>
+                              <th className="text-left px-2.5 py-1.5 font-semibold">ลูกค้า</th>
+                              <th className="text-left px-2.5 py-1.5 font-semibold whitespace-nowrap">เซลล์</th>
+                              <th className="text-right px-2.5 py-1.5 font-semibold whitespace-nowrap">ราคาขาย</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {m.sales.map(s => (
+                              <tr key={s.id} className="border-t border-slate-50 hover:bg-indigo-50/40">
+                                <td className="px-2.5 py-1.5 text-slate-600 whitespace-nowrap">{thaiDateShort(closeDate(s)) || "—"}</td>
+                                <td className="px-2.5 py-1.5 text-slate-700 whitespace-nowrap">{String(s.forklift_unit_no || "").replace(/#\d+$/, "") || "—"}</td>
+                                <td className="px-2.5 py-1.5 text-slate-700">
+                                  {s.customer_name || "—"}
+                                  {s.province ? <span className="text-slate-400"> · {s.province}</span> : null}
+                                </td>
+                                <td className="px-2.5 py-1.5 text-slate-600 whitespace-nowrap">{staffLabel(s.sales_staff) || "—"}</td>
+                                <td className="px-2.5 py-1.5 text-right font-semibold text-slate-800 whitespace-nowrap">฿{fmt(Math.round(s.actual_sale || 0))}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
-              ))}
+              );})}
               <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
                 <span className="text-xs text-slate-500">{modelBrand ? `รวมยี่ห้อ ${modelBrand}` : "รวมทั้งหมด"}</span>
                 <span className="text-sm font-bold text-slate-700">{modelSales.length} คัน</span>
