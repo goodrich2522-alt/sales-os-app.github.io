@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   ArrowLeft, Boxes, Download, ChevronDown, ChevronRight,
   Calendar, ShoppingCart, TrendingUp, AlertTriangle, Package,
@@ -9,6 +9,7 @@ import {
 import { useApp } from "@/lib/AppContext";
 import { isClosedSale, closeMonth } from "@/lib/commission";
 import { DashboardGuard } from "@/components/DashboardGuard";
+import { Forklift } from "@/lib/types";
 
 const fmt = (n: number) => Math.round(Number(n) || 0).toLocaleString("th-TH"); // จำนวนเต็ม ไม่มีทศนิยม
 // อัตรา/จำนวนเดือน: ปัดเป็นจำนวนเต็ม แต่ถ้ามากกว่า 0 แต่ไม่ถึง 0.5 โชว์ "<1" (กันแสดงเป็น 0 ทั้งที่ยังขายได้)
@@ -32,6 +33,8 @@ const SORTS: { key: "units" | "totalProfit" | "avgProfit"; label: string }[] = [
 
 interface ModelRow {
   brand: string; model: string;
+  mast: string;           // ความสูงเสา — รุ่นเดียวกันคนละเสา = คนละสินค้า คนละราคา ต้องสั่งแยก
+  capacity: string;       // พิกัดยก (เช่น "2.5 ตัน") — โชว์ให้เห็นน้ำหนักชัดๆ
   units: number; revenue: number;
   avgMonth: number;       // เฉลี่ยขายต่อเดือน
   available: number;      // คงเหลือพร้อมขาย
@@ -48,7 +51,7 @@ interface ModelRow {
 
 /** รุ่นที่ยังกรอกราคาทุนไม่ครบ — เอาไว้ไล่กรอกให้จบ กำไรถึงจะคำนวณได้ */
 interface NoCostRow {
-  brand: string; model: string;
+  brand: string; model: string; mast: string;
   sold: number;        // ขายแล้ว แต่รถคันนั้นในทะเบียนยังไม่มีทุน
   stock: number;       // รถในทะเบียนที่ยังไม่มีทุน (ทุกสถานะ)
   unlinked: number;    // ดีลที่หารถในทะเบียนไม่เจอเลย (ส่วนใหญ่คือบิลภาษีนำเข้า)
@@ -74,11 +77,41 @@ function RestockPageInner() {
   const winSet = useMemo(() => new Set(windowMonths), [windowMonths]);
   const denom = Math.max(1, windowMonths.length); // จำนวนเดือนที่ใช้หารเฉลี่ย
 
-  // สต็อกปัจจุบันต่อรุ่น: พร้อมขาย / กำลังผลิต-รอรับ / ทุนเฉลี่ย
+  // ── แยกสินค้าตาม "รุ่น + ความสูงเสา" ──
+  // ⭐ (22 ก.ย. 2569) รุ่นเดียวกันคนละเสาคือคนละสินค้า ทุนคนละราคา (CPCD25-Q22K2 เสา M400
+  //    221,000 · เสา M300 216,000) เดิมรวมเป็นแถวเดียว ตัวเลข "ควรสั่งเพิ่ม" จึงไม่บอกว่าสั่งเสาไหน
+  const mastOf = (f: Forklift) => String((f.custom_fields as Record<string, unknown> | undefined)?.["MAST"] ?? "").trim();
+
+  // สเปกประจำรุ่น — "รุ่นนี้เสาเป็นตัวแยกไหม" (มีคันที่กรอก MAST) + พิกัดยกประจำรุ่น
+  const modelSpec = useMemo(() => {
+    const m = new Map<string, { hasMast: boolean; caps: Set<string> }>();
+    forklifts.forEach(f => {
+      const model = String(f.model ?? "").trim().toUpperCase();
+      if (!model) return;
+      const g = m.get(model) ?? { hasMast: false, caps: new Set<string>() };
+      if (mastOf(f)) g.hasMast = true;
+      const cap = String(f.capacity ?? "").trim();
+      if (cap) g.caps.add(cap);
+      m.set(model, g);
+    });
+    return m;
+  }, [forklifts]);
+
+  /** เสาที่ใช้เป็นตัวแยกของคันนี้ — รุ่นที่ไม่มีเสา (รถลากพาเลท ฯลฯ) คืนค่าว่าง */
+  const mastKeyOf = useCallback((model: string, mast: string) =>
+    modelSpec.get(model.trim().toUpperCase())?.hasMast ? (mast || "ไม่ระบุ") : "", [modelSpec]);
+  /** พิกัดยกประจำรุ่น — ใช้เมื่อทุกคันของรุ่นนั้นตรงกัน ไม่งั้นไม่เดา */
+  const capOf = useCallback((model: string) => {
+    const caps = modelSpec.get(model.trim().toUpperCase())?.caps;
+    return caps && caps.size === 1 ? [...caps][0] : "";
+  }, [modelSpec]);
+
+  // สต็อกปัจจุบันต่อรุ่น+เสา: พร้อมขาย / กำลังผลิต-รอรับ / ทุนเฉลี่ย
   const stockByModel = useMemo(() => {
     const m = new Map<string, { available: number; incoming: number; costSum: number; costN: number }>();
     forklifts.forEach(f => {
-      const key = `${f.brand ?? ""}|${f.model ?? ""}`;
+      const model = String(f.model ?? "");
+      const key = `${f.brand ?? ""}|${model}|${mastKeyOf(model, mastOf(f))}`;
       const g = m.get(key) ?? { available: 0, incoming: 0, costSum: 0, costN: 0 };
       const st = String(f.status ?? "").trim();
       if (st === "พร้อมขาย") g.available += 1;
@@ -88,7 +121,7 @@ function RestockPageInner() {
       m.set(key, g);
     });
     return m;
-  }, [forklifts]);
+  }, [forklifts, mastKeyOf]);
 
   // ยี่ห้อของแต่ละรุ่นจากทะเบียนรถ — ใช้เติมให้ใบขายที่ไม่ได้กรอกยี่ห้อไว้
   // เก็บเฉพาะรุ่นที่มียี่ห้อเดียวชัดเจน (รุ่นที่ซ้ำข้ามยี่ห้อ เช่น PS400-1500 มีทั้ง STAXX และ CNC → ไม่เดา)
@@ -108,7 +141,7 @@ function RestockPageInner() {
 
   // จัดกลุ่มยอดขายในช่วง → รุ่น → คำนวณตัวชี้วัดสั่งสต็อก
   const rows = useMemo(() => {
-    const m = new Map<string, { brand: string; model: string; units: number; revenue: number; sales: typeof closed }>();
+    const m = new Map<string, { brand: string; model: string; mast: string; units: number; revenue: number; sales: typeof closed }>();
     closed.filter(s => winSet.has(closeMonth(s))).forEach(s => {
       const model = s.forklift_model || "";
       if (!model) return;
@@ -120,8 +153,10 @@ function RestockPageInner() {
         || fkById.get(s.forklift_id)?.brand
         || brandByModel.get(model.trim().toUpperCase())
         || "ไม่ระบุ";
-      const key = `${brand}|${model}`;
-      const g = m.get(key) ?? { brand, model, units: 0, revenue: 0, sales: [] as typeof closed };
+      // ⭐ แยกตามความสูงเสาด้วย — รุ่นเดียวกันคนละเสา สั่งของคนละอย่าง ทุนคนละราคา
+      const mast = mastKeyOf(model, mastOf(fkById.get(s.forklift_id) ?? ({} as Forklift)));
+      const key = `${brand}|${model}|${mast}`;
+      const g = m.get(key) ?? { brand, model, mast, units: 0, revenue: 0, sales: [] as typeof closed };
       g.units += 1;
       g.revenue += Number(s.actual_sale) || 0;
       g.sales.push(s);
@@ -149,7 +184,8 @@ function RestockPageInner() {
       });
       const hasCost = noCostUnits === 0;
       out.push({
-        brand: g.brand, model: g.model, units: g.units, revenue: g.revenue,
+        brand: g.brand, model: g.model, mast: g.mast, capacity: capOf(g.model),
+        units: g.units, revenue: g.revenue,
         avgMonth, available: st.available, incoming: st.incoming, avgCost,
         coverage, needQty, needCost: needQty * avgCost,
         avgProfit: hasCost ? Math.round(profitSum / g.units) : 0,
@@ -159,7 +195,7 @@ function RestockPageInner() {
     });
     const cmp = (a: ModelRow, b: ModelRow) => sortBy === "units" ? b.units - a.units : sortBy === "avgProfit" ? b.avgProfit - a.avgProfit : b.totalProfit - a.totalProfit;
     return out.sort(cmp);
-  }, [closed, winSet, stockByModel, denom, target, sortBy, fkById, brandByModel]);
+  }, [closed, winSet, stockByModel, denom, target, sortBy, fkById, brandByModel, mastKeyOf, capOf]);
 
   // จัดกลุ่มตามแบรนด์ (เรียงแบรนด์ตามยอดขายรวม)
   const byBrand = useMemo(() => {
@@ -179,9 +215,9 @@ function RestockPageInner() {
   // + "รถในทะเบียนที่ราคาทุนยังเป็น 0"
   const noCostRows = useMemo(() => {
     const m = new Map<string, NoCostRow>();
-    const take = (brand: string, model: string) => {
-      const key = `${brand}|${model}`;
-      const g = m.get(key) ?? { brand, model, sold: 0, stock: 0, unlinked: 0 };
+    const take = (brand: string, model: string, mast: string) => {
+      const key = `${brand}|${model}|${mast}`;
+      const g = m.get(key) ?? { brand, model, mast, sold: 0, stock: 0, unlinked: 0 };
       m.set(key, g);
       return g;
     };
@@ -192,20 +228,20 @@ function RestockPageInner() {
       if ((Number(f.cost_price) || 0) > 0) return;
       const model = String(f.model ?? "").trim();
       if (!model) return;
-      take(brandOf(model, f.brand), model).stock += 1;
+      take(brandOf(model, f.brand), model, mastKeyOf(model, mastOf(f))).stock += 1;
     });
     closed.forEach(s => {
       const model = String(s.forklift_model ?? "").trim();
       if (!model) return;
       const f = fkById.get(s.forklift_id);
       // ดีลที่หารถในทะเบียนไม่เจอ = ไม่มีที่ให้กรอกทุน (ต้องผูกรถหรือเพิ่มคันนั้นเข้าทะเบียนก่อน)
-      if (!f) { take(brandOf(model, s.forklift_brand), model).unlinked += 1; return; }
+      if (!f) { take(brandOf(model, s.forklift_brand), model, mastKeyOf(model, "")).unlinked += 1; return; }
       if ((Number(f.cost_price) || 0) > 0) return;
-      take(brandOf(model, f.brand || s.forklift_brand), model).sold += 1;
+      take(brandOf(model, f.brand || s.forklift_brand), model, mastKeyOf(model, mastOf(f))).sold += 1;
     });
     const total = (r: NoCostRow) => r.sold + r.stock + r.unlinked;
     return [...m.values()].sort((a, b) => total(b) - total(a));
-  }, [forklifts, closed, fkById, brandByModel]);
+  }, [forklifts, closed, fkById, brandByModel, mastKeyOf]);
 
   const noCostUnits = noCostRows.reduce((n, r) => n + r.sold + r.stock + r.unlinked, 0);
 
@@ -214,6 +250,10 @@ function RestockPageInner() {
   const totalProfit = rows.reduce((s, r) => s + r.totalProfit, 0);
   const totalNeedCost = rows.reduce((s, r) => s + r.needCost, 0);
   const urgentRows = rows.filter(r => r.coverage < 1).sort((a, b) => b.avgMonth - a.avgMonth);
+
+  /** ป้ายชื่อสินค้า = รุ่น · พิกัดยก · เสา (รุ่นเดียวกันคนละเสาคือคนละสินค้า) */
+  const variantLabel = (r: { model: string; mast: string; capacity?: string }) =>
+    [r.model, r.capacity ?? capOf(r.model), r.mast ? `เสา ${r.mast}` : ""].filter(Boolean).join(" · ");
 
   // ป้ายสถานะสั่งสต็อก
   const statusOf = (r: ModelRow) =>
@@ -225,7 +265,7 @@ function RestockPageInner() {
     if (rows.length === 0) return;
     const XLSX = await import("xlsx");
     const detRows = rows.map(r => ({
-      "ยี่ห้อ": r.brand, "รุ่น": r.model,
+      "ยี่ห้อ": r.brand, "รุ่น": r.model, "พิกัดยก": r.capacity, "เสา": r.mast,
       "ขายในช่วง (คัน)": r.units, "ยอดขายรวม (บาท)": Math.round(r.revenue),
       "กำไรเฉลี่ย/คัน (บาท)": r.hasCost ? r.avgProfit : "", "กำไรรวม (บาท)": r.hasCost ? r.totalProfit : "",
       "เฉลี่ย/เดือน (คัน)": Math.round(r.avgMonth),
@@ -235,20 +275,20 @@ function RestockPageInner() {
       "แนะนำสั่งเพิ่ม (คัน)": r.needQty, "งบสั่งเพิ่มโดยประมาณ (บาท)": r.needCost,
     }));
     const ws = XLSX.utils.json_to_sheet(detRows);
-    ws["!cols"] = [12, 20, 14, 18, 16, 16, 14, 14, 14, 14, 16, 16, 20].map(w => ({ wch: w }));
+    ws["!cols"] = [12, 20, 10, 10, 14, 18, 16, 16, 14, 14, 14, 14, 16, 16, 20].map(w => ({ wch: w }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "วางแผนสั่งสต็อก");
     // ชีตที่ 2 — รายการที่ต้องไปกรอกราคาทุน (ไม่งั้นกำไรคำนวณไม่ได้)
     if (noCostRows.length > 0) {
       const ws2 = XLSX.utils.json_to_sheet(noCostRows.map(r => ({
-        "ยี่ห้อ": r.brand, "รุ่น": r.model,
+        "ยี่ห้อ": r.brand, "รุ่น": r.model, "เสา": r.mast,
         "ขายแล้ว—รถไม่มีทุน (คัน)": r.sold,
         "ในทะเบียนไม่มีทุน (คัน)": r.stock,
         "ดีลที่ไม่มีรถผูก (คัน)": r.unlinked,
         "รวม (คัน)": r.sold + r.stock + r.unlinked,
         "แก้ที่ไหน": r.stock > 0 || r.sold > 0 ? "หน้าสต็อก → แก้หลายคัน → ช่องราคาทุน" : "ผูกรถกับดีล หรือเพิ่มคันนั้นเข้าทะเบียนก่อน",
       })));
-      ws2["!cols"] = [12, 20, 22, 20, 20, 12, 40].map(w => ({ wch: w }));
+      ws2["!cols"] = [12, 20, 10, 22, 20, 20, 12, 40].map(w => ({ wch: w }));
       XLSX.utils.book_append_sheet(wb, ws2, "รุ่นที่ยังไม่มีต้นทุน");
     }
     XLSX.writeFile(wb, `วางแผนสั่งสต็อก_${WINDOWS[winIdx].label}.xlsx`);
@@ -342,8 +382,8 @@ function RestockPageInner() {
             <p className="text-sm font-bold text-red-700 flex items-center gap-1.5 mb-2"><AlertTriangle className="w-4 h-4" />ควรสั่งเพิ่มด่วน — ของใกล้หมด (พอขายไม่ถึง 1 เดือน)</p>
             <div className="flex flex-col gap-1.5">
               {urgentRows.slice(0, 8).map(r => (
-                <div key={`${r.brand}|${r.model}`} className="flex items-center gap-2 text-sm flex-wrap">
-                  <span className="font-semibold text-slate-800">{r.brand} {r.model}</span>
+                <div key={`${r.brand}|${r.model}|${r.mast}`} className="flex items-center gap-2 text-sm flex-wrap">
+                  <span className="font-semibold text-slate-800">{r.brand} {variantLabel(r)}</span>
                   <span className="text-xs text-slate-500">ขายเฉลี่ย {wrate(r.avgMonth)} คัน/เดือน · เหลือ {fmt(r.available)} คัน{r.incoming > 0 ? ` (+${fmt(r.incoming)} กำลังมา)` : ""}</span>
                   <span className="ml-auto text-xs font-bold text-red-700 bg-white border border-red-200 rounded-lg px-2 py-0.5">สั่งเพิ่ม {fmt(r.needQty)} คัน ≈ ฿{fmt(r.needCost)}</span>
                 </div>
@@ -374,8 +414,8 @@ function RestockPageInner() {
                 </thead>
                 <tbody>
                   {(showAllNoCost ? noCostRows : noCostRows.slice(0, 15)).map(r => (
-                    <tr key={`${r.brand}|${r.model}`} className="border-b border-amber-100">
-                      <td className="py-1.5 px-2 font-semibold text-slate-800">{r.brand} {r.model}</td>
+                    <tr key={`${r.brand}|${r.model}|${r.mast}`} className="border-b border-amber-100">
+                      <td className="py-1.5 px-2 font-semibold text-slate-800">{r.brand} {variantLabel(r)}</td>
                       <td className="py-1.5 px-2 text-right text-slate-700">{r.sold || "—"}</td>
                       <td className="py-1.5 px-2 text-right text-slate-700">{r.stock || "—"}</td>
                       <td className="py-1.5 px-2 text-right text-slate-700">{r.unlinked || "—"}</td>
@@ -429,9 +469,14 @@ function RestockPageInner() {
                       {b.models.map((r, i) => {
                         const s = statusOf(r);
                         return (
-                          <tr key={`${r.brand}|${r.model}`} className="border-b border-slate-50 hover:bg-sky-50/40">
+                          <tr key={`${r.brand}|${r.model}|${r.mast}`} className="border-b border-slate-50 hover:bg-sky-50/40">
                             <td className="px-3 py-2.5 text-slate-400 font-bold">{i + 1}</td>
-                            <td className="px-3 py-2.5 font-semibold text-slate-800 whitespace-nowrap">{r.model}</td>
+                            <td className="px-3 py-2.5 font-semibold text-slate-800 whitespace-nowrap">
+                              {r.model}
+                              {(r.capacity || r.mast) && (
+                                <span className="text-[11px] font-normal text-slate-400"> · {[r.capacity, r.mast ? `เสา ${r.mast}` : ""].filter(Boolean).join(" · ")}</span>
+                              )}
+                            </td>
                             <td className="px-3 py-2.5 whitespace-nowrap"><span className="text-slate-700 font-bold">{fmt(r.units)}</span> <span className="text-[11px] text-slate-400">คัน</span></td>
                             <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">฿{fmt(r.revenue)}</td>
                             <td className="px-3 py-2.5 whitespace-nowrap">{r.hasCost ? <span className={`font-semibold ${r.avgProfit >= 0 ? "text-emerald-700" : "text-red-600"}`}>฿{fmt(r.avgProfit)}</span> : <span className="text-amber-600 text-xs" title="ยังไม่มีราคาทุนบางคัน — ระบบไม่เดาให้">ยังไม่มีทุน {r.noCostUnits} คัน</span>}</td>
