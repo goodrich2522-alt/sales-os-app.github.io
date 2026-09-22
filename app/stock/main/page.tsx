@@ -116,7 +116,7 @@ export default function StockMain() {
     finally { setRefreshing(false); }
   };
   // ── แก้สเปก/ราคาหลายคันพร้อมกัน — ช่องที่เว้นว่าง = ไม่แก้ (ใช้ซ่อมข้อมูลที่นำเข้าผิดทั้งล็อต) ──
-  const [bulkEdit, setBulkEdit] = useState<null | { model: string; capacity: string; cost: string; cat: string; pi: string }>(null);
+  const [bulkEdit, setBulkEdit] = useState<null | { brand: string; model: string; capacity: string; cost: string; cat: string; pi: string }>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [showSettings, setShowSettings]   = useState(false);
   const [detailItem, setDetailItem]       = useState<Forklift | null>(null); // รถที่กดดูรายละเอียด
@@ -319,11 +319,13 @@ export default function StockMain() {
   // แก้สเปก/ราคาให้ทุกคันที่เลือก — ใส่เฉพาะช่องที่กรอก (เว้นว่าง = คงค่าเดิมของคันนั้น)
   const bulkApplyEdit = () => {
     if (!bulkEdit) return;
+    const brand = bulkEdit.brand.trim();
     const model = bulkEdit.model.trim(), capacity = bulkEdit.capacity.trim();
     const cat = bulkEdit.cat.trim(), pi = bulkEdit.pi.trim();
     const cost = bulkEdit.cost.trim() === "" ? null : Number(bulkEdit.cost.replace(/[^\d.-]/g, ""));
     selForklifts().forEach(f => updateForklift({
       ...f,
+      ...(brand ? { brand } : {}),
       ...(model ? { model } : {}),
       ...(capacity ? { capacity } : {}),
       ...(cat ? { vehicle_category: cat as Forklift["vehicle_category"] } : {}),
@@ -593,6 +595,8 @@ export default function StockMain() {
   const modelOpts = [...new Set(forklifts.filter(f => listBrand === "all" || (f.brand || "(ไม่ระบุ)") === listBrand).map(f => f.model).filter(Boolean))].sort();
   const mastOpts  = [...new Set(forklifts.filter(f => (listBrand === "all" || (f.brand || "(ไม่ระบุ)") === listBrand) && (listModel === "all" || f.model === listModel)).map(mastOf).filter(Boolean))].sort();
   const fuelOpts  = [...new Set(forklifts.map(f => f.fuel).filter(Boolean))].sort();
+  // ยี่ห้อที่มีอยู่จริง + ที่ตั้งไว้ในตัวเลือกระบบ — ใช้เป็นคำแนะนำในช่อง "ยี่ห้อ" ตอนแก้หลายคัน
+  const brandOpts = [...new Set([...forklifts.map(f => f.brand).filter(Boolean), ...fieldConfig.brands])].sort();
 
   // ส่งออกรายการสินค้าเป็น Excel (.xlsx) — ตามที่กรองอยู่ (ถ้าไม่กรองก็ทั้งหมด) เรียงตามที่แสดง
   //  · มุมมองค้างนาน → ส่งออกรายงาน Aging (พร้อมขาย + จำนวนวันค้าง)
@@ -1924,6 +1928,7 @@ export default function StockMain() {
         const e = bulkEdit;
         const set = (k: keyof typeof e, v: string) => setBulkEdit({ ...e, [k]: v });
         const changes = [
+          e.brand.trim() && `ยี่ห้อ → ${e.brand.trim()}`,
           e.model.trim() && `รุ่น → ${e.model.trim()}`,
           e.capacity.trim() && `พิกัด → ${e.capacity.trim()}`,
           e.cat.trim() && `หมวดรถ → ${e.cat.trim()}`,
@@ -1936,6 +1941,9 @@ export default function StockMain() {
             <p className="text-sm font-bold text-indigo-700 mb-1 flex items-center gap-1.5"><Pencil className="w-4 h-4" />แก้ {selIds.size} คันที่เลือก</p>
             <p className="text-[11px] text-slate-400 mb-3">กรอกเฉพาะช่องที่ต้องการแก้ — <b>ช่องที่เว้นว่างจะคงค่าเดิมของแต่ละคัน</b></p>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <label className="flex flex-col gap-1 min-w-0"><span className="text-[11px] font-semibold text-slate-500">ยี่ห้อ</span>
+                <input value={e.brand} onChange={x => set("brand", x.target.value)} placeholder="เช่น ROCKMAN" list="bulk-brands" className={inp} />
+                <datalist id="bulk-brands">{brandOpts.map(b => <option key={b} value={b} />)}</datalist></label>
               <label className="flex flex-col gap-1 min-w-0"><span className="text-[11px] font-semibold text-slate-500">รุ่น</span>
                 <input value={e.model} onChange={x => set("model", x.target.value)} placeholder="เช่น CBD20-WS" className={inp} /></label>
               <label className="flex flex-col gap-1 min-w-0"><span className="text-[11px] font-semibold text-slate-500">พิกัดยก</span>
@@ -1980,7 +1988,7 @@ export default function StockMain() {
             <option value="" disabled>เปลี่ยนโลเคชั่น…</option>
             {fieldConfig.locations.map(l => <option key={l} value={l}>{l}</option>)}
           </select>
-          <button onClick={() => setBulkEdit(bulkEdit ? null : { model: "", capacity: "", cost: "", cat: "", pi: "" })}
+          <button onClick={() => setBulkEdit(bulkEdit ? null : { brand: "", model: "", capacity: "", cost: "", cat: "", pi: "" })}
             className={`flex items-center gap-1 text-xs font-bold rounded-lg px-2.5 py-1.5 border transition ${bulkEdit ? "bg-indigo-600 text-white border-indigo-600" : "text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border-indigo-200"}`}>
             <Pencil className="w-3.5 h-3.5" />แก้สเปก/ราคา
           </button>

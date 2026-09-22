@@ -1,6 +1,7 @@
-// lib/quoteImport/rockman.ts — อ่านใบเสนอราคา CNC (cnc-moving · ในใบเขียนว่า ROCKMAN)
-// ⭐ (22 ก.ย. 2569) ยี่ห้อที่บันทึกต้องเป็น "CNC" ให้ตรงกับรถในสต็อกทั้งคลัง (SDA / PD / BFG / DG2001)
-//    เดิมบันทึกเป็น "ROCKMAN" → นำเข้าแล้วกลายเป็นคนละยี่ห้อ รายงานแยกกันคนละกอง
+// lib/quoteImport/rockman.ts — อ่านใบเสนอราคา ROCKMAN
+// ⚠️ แยกให้ชัด (22 ก.ย. 2569 · ผู้ใช้ยืนยัน): **CNC = ชื่อบริษัทผู้ขาย** (cnc-moving)
+//    ส่วน **ROCKMAN = ยี่ห้อสินค้า** → ช่อง "ยี่ห้อ" ต้องเป็น ROCKMAN
+//    ชื่อบริษัทเก็บไว้ที่ custom_fields["บริษัทผู้ขาย"] แทน
 // ⚠️ ฟอนต์ไทยในใบนี้ subset จน text layer ไทยแตก — ดึงได้เฉพาะส่วนอังกฤษ/ตัวเลข
 //    (รุ่น/พิกัด/ความสูง/เลขเอกสาร) · ราคาเป็นภาษาไทยอ่านไม่ได้ → ติดธงให้กรอกเอง
 // รูปแบบรายการ: "1. Semi-Stacker 400kg. 1500mm (PD-400-1500)" · ไม่มี SN (สั่งผลิต)
@@ -24,15 +25,16 @@ export function parseRockman(rawText: string): QuoteParseResult {
 
   if (model || typeLabel) {
     vehicles.push({
-      brand: "CNC",
-      model: model ?? typeLabel ?? "CNC",
+      brand: "ROCKMAN",
+      model: model ?? typeLabel ?? "ROCKMAN",
       capacity_kg: kg,
       height: mm ? `${(Number(mm) / 1000).toFixed(1)} ม.` : undefined,
       fuel: isSemi ? "กึ่งไฟฟ้า" : "มือ",
       vendor: "ROCKMAN",
+      supplier: "CNC",          // บริษัทผู้ขาย (คนละอย่างกับยี่ห้อ)
       pi_no: doc,
       flags: [
-        "ราคา CNC อ่านไม่ได้ (ฟอนต์ไทยในใบ) — กรอกเอง",
+        "ราคา ROCKMAN อ่านไม่ได้ (ฟอนต์ไทยในใบ) — กรอกเอง",
         ...(model ? [] : ["ไม่พบรหัสรุ่น — ตรวจ/กรอกเอง"]),
       ],
     });

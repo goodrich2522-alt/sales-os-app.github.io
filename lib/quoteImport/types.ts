@@ -30,6 +30,8 @@ export interface ParsedVehicle {
   invoice_no?: string;      // เลขที่ใบกำกับภาษี (เช่น TR202605-109) — มีเฉพาะใบกำกับ ไม่มีในใบ PI
   received_date?: string;   // วันส่งรถจริงตามใบกำกับ (ISO) — "ส่งรถวันที่ 23.05.2026"
   vendor: QuoteVendor;
+  /** บริษัทผู้ขาย/ผู้จัดจำหน่าย — คนละอย่างกับยี่ห้อ (เช่น ยี่ห้อ ROCKMAN ขายโดยบริษัท CNC) */
+  supplier?: string;
   /** ฟิลด์ที่ parser ไม่มั่นใจ (ค่าว่าง/รูปแบบแปลก) — หน้าตรวจทานติดธงให้คนดู */
   flags?: string[];
 }
