@@ -41,6 +41,22 @@ const inHistorical = (s: Sale) => { const c = closeMonth(s); return !!c && c <= 
 // ⭐ กันดีลก่อนแอปที่มีวันรับเงิน ก.ค./ส.ค. (จาก backfill) โดนลากเข้ามาคิดจ่ายซ้ำในงวดแอป
 const PREAPP_CUTOFF = "2026-06";
 // ธง "ยกยอดจ่ายในแอป" — ดีลก่อนแอปที่ค่าคอม "ยังไม่จ่าย" ต้องการยกมาจ่ายในแอปตามเดือนรับเงิน (เช่น สุดเขต/จอยซุน)
+// ── ตรวจเดือน/ปีที่ผิดปกติ (22 ก.ย. 2569) ──
+// เจอจริง: แท็บเดือนขึ้น "ส.ค. 2526" = วันที่ในดีลพิมพ์ปี พ.ศ. ผิด (2526 แทน 2569)
+// ระบบแปลง พ.ศ.→ค.ศ. ให้อยู่แล้ว (toGregorian) แต่ถ้าปีที่พิมพ์มาผิดตั้งแต่ต้น ก็ได้เดือนผิดตามไปด้วย
+// → ไม่ซ่อนทิ้ง (ข้อมูลจะหาย) แต่ติดป้ายเตือนให้กดเข้าไปแก้ที่ต้นทาง
+const MIN_MONTH = "2018-01";                    // เก่ากว่านี้ = ปีผิดแน่ๆ (บริษัทยังไม่ใช้ระบบ)
+const monthPlus = (ym: string, n: number) => {  // เลื่อนเดือน — ใช้หาขอบบน (ล่วงหน้าได้ไม่เกิน 3 เดือน)
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(y, (m - 1) + n, 1);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+};
+const thisMonth = () => new Date().toISOString().slice(0, 7);
+/** เดือนนี้เป็นไปไม่ได้ไหม (เก่าเกิน 2561 หรือล่วงหน้าเกิน 3 เดือน) */
+const isOddMonth = (ym: string) => !!ym && (ym < MIN_MONTH || ym > monthPlus(thisMonth(), 3));
+/** เดือนล่วงหน้า (ยังมาไม่ถึง) — ไม่ถึงกับผิด แต่ควรเช็กว่าวันที่ถูก */
+const isFutureMonth = (ym: string) => !!ym && !isOddMonth(ym) && ym > thisMonth();
+
 const CARRY_FIELD = "ยกยอดจ่ายในแอป";
 const isCarryOver = (s: Sale) => !!(s.custom_fields?.[CARRY_FIELD]);
 
@@ -99,6 +115,11 @@ function CommissionPageInner() {
     const lockKeys = Object.keys(fieldConfig.commissionLocks || {});
     return [...new Set([...raw, ...lockKeys])].sort().reverse();
   }, [closedSales, fieldConfig.commissionLocks]);
+  // ดีลที่ตกอยู่ในเดือนที่เป็นไปไม่ได้ — ชี้เป้าให้ไปแก้วันที่ที่ต้นทาง (ไม่ซ่อนข้อมูล)
+  const oddDeals = useMemo(
+    () => closedSales.filter(s => isOddMonth(periodOf(s))).map(s => ({ s, period: periodOf(s) })),
+    [closedSales]);
+
   const [month, setMonth] = useState<string>("");
   const activeMonth = month || months[0] || "";
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -290,17 +311,47 @@ function CommissionPageInner() {
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-3 flex flex-wrap items-center gap-2">
           <span className="text-xs font-semibold text-slate-500 flex items-center gap-1.5 mr-1"><Calendar className="w-3.5 h-3.5" />เดือน</span>
           {months.length === 0 && <span className="text-sm text-slate-400">ยังไม่มีดีลปิดการขาย</span>}
-          {months.map(m => (
+          {months.map(m => {
+            const odd = isOddMonth(m);            // เดือนที่เป็นไปไม่ได้ = วันที่ในดีลพิมพ์ผิด
+            const future = isFutureMonth(m);      // เดือนที่ยังมาไม่ถึง — เตือนเบาๆ ให้เช็ก
+            return (
             <button key={m} onClick={() => { setMonth(m); setExpanded(null); }}
-              className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-all ${activeMonth === m ? "bg-amber-500 text-white border-amber-500" : "bg-white text-slate-600 border-slate-200 hover:border-amber-300"}`}>
-              {tabLabel(m)}
+              title={odd ? "เดือนนี้เป็นไปไม่ได้ — วันที่ในดีลน่าจะพิมพ์ปีผิด กดเพื่อดูดีลในเดือนนี้"
+                : future ? "เดือนล่วงหน้า (ยังมาไม่ถึง) — กดดูว่าวันที่ในดีลถูกต้องไหม" : undefined}
+              className={`px-3 py-1.5 rounded-lg text-sm font-bold border transition-all ${
+                activeMonth === m ? "bg-amber-500 text-white border-amber-500"
+                : odd ? "bg-red-50 text-red-700 border-red-300 hover:border-red-400"
+                : future ? "bg-amber-50 text-amber-700 border-amber-300 hover:border-amber-400"
+                : "bg-white text-slate-600 border-slate-200 hover:border-amber-300"}`}>
+              {odd ? "⚠️ " : future ? "🕐 " : ""}{tabLabel(m)}
             </button>
-          ))}
+          );})}
           {/* จ่ายวันที่ 25 เดือนถัดไป · เดือนก่อน ก.ค.69 = บันทึกอ้างอิง (ยังไม่จ่ายผ่านแอป) */}
           {activeMonth && (activeMonth >= APP_PAYOUT_FROM
             ? <span className="ml-auto text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5">💰 จ่ายให้ฝ่ายขาย {payoutLabelOf(activeMonth)}</span>
             : <span className="ml-auto text-xs font-semibold text-slate-500 bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1.5">📁 ก่อนเริ่มจ่ายผ่านแอป (บันทึกอ้างอิง)</span>)}
         </div>
+        {/* ── เตือนเดือนที่เป็นไปไม่ได้ — วันที่ในดีลพิมพ์ปีผิด ── */}
+        {oddDeals.length > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-2xl p-4">
+            <p className="text-sm font-bold text-red-700 mb-1">⚠️ พบ {oddDeals.length} ดีลที่วันที่ผิดปกติ — ทำให้มีแท็บเดือนแปลกๆ ({[...new Set(oddDeals.map(d => tabLabel(d.period)))].join(" · ")})</p>
+            <p className="text-[11px] text-red-600 mb-2">แก้ที่หน้าฝ่ายขาย → เปิดดีลนั้น → แก้ <b>วันส่งมอบ</b> หรือ <b>วันที่รับเงิน</b> ให้เป็นปีที่ถูก แล้วแท็บเดือนจะหายไปเอง</p>
+            <div className="flex flex-col gap-1.5">
+              {oddDeals.slice(0, 10).map(d => (
+                <div key={d.s.id} className="text-xs bg-white border border-red-100 rounded-lg px-2.5 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="font-semibold text-slate-800">{d.s.customer_name || "(ไม่มีชื่อลูกค้า)"}</span>
+                  <span className="text-slate-500">{d.s.forklift_brand} {d.s.forklift_model}</span>
+                  {d.s.forklift_unit_no && <span className="text-slate-400">{d.s.forklift_unit_no}</span>}
+                  <span className="text-slate-500">เซลล์ {d.s.sales_staff || "—"}</span>
+                  <span className="ml-auto text-red-700 font-semibold">
+                    ส่งมอบ {d.s.delivery_date || "—"} · รับเงิน {d.s.payment_received_date || "—"}
+                  </span>
+                </div>
+              ))}
+              {oddDeals.length > 10 && <span className="text-[11px] text-red-600">…และอีก {oddDeals.length - 10} ดีล</span>}
+            </div>
+          </div>
+        )}
         <p className="text-[11px] text-slate-400 -mt-3 px-1">แยกรายเดือน · เริ่มจ่ายผ่านแอป <b className="text-slate-500">ก.ค. 69</b> เป็นต้นไป (จ่าย 25 เดือนถัดไป) · ดีลเก่า=เดือนที่<b className="text-slate-500">ปิดการขาย</b> · ดีลใหม่=เดือนที่<b className="text-slate-500">เงินเข้าบัญชี</b></p>
 
         {/* ⏳ ดีลรอรับเงิน — กดกางดู + กรอกวันรับเงินได้เลย */}
