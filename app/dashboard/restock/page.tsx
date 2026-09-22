@@ -10,6 +10,7 @@ import { useApp } from "@/lib/AppContext";
 import { isClosedSale, closeMonth } from "@/lib/commission";
 import { DashboardGuard } from "@/components/DashboardGuard";
 import { Forklift } from "@/lib/types";
+import { normBrand } from "@/lib/brands";
 
 const fmt = (n: number) => Math.round(Number(n) || 0).toLocaleString("th-TH"); // จำนวนเต็ม ไม่มีทศนิยม
 // อัตรา/จำนวนเดือน: ปัดเป็นจำนวนเต็ม แต่ถ้ามากกว่า 0 แต่ไม่ถึง 0.5 โชว์ "<1" (กันแสดงเป็น 0 ทั้งที่ยังขายได้)
@@ -47,6 +48,7 @@ interface ModelRow {
   totalProfit: number;    // กำไรรวมในช่วง (คิดจากทุนจริงเท่านั้น)
   hasCost: boolean;       // ทุนครบทุกคันไหม — ไม่ครบ = ไม่โชว์กำไร (ไม่เดาแทน)
   noCostUnits: number;    // จำนวนคันที่ขายแล้วแต่ยังไม่มีราคาทุน
+  isUsed: boolean;        // รถมือสอง — หาทีละคันตามงานขาย ไม่ต้องสั่งเข้าสต็อก
 }
 
 /** รุ่นที่ยังกรอกราคาทุนไม่ครบ — เอาไว้ไล่กรอกให้จบ กำไรถึงจะคำนวณได้ */
@@ -111,7 +113,7 @@ function RestockPageInner() {
     const m = new Map<string, { available: number; incoming: number; costSum: number; costN: number }>();
     forklifts.forEach(f => {
       const model = String(f.model ?? "");
-      const key = `${f.brand ?? ""}|${model}|${mastKeyOf(model, mastOf(f))}`;
+      const key = `${normBrand(f.brand)}|${model}|${mastKeyOf(model, mastOf(f))}`;
       const g = m.get(key) ?? { available: 0, incoming: 0, costSum: 0, costN: 0 };
       const st = String(f.status ?? "").trim();
       if (st === "พร้อมขาย") g.available += 1;
@@ -129,7 +131,7 @@ function RestockPageInner() {
     const seen = new Map<string, Set<string>>();
     forklifts.forEach(f => {
       const model = String(f.model ?? "").trim().toUpperCase();
-      const brand = String(f.brand ?? "").trim();
+      const brand = normBrand(f.brand);
       if (!model || !brand) return;
       if (!seen.has(model)) seen.set(model, new Set());
       seen.get(model)!.add(brand);
@@ -149,8 +151,8 @@ function RestockPageInner() {
       //    (22 ก.ย. 2569) ใบขายเก่า/บิล GR หลายใบไม่ได้กรอกยี่ห้อ เดิมจึงตกไปอยู่กลุ่ม "ไม่ระบุ"
       //    ซึ่งไม่ใช่แค่ชื่อกลุ่มผิด — คีย์จับคู่สต็อกคือ "ยี่ห้อ|รุ่น" พอยี่ห้อว่างเลยหาสต็อกไม่เจอ
       //    คงเหลือขึ้น 0 · ทุนขึ้น "—" · ติดป้าย "ควรสั่งด่วน" ทั้งที่ของมีในคลัง
-      const brand = s.forklift_brand
-        || fkById.get(s.forklift_id)?.brand
+      const brand = normBrand(s.forklift_brand)
+        || normBrand(fkById.get(s.forklift_id)?.brand)
         || brandByModel.get(model.trim().toUpperCase())
         || "ไม่ระบุ";
       // ⭐ แยกตามความสูงเสาด้วย — รุ่นเดียวกันคนละเสา สั่งของคนละอย่าง ทุนคนละราคา
@@ -183,11 +185,18 @@ function RestockPageInner() {
         profitSum += (Number(s.actual_sale) || 0) - cost - addOns - free - ship;
       });
       const hasCost = noCostUnits === 0;
+      // ⭐ กติกา (22 ก.ย. 2569 · ผู้ใช้ยืนยัน): **รถมือสองไม่สั่งเข้าสต็อก** — รับมาทีละคันตามงานขายที่ปิดได้
+      //    จึงไม่ต้องคิด "ควรสั่งเพิ่ม/งบสั่ง" และไม่ติดป้ายควรสั่งด่วน (ของไม่มีในคลังเป็นเรื่องปกติ)
+      const usedN = g.sales.filter(s2 => /มือสอง/.test(String(s2.sale_type ?? ""))).length;
+      const isUsed = /มือสอง/.test(g.model) || (usedN > 0 && usedN === g.units);
       out.push({
         brand: g.brand, model: g.model, mast: g.mast, capacity: capOf(g.model),
         units: g.units, revenue: g.revenue,
         avgMonth, available: st.available, incoming: st.incoming, avgCost,
-        coverage, needQty, needCost: needQty * avgCost,
+        coverage: isUsed ? Infinity : coverage,
+        needQty: isUsed ? 0 : needQty,
+        needCost: isUsed ? 0 : needQty * avgCost,
+        isUsed,
         avgProfit: hasCost ? Math.round(profitSum / g.units) : 0,
         totalProfit: hasCost ? Math.round(profitSum) : 0,
         hasCost, noCostUnits,
@@ -204,7 +213,7 @@ function RestockPageInner() {
       const g = m.get(r.brand) ?? { brand: r.brand, models: [], units: 0, revenue: 0, profit: 0, needCost: 0, urgent: 0 };
       g.models.push(r);
       g.units += r.units; g.revenue += r.revenue; g.profit += r.totalProfit; g.needCost += r.needCost;
-      if (r.coverage < 1) g.urgent += 1;
+      if (!r.isUsed && r.coverage < 1) g.urgent += 1;
       m.set(r.brand, g);
     });
     return [...m.values()].sort((a, b) => b.revenue - a.revenue);
@@ -222,7 +231,7 @@ function RestockPageInner() {
       return g;
     };
     const brandOf = (model: string, fallback?: string) =>
-      String(fallback ?? "").trim() || brandByModel.get(model.trim().toUpperCase()) || "ไม่ระบุ";
+      normBrand(fallback) || brandByModel.get(model.trim().toUpperCase()) || "ไม่ระบุ";
 
     forklifts.forEach(f => {
       if ((Number(f.cost_price) || 0) > 0) return;
@@ -249,7 +258,7 @@ function RestockPageInner() {
   const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
   const totalProfit = rows.reduce((s, r) => s + r.totalProfit, 0);
   const totalNeedCost = rows.reduce((s, r) => s + r.needCost, 0);
-  const urgentRows = rows.filter(r => r.coverage < 1).sort((a, b) => b.avgMonth - a.avgMonth);
+  const urgentRows = rows.filter(r => !r.isUsed && r.coverage < 1).sort((a, b) => b.avgMonth - a.avgMonth);
 
   /** ป้ายชื่อสินค้า = รุ่น · พิกัดยก · เสา (รุ่นเดียวกันคนละเสาคือคนละสินค้า) */
   const variantLabel = (r: { model: string; mast: string; capacity?: string }) =>
@@ -257,7 +266,8 @@ function RestockPageInner() {
 
   // ป้ายสถานะสั่งสต็อก
   const statusOf = (r: ModelRow) =>
-    r.coverage < 1 ? { t: "🔴 ควรสั่งด่วน", c: "bg-red-100 text-red-700 border-red-200" }
+    r.isUsed ? { t: "♻️ มือสอง · หาตามงานขาย", c: "bg-slate-100 text-slate-600 border-slate-200" }
+    : r.coverage < 1 ? { t: "🔴 ควรสั่งด่วน", c: "bg-red-100 text-red-700 border-red-200" }
       : r.coverage < target ? { t: "🟡 ควรเติม", c: "bg-amber-100 text-amber-700 border-amber-200" }
       : { t: "🟢 เพียงพอ", c: "bg-emerald-100 text-emerald-700 border-emerald-200" };
 
@@ -272,10 +282,11 @@ function RestockPageInner() {
       "คงเหลือพร้อมขาย": r.available, "กำลังผลิต/รอรับ": r.incoming,
       "พอขายอีก (เดือน)": r.coverage === Infinity ? "" : Math.round(r.coverage),
       "ทุนเฉลี่ย/คัน (บาท)": r.avgCost,
-      "แนะนำสั่งเพิ่ม (คัน)": r.needQty, "งบสั่งเพิ่มโดยประมาณ (บาท)": r.needCost,
+      "แนะนำสั่งเพิ่ม (คัน)": r.isUsed ? "" : r.needQty, "งบสั่งเพิ่มโดยประมาณ (บาท)": r.isUsed ? "" : r.needCost,
+      "หมายเหตุ": r.isUsed ? "รถมือสอง — หาทีละคันตามงานขาย ไม่สั่งเข้าสต็อก" : "",
     }));
     const ws = XLSX.utils.json_to_sheet(detRows);
-    ws["!cols"] = [12, 20, 10, 10, 14, 18, 16, 16, 14, 14, 14, 14, 16, 16, 20].map(w => ({ wch: w }));
+    ws["!cols"] = [12, 20, 10, 10, 14, 18, 16, 16, 14, 14, 14, 14, 16, 16, 20, 40].map(w => ({ wch: w }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "วางแผนสั่งสต็อก");
     // ชีตที่ 2 — รายการที่ต้องไปกรอกราคาทุน (ไม่งั้นกำไรคำนวณไม่ได้)

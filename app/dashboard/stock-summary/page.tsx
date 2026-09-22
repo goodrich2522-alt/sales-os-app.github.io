@@ -6,6 +6,7 @@ import { useMemo } from "react";
 import { ArrowLeft, Package, Download, AlertTriangle } from "lucide-react";
 import { useApp } from "@/lib/AppContext";
 import { DashboardGuard } from "@/components/DashboardGuard";
+import { normBrand } from "@/lib/brands";
 import type { Forklift } from "@/lib/types";
 
 const fmt = (n: number) => Math.round(Number(n) || 0).toLocaleString("th-TH");
@@ -50,7 +51,7 @@ function StockSummaryInner() {
 
     for (const f of ready) {
       const ck = catOf(f.model);
-      const brand = (f.brand ?? "").trim() || "(ไม่ระบุแบรนด์)";
+      const brand = normBrand(f.brand) || "(ไม่ระบุแบรนด์)";
       const cost = Number(f.cost_price) || 0;
       const c = cats[ck];
       c.units += 1;

@@ -25,6 +25,7 @@ import { apiEnabled, uploadImageApi } from "@/lib/api";
 import { driveImg, resizeImageFile } from "@/lib/img";
 import { parseSvc, nextDue, SVC_SOON_DAYS } from "@/lib/warranty";
 import { WarrantyBlock } from "@/components/WarrantyBlock";
+import { normBrand } from "@/lib/brands";
 
 
 // ฟิลด์ dropdown ฝั่งสต็อก — ไม่รวมประเภทการขาย/การชำระ (จัดการในหน้าฝ่ายขาย)
@@ -562,7 +563,7 @@ export default function StockMain() {
       const okQ = !q || hs(f.id).includes(q) || hs(f.SN).includes(q) || hs(f.brand).includes(q) || hs(f.model).includes(q) || hs(f.pi_no).includes(q)
         || (qBase.length >= 3 && baseModel(hs(f.model)).includes(qBase));
       const okCat = listCat === "all" || (f.vehicle_category ?? "Forklift") === listCat;
-      const okBrand = listBrand === "all" || (f.brand || "(ไม่ระบุ)") === listBrand;
+      const okBrand = listBrand === "all" || (normBrand(f.brand) || "(ไม่ระบุ)") === listBrand;
       const okModel = listModel === "all" || f.model === listModel;
       const okMast = listMast === "all" || String((f.custom_fields as Record<string, unknown> | undefined)?.["MAST"] ?? "").trim() === listMast;
       const okFuel = listFuel === "all" || f.fuel === listFuel;
@@ -592,8 +593,8 @@ export default function StockMain() {
   const hasMore = listFiltered.length > pagedList.length;
 
   // ตัวเลือก dropdown — ไล่ระดับ ยี่ห้อ→รุ่น→เสา (นับเฉพาะที่มีจริงในสต็อก)
-  const modelOpts = [...new Set(forklifts.filter(f => listBrand === "all" || (f.brand || "(ไม่ระบุ)") === listBrand).map(f => f.model).filter(Boolean))].sort();
-  const mastOpts  = [...new Set(forklifts.filter(f => (listBrand === "all" || (f.brand || "(ไม่ระบุ)") === listBrand) && (listModel === "all" || f.model === listModel)).map(mastOf).filter(Boolean))].sort();
+  const modelOpts = [...new Set(forklifts.filter(f => listBrand === "all" || (normBrand(f.brand) || "(ไม่ระบุ)") === listBrand).map(f => f.model).filter(Boolean))].sort();
+  const mastOpts  = [...new Set(forklifts.filter(f => (listBrand === "all" || (normBrand(f.brand) || "(ไม่ระบุ)") === listBrand) && (listModel === "all" || f.model === listModel)).map(mastOf).filter(Boolean))].sort();
   const fuelOpts  = [...new Set(forklifts.map(f => f.fuel).filter(Boolean))].sort();
   // ยี่ห้อที่มีอยู่จริง + ที่ตั้งไว้ในตัวเลือกระบบ — ใช้เป็นคำแนะนำในช่อง "ยี่ห้อ" ตอนแก้หลายคัน
   const brandOpts = [...new Set([...forklifts.map(f => f.brand).filter(Boolean), ...fieldConfig.brands])].sort();
@@ -608,7 +609,7 @@ export default function StockMain() {
         "อันดับ": i + 1,
         "รหัส (SN)": f.id ?? "",
         "SN": f.SN ?? "",
-        "ยี่ห้อ": f.brand || "(ไม่ระบุ)",
+        "ยี่ห้อ": normBrand(f.brand) || "(ไม่ระบุ)",
         "รุ่น": mastOf(f) ? `${f.model} · เสา ${mastOf(f)}` : (f.model ?? ""),
         "ชนิด": f.vehicle_category ?? "Forklift",
         "วันรับรถ": f.received_date ?? "",
@@ -627,7 +628,7 @@ export default function StockMain() {
       return {
       "รหัส (SN)": f.id ?? "",
       "SN": f.SN ?? "",
-      "ยี่ห้อ": f.brand || "(ไม่ระบุ)",
+      "ยี่ห้อ": normBrand(f.brand) || "(ไม่ระบุ)",
       "รุ่น": f.model ?? "",
       "ชนิด": f.vehicle_category ?? "Forklift",
       "PI": f.pi_no ?? "",
@@ -667,7 +668,7 @@ export default function StockMain() {
     inStock.forEach(f => {
       const mast = mastOf(f);
       const key = `${f.brand}|${f.model}|${mast}`;
-      const g = gmap.get(key) ?? { brand: f.brand || "(ไม่ระบุ)", model: f.model || "", mast, sys: 0 };
+      const g = gmap.get(key) ?? { brand: normBrand(f.brand) || "(ไม่ระบุ)", model: f.model || "", mast, sys: 0 };
       g.sys++; gmap.set(key, g);
     });
     const sumRows = [...gmap.values()]
@@ -678,7 +679,7 @@ export default function StockMain() {
       }));
     // ชีต 2: นับรายคัน (SN) — เช็คลิสต์ทีละคัน
     const unitRows = inStock.map((f, i) => ({
-      "ลำดับ": i + 1, "SN": f.id ?? "", "ยี่ห้อ": f.brand || "(ไม่ระบุ)", "รุ่น": f.model ?? "",
+      "ลำดับ": i + 1, "SN": f.id ?? "", "ยี่ห้อ": normBrand(f.brand) || "(ไม่ระบุ)", "รุ่น": f.model ?? "",
       "เสา (MAST)": mastOf(f), "พลังงาน": f.fuel ?? "", "โลเคชั่น": f.location ?? "",
       "พบ (✓)": "", "หมายเหตุ": "",
     }));
@@ -695,7 +696,7 @@ export default function StockMain() {
   // ยี่ห้อที่มีจริงในสต็อก (เรียงตามจำนวนมาก→น้อย) — ทำเป็นแท็กกรอง
   const brandList = useMemo(() => {
     const m = new Map<string, number>();
-    forklifts.forEach(f => { const b = f.brand || "(ไม่ระบุ)"; m.set(b, (m.get(b) ?? 0) + 1); });
+    forklifts.forEach(f => { const b = normBrand(f.brand) || "(ไม่ระบุ)"; m.set(b, (m.get(b) ?? 0) + 1); });
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }, [forklifts]);
   const brandCount = (b: string) => b === "all" ? forklifts.length : (brandList.find(([n]) => n === b)?.[1] ?? 0);
@@ -709,7 +710,7 @@ export default function StockMain() {
     listFiltered.forEach(f => {
       const mast = String((f.custom_fields as Record<string, unknown> | undefined)?.["MAST"] ?? "").trim();
       const key = `${f.brand}|${f.model}|${mast}`;
-      const g = m.get(key) ?? { model: f.model || "(ไม่ระบุรุ่น)", brand: f.brand || "", mast, total: 0, available: 0, sold: 0 };
+      const g = m.get(key) ?? { model: f.model || "(ไม่ระบุรุ่น)", brand: normBrand(f.brand), mast, total: 0, available: 0, sold: 0 };
       g.total++;
       if (isAvailable(f.status)) g.available++;
       if (String(f.status) === "ปิดการขายแล้ว") g.sold++;

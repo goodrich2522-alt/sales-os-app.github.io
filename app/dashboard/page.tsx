@@ -16,6 +16,7 @@ import { parseSvc, nextDue, daysUntil, SVC_SOON_DAYS } from "@/lib/warranty";
 import { isForkliftVehicle, closeDate } from "@/lib/commission";
 import { thaiDateShort } from "@/lib/format";
 import { Sale, Forklift, isVoidSale } from "@/lib/types";
+import { normBrand } from "@/lib/brands";
 import GoogleLoginButton, { type GoogleUser } from "@/components/GoogleLoginButton";
 import { checkAccess, hasActiveSession } from "@/lib/auth";
 import { apiEnabled } from "@/lib/api";
@@ -106,13 +107,13 @@ export default function Dashboard() {
     const top = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0]?.[0];
     if (top && top !== dashYear) setDashYear(top);
   }, [allSales, dashYear, years]);
-  const brandOptions = useMemo(() => [...new Set(allSales.map((s) => s.forklift_brand || "อื่นๆ"))].sort(), [allSales]);
+  const brandOptions = useMemo(() => [...new Set(allSales.map((s) => normBrand(s.forklift_brand) || "อื่นๆ"))].sort(), [allSales]);
   // กรองตามปี (ใช้กับกราฟสัดส่วนแบรนด์ — ให้เห็นทุกแบรนด์ในปีนั้น ไม่ถูก brand filter บีบเหลือ 1)
   const yearSales = useMemo(() => dashYear
     ? allSales.filter((s) => { const d = new Date(s.created_at); return !isNaN(d.getTime()) && String(d.getFullYear()) === dashYear; })
     : allSales, [allSales, dashYear]);
   // กรองปี + แบรนด์ → ใช้กับ aggregation ที่เหลือทั้งหมด (ชื่อ sales เดิม เพื่อไม่ต้องแก้โค้ดด้านล่าง)
-  const sales = useMemo(() => dashBrand === "all" ? yearSales : yearSales.filter((s) => (s.forklift_brand || "อื่นๆ") === dashBrand), [yearSales, dashBrand]);
+  const sales = useMemo(() => dashBrand === "all" ? yearSales : yearSales.filter((s) => (normBrand(s.forklift_brand) || "อื่นๆ") === dashBrand), [yearSales, dashBrand]);
 
   useEffect(() => {
     // เข้าค้างไว้ได้เฉพาะเมื่อ session Supabase ยังไม่หมดอายุ — ไม่งั้นให้ล็อกอินใหม่
@@ -180,7 +181,7 @@ export default function Dashboard() {
   const [modelBrand, setModelBrand] = useState<string>("");
   const [expandedModel, setExpandedModel] = useState<string | null>(null);  // รุ่นที่กดขยายดูรายการขาย
   const modelSales = useMemo(
-    () => (modelBrand ? sales.filter(s => (s.forklift_brand || "อื่นๆ") === modelBrand) : sales),
+    () => (modelBrand ? sales.filter(s => (normBrand(s.forklift_brand) || "อื่นๆ") === modelBrand) : sales),
     [sales, modelBrand]
   );
   const liveTopModels = useMemo(() => {
@@ -191,7 +192,7 @@ export default function Dashboard() {
       const model = s.forklift_model || "";
       const spec = modelSpec.get(model.trim().toUpperCase());
       // กรองแบรนด์แล้ว → ตัดชื่อแบรนด์ออกจากป้าย (ไม่ต้องซ้ำ)
-      const label = modelBrand ? model : `${s.forklift_brand} ${model}`;
+      const label = modelBrand ? model : `${normBrand(s.forklift_brand)} ${model}`;
       // พิกัดยก: ใช้ของประจำรุ่น (ทุกคันตรงกัน) ไม่งั้นใช้ของคันนั้น — ป้ายรุ่นเดียวกันจะได้ไม่แตกเป็นหลายแถว
       const cap = spec && spec.caps.size === 1 ? [...spec.caps][0] : (meta?.cap ?? "");
       const mast = meta?.mast ?? "";
@@ -277,7 +278,7 @@ export default function Dashboard() {
   const realBrandShare = useMemo(() => {
     const COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#06B6D4", "#EC4899", "#64748B"];
     const map: Record<string, number> = {};
-    yearSales.forEach((s) => { const b = s.forklift_brand || "อื่นๆ"; map[b] = (map[b] ?? 0) + 1; }); // ใช้ทั้งปี ไม่ถูก brand filter บีบ
+    yearSales.forEach((s) => { const b = normBrand(s.forklift_brand) || "อื่นๆ"; map[b] = (map[b] ?? 0) + 1; }); // ใช้ทั้งปี ไม่ถูก brand filter บีบ
     const total = yearSales.length || 1;
     return Object.entries(map).sort((a, b) => b[1] - a[1]).map(([name, count], i) => ({ name, value: count, pct: Math.round((count / total) * 100), color: COLORS[i % COLORS.length] }));
   }, [yearSales]);
@@ -350,7 +351,7 @@ export default function Dashboard() {
 
   const staffModelMap: Record<string, number> = {};
   staffSales.forEach((s) => {
-    const key = `${s.forklift_brand} ${s.forklift_model}`;
+    const key = `${normBrand(s.forklift_brand)} ${s.forklift_model}`;
     staffModelMap[key] = (staffModelMap[key] ?? 0) + 1;
   });
   const staffModels = Object.entries(staffModelMap).sort((a, b) => b[1] - a[1]);
@@ -366,7 +367,7 @@ export default function Dashboard() {
   const drillData = drillMonth ? buildStaffWeekly(sales, selectedStaff, drillMonth) : null;
   const drillModelMap: Record<string, number> = {};
   drillData?.allSales.forEach((s) => {
-    const key = `${s.forklift_brand} ${s.forklift_model}`;
+    const key = `${normBrand(s.forklift_brand)} ${s.forklift_model}`;
     drillModelMap[key] = (drillModelMap[key] ?? 0) + 1;
   });
   const drillModels = Object.entries(drillModelMap).sort((a, b) => b[1] - a[1]);

@@ -8,6 +8,7 @@ import { mockTransporterData } from "@/lib/mockData";
 import { InspectionRecord, DeletedInspectionRecord, Forklift } from "@/lib/types";
 import { displayCode } from "@/lib/productId";
 import { DashboardGuard } from "@/components/DashboardGuard";
+import { normBrand } from "@/lib/brands";
 import {
   ArrowLeft, Camera, ImageOff, Calendar, Truck, User,
   Trash2, RotateCcw, AlertTriangle, X, ZoomIn, ChevronLeft, ChevronRight, Info, Download, Search
@@ -73,7 +74,7 @@ function InspectionsPageInner() {
       let withPhotos = 0;
       recs.forEach(r => {
         const fk = fkOf(r);
-        const b = fk?.brand || "—"; brands.set(b, (brands.get(b) ?? 0) + 1);
+        const b = normBrand(fk?.brand) || "—"; brands.set(b, (brands.get(b) ?? 0) + 1);
         if (r.transporter_name) receivers.add(r.transporter_name);
         if (fk?.pi_no) pis.add(fk.pi_no);
         if ((r.images?.length ?? 0) > 0) withPhotos++;
@@ -86,7 +87,8 @@ function InspectionsPageInner() {
     const brandTotals = new Map<string, number>(), receiverTotals = new Map<string, number>(), piTotals = new Map<string, number>();
     inRange.forEach(r => {
       const fk = fkOf(r);
-      brandTotals.set(fk?.brand || "—", (brandTotals.get(fk?.brand || "—") ?? 0) + 1);
+      const bt = normBrand(fk?.brand) || "—";
+      brandTotals.set(bt, (brandTotals.get(bt) ?? 0) + 1);
       receiverTotals.set(r.transporter_name || "—", (receiverTotals.get(r.transporter_name || "—") ?? 0) + 1);
       if (fk?.pi_no) piTotals.set(fk.pi_no, (piTotals.get(fk.pi_no) ?? 0) + 1);
     });
