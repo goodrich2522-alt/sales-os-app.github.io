@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ShieldCheck, RefreshCw, Search, Package, ShoppingCart, Trash2, CheckCircle, X, Pencil } from "lucide-react";
 import { fetchAuditApi, AuditEntry } from "@/lib/api";
 import { DashboardGuard } from "@/components/DashboardGuard";
+import { useApp } from "@/lib/AppContext";
 
 const fmtTime = (s?: string) => { if (!s) return ""; try { return new Date(s).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" }); } catch { return s; } };
 
@@ -36,11 +37,35 @@ const actionStyle = (a?: string) => {
 };
 
 function AuditPageInner() {
+  const { sales, forklifts, updateSale } = useApp();
   const [rows, setRows] = useState<AuditEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
   const [actFilter, setActFilter] = useState("all");
+  const [syncConfirm, setSyncConfirm] = useState(false);
+  const [syncDone, setSyncDone] = useState(0);
+
+  // ── ตรวจความตรงกัน: ชื่อยี่ห้อ/รุ่นในใบขาย vs ทะเบียนรถ ──
+  // ใบขายเก็บ "สำเนาข้อความ" ของยี่ห้อ/รุ่น ไม่ได้ join กับทะเบียนรถ
+  // แก้ชื่อรุ่นที่รถก่อน 23 ก.ย. 2569 ใบขายจึงค้างชื่อเก่า → รายงานโชว์ชื่อผิดทั้งที่สต็อกแก้แล้ว
+  // (ตั้งแต่ 23 ก.ย. 69 ระบบซิงก์ให้อัตโนมัติตอนแก้ — อันนี้ไว้เก็บกวาดของเก่า)
+  const mismatches = useMemo(() => {
+    const byId = new Map(forklifts.map(f => [f.id, f]));
+    const t = (v: unknown) => String(v ?? "").trim();
+    return sales
+      .map(s => ({ s, f: byId.get(s.forklift_id) }))
+      .filter((x): x is { s: typeof sales[number]; f: NonNullable<typeof x.f> } => !!x.f)
+      .filter(({ s, f }) =>
+        (t(s.forklift_model) && t(s.forklift_model) !== t(f.model)) ||
+        (t(s.forklift_brand) && t(s.forklift_brand) !== t(f.brand)));
+  }, [sales, forklifts]);
+
+  const syncMismatches = () => {
+    mismatches.forEach(({ s, f }) => updateSale({ ...s, forklift_brand: f.brand, forklift_model: f.model }));
+    setSyncDone(mismatches.length);
+    setSyncConfirm(false);
+  };
 
   const load = async () => {
     setBusy(true); setErr("");
@@ -79,6 +104,39 @@ function AuditPageInner() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-6 flex flex-col gap-4">
+        {/* ── ใบขายที่ชื่อยี่ห้อ/รุ่นไม่ตรงกับทะเบียนรถ (ของเก่าที่แก้ก่อนระบบซิงก์อัตโนมัติ) ── */}
+        {mismatches.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+            <p className="text-sm font-bold text-amber-800">⚠️ ใบขาย {mismatches.length} ใบ ชื่อยี่ห้อ/รุ่นไม่ตรงกับทะเบียนรถ</p>
+            <p className="text-[11px] text-amber-700 mt-0.5 mb-2">
+              ใบขายเก็บชื่อรุ่นเป็นสำเนาข้อความ — ถ้าแก้ชื่อรุ่นที่หน้าสต็อกก่อน 23 ก.ย. 2569 ใบขายจะยังค้างชื่อเดิม ทำให้รายงานโชว์ชื่อเก่า
+            </p>
+            <div className="flex flex-col gap-1.5 mb-2">
+              {mismatches.slice(0, 8).map(({ s, f }) => (
+                <div key={s.id} className="text-xs bg-white border border-amber-100 rounded-lg px-2.5 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="text-slate-500">{s.forklift_unit_no || s.forklift_id}</span>
+                  <span className="text-red-600 line-through">{s.forklift_brand} {s.forklift_model}</span>
+                  <span className="text-slate-400">→</span>
+                  <span className="font-semibold text-emerald-700">{f.brand} {f.model}</span>
+                  <span className="ml-auto text-slate-400">{s.customer_name || "—"}</span>
+                </div>
+              ))}
+              {mismatches.length > 8 && <span className="text-[11px] text-amber-700">…และอีก {mismatches.length - 8} ใบ</span>}
+            </div>
+            {!syncConfirm
+              ? <button onClick={() => setSyncConfirm(true)} className="text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white rounded-lg px-3 py-2 transition-colors">
+                  ซิงก์ให้ตรงกับทะเบียนรถ ({mismatches.length} ใบ)
+                </button>
+              : <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-amber-800 font-semibold">ยืนยัน? จะเขียนชื่อยี่ห้อ/รุ่นจากทะเบียนรถลงใบขาย {mismatches.length} ใบ</span>
+                  <button onClick={syncMismatches} className="text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-1.5">ยืนยันซิงก์</button>
+                  <button onClick={() => setSyncConfirm(false)} className="text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg px-3 py-1.5">ยกเลิก</button>
+                </div>}
+          </div>
+        )}
+        {syncDone > 0 && mismatches.length === 0 && (
+          <p className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl px-3 py-2">✓ ซิงก์ชื่อรุ่นในใบขายแล้ว {syncDone} ใบ — ข้อมูลตรงกับทะเบียนรถทั้งหมด</p>
+        )}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-3 flex flex-wrap items-center gap-2">
           <div className="relative flex-1 min-w-[180px]">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
