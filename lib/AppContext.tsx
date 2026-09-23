@@ -411,6 +411,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     lastLocalEditRef.current = Date.now();
     setForklifts(p => p.map(x => x.id === f.id ? f : x));
     if (api.apiEnabled) api.updateForkliftApi(f).catch(e => console.warn("updateForklift", e));
+    // ⭐ (23 ก.ย. 2569) ชื่อยี่ห้อ/รุ่นในใบขายเป็น "สำเนาข้อความ" ไม่ได้ join กับทะเบียนรถ
+    //    แก้ชื่อรุ่นที่รถแล้วใบขายยังค้างชื่อเก่า → รายงาน (รุ่นขายดี/วางแผนสั่งสต็อก) ยังโชว์ชื่อผิด
+    //    จึงอัปเดตใบขายของคันนั้นตามไปด้วย (เฉพาะยี่ห้อ/รุ่น — ฟิลด์อื่นของใบขายไม่แตะ)
+    if (before && (String(before.model ?? "") !== String(f.model ?? "") || String(before.brand ?? "") !== String(f.brand ?? ""))) {
+      const linked = salesRef.current.filter(s => s.forklift_id === f.id);
+      if (linked.length) {
+        const fix = (s: Sale): Sale => ({ ...s, forklift_brand: f.brand, forklift_model: f.model });
+        setSales(p => p.map(s => (s.forklift_id === f.id ? fix(s) : s)));
+        if (api.apiEnabled) linked.forEach(s => api.updateSaleApi(fix(s)).catch(e => console.warn("sync sale model", e)));
+        logAudit("แก้ชื่อรุ่นในใบขายตามรถ", "forklift", f.id, {
+          from: `${before.brand} ${before.model}`, to: `${f.brand} ${f.model}`, ใบขายที่อัปเดต: linked.length,
+        });
+      }
+    }
     // audit: log เฉพาะ field สำคัญที่เปลี่ยน
     if (before) {
       const ch: Record<string, { from: unknown; to: unknown }> = {};

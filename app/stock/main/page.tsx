@@ -17,7 +17,7 @@ import { Lightbox } from "@/components/ui/Lightbox";
 import { Chip } from "@/components/ui/Chip";
 import { StatusBadge } from "@/components/ui/Badge";
 import { MoneyInput } from "@/components/ui/MoneyInput";
-import { VEHICLE_CATS, CatFilter, categorizeModel, staffLabel, SALE_STATUS_BADGE, saleStatusGroup, SALE_STATUS_FILTER_GROUPS, SALE_STATUS_OPTIONS } from "@/lib/constants";
+import { VEHICLE_CATS, CatFilter, categorizeModel, modelWarning, staffLabel, SALE_STATUS_BADGE, saleStatusGroup, SALE_STATUS_FILTER_GROUPS, SALE_STATUS_OPTIONS } from "@/lib/constants";
 import { QuoteImport } from "@/components/QuoteImport";
 import { parseForkliftCsv, assignIdsAndStamp, buildCsvTemplate } from "@/lib/forkliftCsv";
 import { hasActiveSession, signOutSupabase } from "@/lib/auth";
@@ -98,6 +98,7 @@ export default function StockMain() {
   const [listMast, setListMast]     = useState("all");                                       // กรองเสา (MAST)
   const [listFuel, setListFuel]     = useState("all");                                       // กรองพลังงาน
   const [listNoCost, setListNoCost] = useState(false);                                       // เฉพาะคันที่ยังไม่มีราคาทุน
+  const [listBadModel, setListBadModel] = useState(false);                                   // เฉพาะคันที่ชื่อรุ่นน่าสงสัย
   const [listSort, setListSort]     = useState<"recent" | "model" | "remain" | "sn" | "pi">("recent"); // การเรียง
   const [listView, setListView]     = useState<"list" | "table" | "byModel" | "aging">("list");  // มุมมอง: รายคัน / ตาราง / รวมตามรุ่น / ค้างนาน
   const [collapsedBrands, setCollapsedBrands] = useState<Set<string>>(new Set()); // แบรนด์ที่ยุบไว้ในมุมมองตามรุ่น
@@ -556,6 +557,8 @@ export default function StockMain() {
   const mastOf = (f: Forklift) => String((f.custom_fields as Record<string, unknown> | undefined)?.["MAST"] ?? "").trim();
   // จำนวนรถที่ยังไม่ได้กรอกราคาทุน — โชว์บนปุ่มกรอง เพื่อรู้ว่าเหลือต้องกรอกอีกกี่คัน
   const noCostCount = useMemo(() => forklifts.filter(f => (Number(f.cost_price) || 0) <= 0).length, [forklifts]);
+  // จำนวนคันที่ชื่อรุ่นน่าสงสัย (ดู modelWarning ใน constants.ts)
+  const badModelCount = useMemo(() => forklifts.filter(f => !!modelWarning(f.model)).length, [forklifts]);
   const listFiltered = useMemo(() => {
     const q = listSearch.trim().toLowerCase();
     const qBase = baseModel(q); // ฐานรุ่นของคำค้น (ตัด MAST) → เจอทุก MAST ของรุ่นเดียวกัน
@@ -570,7 +573,9 @@ export default function StockMain() {
       const okStatus = listStatus === "all" || f.status === listStatus;
       // ไล่กรอกราคาทุน: กรองเฉพาะคันที่ทุนยังว่าง/เป็น 0 (หน้าวางแผนสั่งสต็อกจะได้คำนวณกำไรได้)
       const okCost = !listNoCost || (Number(f.cost_price) || 0) <= 0;
-      return okQ && okCat && okBrand && okModel && okMast && okFuel && okStatus && okCost;
+      // ชื่อรุ่นขัดกับความจริง (เช่น CDD + LI ซึ่งไม่มีรุ่นนี้) — ไล่แก้ให้หมด
+      const okModelName = !listBadModel || !!modelWarning(f.model);
+      return okQ && okCat && okBrand && okModel && okMast && okFuel && okStatus && okCost && okModelName;
     });
     const recent = (a: Forklift, b: Forklift) => String(b.created_at || "").localeCompare(String(a.created_at || ""));
     if (listSort === "model") rows.sort((a, b) => String(a.model || "").localeCompare(String(b.model || "")) || recent(a, b));
@@ -586,7 +591,7 @@ export default function StockMain() {
     }
     else rows.sort(recent); // recent / remain (remain ใช้ในมุมมอง byModel)
     return rows;
-  }, [forklifts, listSearch, listCat, listBrand, listModel, listMast, listFuel, listStatus, listSort, listNoCost]);
+  }, [forklifts, listSearch, listCat, listBrand, listModel, listMast, listFuel, listStatus, listSort, listNoCost, listBadModel]);
 
   // รายการที่แสดงจริง (มุมมองรายคัน/ตาราง) — จำกัดตาม showCount กันโหลดพันแถวรวดเดียว
   const pagedList = showCount === Infinity ? listFiltered : listFiltered.slice(0, showCount);
@@ -1331,6 +1336,13 @@ export default function StockMain() {
                   className={`rounded-lg px-2.5 py-1.5 text-xs font-bold border transition-all ${listNoCost ? "bg-amber-500 text-white border-amber-500" : "bg-white text-slate-600 border-slate-200 hover:border-amber-300 hover:text-amber-700"}`}>
                   💰 ยังไม่มีทุน{noCostCount > 0 ? ` (${noCostCount})` : ""}
                 </button>
+                {badModelCount > 0 && (
+                  <button onClick={() => setListBadModel(v => !v)}
+                    title="ชื่อรุ่นขัดกับความจริง เช่น CDD ที่มีคำว่า LI (ไม่มีรุ่นนี้)"
+                    className={`rounded-lg px-2.5 py-1.5 text-xs font-bold border transition-all ${listBadModel ? "bg-red-500 text-white border-red-500" : "bg-white text-slate-600 border-slate-200 hover:border-red-300 hover:text-red-700"}`}>
+                    ⚠️ ชื่อรุ่นน่าสงสัย ({badModelCount})
+                  </button>
+                )}
               </div>
               {/* สถานะ + เรียง + มุมมอง */}
               <div className="flex items-center gap-2 flex-wrap">
@@ -1936,6 +1948,7 @@ export default function StockMain() {
           e.cost.trim() && `ราคาทุน → ${Number(e.cost.replace(/[^\d.-]/g, "")).toLocaleString("th-TH")}`,
           e.pi.trim() && `เลข PI → ${e.pi.trim()}`,
         ].filter(Boolean) as string[];
+        const modelWarn = modelWarning(e.model);   // เตือนถ้าพิมพ์ชื่อรุ่นที่ขัดกับความจริง
         const inp = "w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 bg-white placeholder:text-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 focus:outline-none";
         return (
           <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 bg-white rounded-2xl shadow-2xl border border-indigo-200 p-4 w-[min(92vw,760px)]">
@@ -1946,7 +1959,9 @@ export default function StockMain() {
                 <input value={e.brand} onChange={x => set("brand", x.target.value)} placeholder="เช่น ROCKMAN" list="bulk-brands" className={inp} />
                 <datalist id="bulk-brands">{brandOpts.map(b => <option key={b} value={b} />)}</datalist></label>
               <label className="flex flex-col gap-1 min-w-0"><span className="text-[11px] font-semibold text-slate-500">รุ่น</span>
-                <input value={e.model} onChange={x => set("model", x.target.value)} placeholder="เช่น CBD20-WS" className={inp} /></label>
+                <input value={e.model} onChange={x => set("model", x.target.value)} placeholder="เช่น CBD20-WS"
+                  className={modelWarn ? inp.replace("border-slate-300", "border-red-400") : inp} />
+                {modelWarn && <span className="text-[10px] text-red-600 leading-tight">⚠️ {modelWarn}</span>}</label>
               <label className="flex flex-col gap-1 min-w-0"><span className="text-[11px] font-semibold text-slate-500">พิกัดยก</span>
                 <input value={e.capacity} onChange={x => set("capacity", x.target.value)} placeholder="เช่น 2.0 ตัน" className={inp} /></label>
               <label className="flex flex-col gap-1 min-w-0"><span className="text-[11px] font-semibold text-slate-500">ราคาทุน (บาท)</span>

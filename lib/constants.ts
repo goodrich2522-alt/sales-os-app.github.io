@@ -27,6 +27,23 @@ export function categorizeModel(model: string): VehicleType {
   return "Handlift"; // BF/AC/PWH/WS/CNS/WH/HLD/HLS/EHLS ...
 }
 
+/**
+ * ตรวจชื่อรุ่นว่าขัดกับความจริงไหม — คืนข้อความเตือน (ไม่มีปัญหา = undefined)
+ *
+ * ⭐ (23 ก.ย. 2569 · ผู้ใช้ยืนยัน) ตระกูล **CDD = รถยกลากกึ่งไฟฟ้า ไม่มีรุ่นลิเธียม**
+ *    คำว่า LI / LI-S / LI3 / RLI เป็นของตระกูล CBD (และ CPD ฝั่งรถยก) เท่านั้น
+ *    เจอของจริง: "CDD15J-LI-M300" ซึ่งไม่มีรุ่นนี้ — ที่ถูกคือ "CDD15J-M300"
+ *    (ดู STOCK-RULES.md ข้อ 6)
+ */
+export function modelWarning(model: string): string | undefined {
+  const m = (model || "").trim().toUpperCase();
+  if (!m) return undefined;
+  if (/^CDD/.test(m) && /(^|[-\s])R?LI/.test(m)) {
+    return `รุ่น CDD ไม่มีรุ่นลิเธียม (LI) — ที่ถูกน่าจะเป็น "${m.replace(/[-\s]R?LI\d*(-S)?/g, "")}"`;
+  }
+  return undefined;
+}
+
 // ── สีป้ายสถานะรถ (forklift.status) ─────────────────────────────────────────
 // ครอบคลุมทุกสถานะที่ใช้จริง รวมของใหม่ (สั่งผลิต/รถเช่า/เคลม/รับกลับ) ที่เดิมไม่มีสี
 export const STATUS_BADGE: Record<string, string> = {

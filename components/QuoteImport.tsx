@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { useApp } from "@/lib/AppContext";
 import { readPdfText, looksScanned, readScannedPdfText, parseQuoteText, parseQuoteExcel, readExcelRows, isExcelFile, isImageFile, readImageText, normalizeStaxxModel, ParsedVehicle, QuoteDocCheck, KD_LEAD_MIN_DAYS, KD_LEAD_MAX_DAYS } from "@/lib/quoteImport";
-import { categorizeModel } from "@/lib/constants";
+import { categorizeModel, modelWarning } from "@/lib/constants";
 import { today, addDays, thaiDate } from "@/lib/format";
 import { Forklift } from "@/lib/types";
 import { X, Upload, FileText, CheckCircle, AlertTriangle, Loader2, Trash2, Undo2, Plus, Factory, ClipboardCheck } from "lucide-react";
@@ -421,7 +421,8 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                       const dupKey = dupKeyOf(v, i);
                       const dup = dupKey !== null;
                       const mto = isMto(v);
-                      const flags = (v.flags ?? []).filter((f) => !(mto && f === "ไม่พบ SN")); // KD ยังไม่มี SN = ปกติ
+                      const warn = modelWarning(v.model);   // ชื่อรุ่นขัดกับความจริง (เช่น CDD + LI)
+                      const flags = [...(v.flags ?? []).filter((f) => !(mto && f === "ไม่พบ SN")), ...(warn ? [warn] : [])]; // KD ยังไม่มี SN = ปกติ
                       return (
                         <div key={i} className={`rounded-2xl border p-4 ${dup ? "border-red-300 bg-red-50/50" : mto ? "border-violet-200 bg-violet-50/40" : "border-slate-200 bg-slate-50/60"}`}>
                           <div className="flex items-center justify-between gap-2 mb-3">
