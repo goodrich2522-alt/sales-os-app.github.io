@@ -3,7 +3,7 @@
 // อ่าน PDF ในเบราว์เซอร์ (ไฟล์ไม่ออกนอกเครื่อง) → parse → คนตรวจ/แก้ → บันทึกเข้าสต็อก
 // รอบแรกรองรับ HELI (text layer) · เจ้าอื่นทยอยเพิ่ม
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useApp } from "@/lib/AppContext";
 import { readPdfText, looksScanned, readScannedPdfText, parseQuoteText, parseQuoteExcel, readExcelRows, isExcelFile, isImageFile, readImageText, normalizeStaxxModel, ParsedVehicle, QuoteDocCheck, KD_LEAD_MIN_DAYS, KD_LEAD_MAX_DAYS } from "@/lib/quoteImport";
 import { categorizeModel, modelWarning } from "@/lib/constants";
@@ -27,9 +27,22 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
   const [skippedSns, setSkippedSns] = useState<string[]>([]); // SN ที่ถูกข้าม (โชว์ให้เห็นชัด)
   const [importedIds, setImportedIds] = useState<string[]>([]); // สำหรับปุ่มยกเลิกการนำเข้า
   const [done, setDone] = useState(false);           // บันทึกเสร็จแล้ว → แสดงหน้าสรุป
+  const [closeConfirm, setCloseConfirm] = useState(false);  // ยืนยันก่อนปิดทั้งที่ยังมีข้อมูลค้าง
   const [receivedDate, setReceivedDate] = useState(""); // วันรับรถเข้า — ใส่ให้ทั้งล็อตตอนบันทึก
   const [orderDate, setOrderDate] = useState("");       // วันสั่งซื้อรถ (วันสั่งรถ) — ใส่ให้ทั้งล็อตตอนบันทึก
   const [lotStatus, setLotStatus] = useState<"auto" | "รอรับ" | "พร้อมขาย">("auto"); // สถานะเริ่มต้นของทั้งล็อต (auto = ตามแบรนด์)
+
+  // ── กันปิดหน้าโดยไม่ตั้งใจระหว่างกรอกข้อมูล (24 ก.ย. 2569) ──
+  // "มีข้อมูลค้าง" = อ่าน/กรอกรถไว้แล้วแต่ยังไม่ได้บันทึก → ปิดตอนนี้ข้อมูลหายหมด
+  const dirty = rows.length > 0 && !done;
+  const tryClose = () => { if (dirty) setCloseConfirm(true); else onClose(); };
+  // เตือนก่อนปิด/รีเฟรชแท็บด้วย (กดพลาด Ctrl+W / F5 ระหว่างกรอก)
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   // ── รหัส + SN ที่มีอยู่แล้ว — ต้องเช็ค **ทั้งสองอย่าง** ──
   // เดิมเช็คแค่ id → รถที่ SN มาทีหลังจะมี id เป็นรหัสชั่วคราว (เช่น PI#6) แต่ SN = M1BDS410099
@@ -247,8 +260,11 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
   const blockSave = (countMismatch && !confirmDiff) || noPiRows.length > 0;
 
   return (
+    // ⭐ (24 ก.ย. 2569) ระหว่างกรอกข้อมูล **ห้ามปิดหน้านี้โดยไม่ตั้งใจ** — ข้อมูลที่กรอกยังไม่ได้บันทึก
+    //    เดิมคลิกโดนพื้นที่มืดรอบกล่องแล้วปิดทันที กรอกมาทั้งล็อตหายหมด
+    //    ตอนนี้: มีข้อมูลค้างอยู่ → คลิกพื้นที่มืดไม่ปิด · กดปิด/ยกเลิกต้องยืนยันก่อน · เตือนก่อนปิดแท็บด้วย
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4"
-      onClick={(e) => e.target === e.currentTarget && onClose()}>
+      onClick={(e) => { if (e.target === e.currentTarget && !dirty) onClose(); }}>
       <div className="bg-white rounded-3xl w-full max-w-6xl max-h-[88vh] flex flex-col shadow-2xl">
         {/* header */}
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
@@ -256,7 +272,8 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
             <h3 className="text-base font-bold text-slate-800 flex items-center gap-2"><FileText className="w-4 h-4 text-emerald-600" />นำเข้าจากใบเสนอราคา</h3>
             <p className="text-xs text-slate-500 mt-0.5"><span className="text-slate-300" title="เวอร์ชันโค้ดที่เครื่องนี้โหลดอยู่ — ถ้าไม่ตรงกับที่ทีมแจ้ง ให้กด Ctrl+Shift+R">v{process.env.NEXT_PUBLIC_BUILD}</span> · อ่านไฟล์ในเครื่อง 100% · รองรับ HELI / HANGCHA / EP / ROCKMAN (PDF) · ใบกำกับภาษี HANGCHA · STAXX (Excel Serial List){vendor ? ` · อ่านได้: ${vendor}` : ""}</p>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl p-2 transition-all"><X className="w-5 h-5" /></button>
+          <button onClick={tryClose} title={dirty ? "ปิดหน้านี้ (ต้องยืนยัน — มีข้อมูลที่ยังไม่ได้บันทึก)" : "ปิด"}
+            className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl p-2 transition-all"><X className="w-5 h-5" /></button>
         </div>
 
         {/* body */}
@@ -468,10 +485,24 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
+        {/* ยืนยันก่อนปิดทั้งที่ยังมีข้อมูลค้าง — ปิดแล้วกรอกใหม่หมด */}
+        {closeConfirm && (
+          <div className="px-6 py-3 border-t border-red-200 bg-red-50 flex-shrink-0 flex items-center gap-2 flex-wrap">
+            <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />
+            <span className="text-sm font-semibold text-red-700">ปิดหน้านี้? ข้อมูล {rows.length} คันที่อ่าน/กรอกไว้จะหายทั้งหมด (ยังไม่ได้บันทึกเข้าสต็อก)</span>
+            <div className="ml-auto flex items-center gap-2">
+              <button onClick={() => setCloseConfirm(false)}
+                className="px-4 py-2 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700">กรอกต่อ</button>
+              <button onClick={onClose}
+                className="px-3 py-2 rounded-xl text-sm font-semibold text-red-700 hover:bg-red-100">ปิดและทิ้งข้อมูล</button>
+            </div>
+          </div>
+        )}
+
         {/* footer */}
         {!done && rows.length > 0 && (
           <div className="px-6 py-3 border-t border-slate-100 flex-shrink-0 flex justify-end gap-2">
-            <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100">ยกเลิก</button>
+            <button onClick={tryClose} className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100">ยกเลิก</button>
             <button onClick={save} disabled={blockSave}
               title={blockSave ? "จำนวนไม่ตรงกับเอกสาร — ตรวจและติ๊กยืนยันก่อน" : undefined}
               className={`px-5 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 ${blockSave ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}>
