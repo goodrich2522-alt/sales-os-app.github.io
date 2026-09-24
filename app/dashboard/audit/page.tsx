@@ -6,6 +6,7 @@ import { ArrowLeft, ShieldCheck, RefreshCw, Search, Package, ShoppingCart, Trash
 import { fetchAuditApi, AuditEntry } from "@/lib/api";
 import { DashboardGuard } from "@/components/DashboardGuard";
 import { useApp } from "@/lib/AppContext";
+import { runHealthChecks, saleModelMismatch } from "@/lib/dataHealth";
 
 const fmtTime = (s?: string) => { if (!s) return ""; try { return new Date(s).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" }); } catch { return s; } };
 
@@ -50,16 +51,11 @@ function AuditPageInner() {
   // ใบขายเก็บ "สำเนาข้อความ" ของยี่ห้อ/รุ่น ไม่ได้ join กับทะเบียนรถ
   // แก้ชื่อรุ่นที่รถก่อน 23 ก.ย. 2569 ใบขายจึงค้างชื่อเก่า → รายงานโชว์ชื่อผิดทั้งที่สต็อกแก้แล้ว
   // (ตั้งแต่ 23 ก.ย. 69 ระบบซิงก์ให้อัตโนมัติตอนแก้ — อันนี้ไว้เก็บกวาดของเก่า)
-  const mismatches = useMemo(() => {
-    const byId = new Map(forklifts.map(f => [f.id, f]));
-    const t = (v: unknown) => String(v ?? "").trim();
-    return sales
-      .map(s => ({ s, f: byId.get(s.forklift_id) }))
-      .filter((x): x is { s: typeof sales[number]; f: NonNullable<typeof x.f> } => !!x.f)
-      .filter(({ s, f }) =>
-        (t(s.forklift_model) && t(s.forklift_model) !== t(f.model)) ||
-        (t(s.forklift_brand) && t(s.forklift_brand) !== t(f.brand)));
-  }, [sales, forklifts]);
+  const mismatches = useMemo(() => saleModelMismatch(sales, forklifts), [sales, forklifts]);
+
+  // ── ตรวจสุขภาพข้อมูลสต็อก (SN ซ้ำ/เพี้ยน · แถวรอ SN ค้าง · ชื่อรุ่นขัดกับความจริง) ──
+  const health = useMemo(() => runHealthChecks(forklifts, sales), [forklifts, sales]);
+  const [openCheck, setOpenCheck] = useState<string | null>(null);
 
   const syncMismatches = () => {
     mismatches.forEach(({ s, f }) => updateSale({ ...s, forklift_brand: f.brand, forklift_model: f.model }));
@@ -104,6 +100,44 @@ function AuditPageInner() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-6 flex flex-col gap-4">
+        {/* ── ตรวจสุขภาพข้อมูล — ย้ายมาจากสคริปต์ audit-sn/audit-pi ให้ทีมกดดูเองได้ ── */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4">
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+            <p className="text-sm font-bold text-slate-800">🩺 ตรวจสุขภาพข้อมูลสต็อก</p>
+            <span className="text-[11px] text-slate-400">ตรวจจากข้อมูลปัจจุบัน {forklifts.length} คัน · อ่านอย่างเดียว ระบบไม่แก้ให้เอง</span>
+          </div>
+          {health.length === 0
+            ? <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 mt-2">✓ ไม่พบข้อมูลผิดปกติ</p>
+            : <div className="flex flex-col gap-2 mt-2">
+                {health.map(c => {
+                  const open = openCheck === c.key;
+                  const hi = c.severity === "high";
+                  return (
+                    <div key={c.key} className={`rounded-xl border ${hi ? "border-red-200 bg-red-50/60" : "border-amber-200 bg-amber-50/50"}`}>
+                      <button onClick={() => setOpenCheck(open ? null : c.key)}
+                        className="w-full flex items-center gap-2 px-3 py-2.5 text-left">
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${hi ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>{c.items.length}</span>
+                        <span className="text-sm font-semibold text-slate-800">{c.title}</span>
+                        <span className="ml-auto text-slate-400 text-xs">{open ? "ซ่อน" : "ดู"}</span>
+                      </button>
+                      {open && (
+                        <div className="px-3 pb-3 flex flex-col gap-1.5">
+                          <p className="text-[11px] text-slate-500">{c.hint}</p>
+                          {c.items.map(it => (
+                            <div key={it.id} className="text-xs bg-white border border-slate-100 rounded-lg px-2.5 py-1.5">
+                              <span className="font-semibold text-slate-800">{it.label}</span>
+                              {it.status && <span className="text-slate-400"> · {it.status}</span>}
+                              <span className="text-slate-600"> — {it.detail}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>}
+        </div>
+
         {/* ── ใบขายที่ชื่อยี่ห้อ/รุ่นไม่ตรงกับทะเบียนรถ (ของเก่าที่แก้ก่อนระบบซิงก์อัตโนมัติ) ── */}
         {mismatches.length > 0 && (
           <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
