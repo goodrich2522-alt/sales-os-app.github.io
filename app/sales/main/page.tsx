@@ -162,7 +162,8 @@ export default function SalesMain() {
     addSalesFilterRequest, removeSalesFilterRequest,
   } = useApp();
 
-  const [salesUser, setSalesUser] = useState<{ name: string; target_monthly: number } | null>(null);
+  const [salesUser, setSalesUser] = useState<{ name: string; target_monthly: number; email?: string; role?: string } | null>(null);
+  const [viewAllDeals, setViewAllDeals] = useState(false);   // โหมดแอดมิน: ดูดีลของทุกเซลล์
   const [refreshing, setRefreshing] = useState(false);
   const handleRefresh = async () => { setRefreshing(true); await refresh(); setTimeout(() => setRefreshing(false), 400); };
   const [search, setSearch]       = useState("");
@@ -449,7 +450,16 @@ export default function SalesMain() {
     setFSpecModel(""); setFSpecSN(""); setFForkLength(""); setFForkWidth("");
   };
   // จับคู่ดีลของฉันแบบ alias-aware (ล็อกอินคนละชื่อกับที่บันทึกดีลก็ยังเจอ เช่น เซลล์ดรีม = ธัญญา (ดรีม)) · alias แก้ได้ที่หน้าค่าคอม
-  const mySales = salesUser ? sales.filter(s => sameStaff(s.sales_staff, salesUser.name, fieldConfig.staffAliases)) : [];
+  // ── สิทธิ์แอดมิน (เจ้าของระบบ) — ดูดีลของทุกเซลล์ได้ ──
+  // (24 ก.ย. 2569) เดิมหน้านี้กรองเฉพาะ "ดีลของฉัน" แอดมินจึงเปิดดีลของเซลล์คนอื่นไม่ได้
+  // ทำให้ตามแก้ข้อมูล (เช่น เติมข้อมูลรับประกันที่ค้าง) แทนทีมไม่ได้เลย
+  const myEmail = String(salesUser?.email ?? "").trim().toLowerCase();
+  const isAdminUser = !!myEmail && (
+    (fieldConfig.adminEmails ?? []).some(e => String(e).trim().toLowerCase() === myEmail)
+    || String(fieldConfig.knownUsers?.[myEmail]?.role ?? "") === "admin"
+  );
+  const seeAll = isAdminUser && viewAllDeals;
+  const mySales = seeAll ? sales : (salesUser ? sales.filter(s => sameStaff(s.sales_staff, salesUser.name, fieldConfig.staffAliases)) : []);
 
   // ── ดีลที่ปิดแล้วแต่ยังไม่ลงข้อมูลรับประกัน → ค่าคอมยังไม่ออก (บังคับตั้งแต่ ส.ค. 69) ──
   const WARRANTY_GATE_FROM = "2026-08";
@@ -1088,9 +1098,17 @@ export default function SalesMain() {
                 <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">{bookingNotifs.length + notifications.length}</span>
               )}
             </button>
+            {/* แอดมิน (เจ้าของระบบ) สลับดูดีลของทุกเซลล์ได้ — ไว้ตามแก้ข้อมูลที่ค้างแทนทีม */}
+            {isAdminUser && (
+              <button onClick={() => setViewAllDeals(v => !v)}
+                title={seeAll ? "กำลังดูดีลของทุกเซลล์ — กดเพื่อกลับไปดูเฉพาะของฉัน" : "ดูดีลของทุกเซลล์ (สิทธิ์แอดมิน)"}
+                className={`flex items-center gap-1.5 text-sm font-bold px-3 py-1.5 rounded-lg border transition-all ${seeAll ? "bg-violet-600 text-white border-violet-600" : "text-violet-700 bg-violet-50 border-violet-200 hover:bg-violet-100"}`}>
+                👑<span className="hidden sm:inline">{seeAll ? "ทุกเซลล์" : "ดูทุกเซลล์"}</span>
+              </button>
+            )}
             <button onClick={() => setShowHistory(true)}
               className="flex items-center gap-1.5 text-slate-600 hover:text-indigo-700 hover:bg-indigo-50 text-sm font-medium px-3 py-1.5 rounded-lg transition-all border border-transparent hover:border-indigo-200">
-              <History className="w-4 h-4" /><span className="hidden sm:inline">การขายของฉัน ({mySales.length})</span>
+              <History className="w-4 h-4" /><span className="hidden sm:inline">{seeAll ? `การขายทุกเซลล์ (${mySales.length})` : `การขายของฉัน (${mySales.length})`}</span>
             </button>
             <button onClick={() => { void signOutSupabase(); localStorage.removeItem("sales_user"); router.push("/sales/login"); }}
               className="flex items-center gap-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 text-sm font-medium px-3 py-1.5 rounded-lg transition-all">
@@ -1101,6 +1119,18 @@ export default function SalesMain() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-6 flex flex-col gap-5">
+        {/* โหมดแอดมิน — บอกให้ชัดว่าตัวเลขที่เห็นเป็นของทุกเซลล์ ไม่ใช่ของตัวเอง */}
+        {seeAll && (
+          <div className="bg-violet-50 border border-violet-200 rounded-2xl px-4 py-3 flex items-center gap-3 flex-wrap">
+            <span className="text-lg">👑</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-violet-800">โหมดแอดมิน — กำลังดูดีลของทุกเซลล์ ({mySales.length} ดีล)</p>
+              <p className="text-[11px] text-violet-600 mt-0.5">ยอดขาย/เป้า/รายการค้างที่เห็นเป็นของทั้งทีม · เปิดดีลของเซลล์คนไหนก็ได้เพื่อเติมข้อมูลที่ค้าง (เช่น ข้อมูลรับประกัน) · ดีลที่สร้างใหม่ยังบันทึกในชื่อคุณเอง</p>
+            </div>
+            <button onClick={() => setViewAllDeals(false)}
+              className="flex-shrink-0 text-xs font-bold text-violet-700 bg-white border border-violet-200 hover:bg-violet-100 rounded-lg px-3 py-2">กลับไปดูเฉพาะของฉัน</button>
+          </div>
+        )}
         {/* แถบเตือนค้าง (ปิดไม่ได้) — เตือนไปเรื่อยๆ จนกว่าจะลงข้อมูลรับประกันครบ · หายเองเมื่อครบ */}
         {blockedDeals.length > 0 && (
           <button onClick={() => setWarnDismissed(false)}
