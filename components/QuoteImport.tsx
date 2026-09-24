@@ -12,7 +12,7 @@ import { Forklift } from "@/lib/types";
 import { X, Upload, FileText, CheckCircle, AlertTriangle, Loader2, Trash2, Undo2, Plus, Factory, ClipboardCheck } from "lucide-react";
 
 export function QuoteImport({ onClose }: { onClose: () => void }) {
-  const { addForkliftsBulk, forklifts, deleteForklift } = useApp();
+  const { addForkliftsBulk, forklifts, deleteForklift, updateForklift } = useApp();
   const [rows, setRows] = useState<ParsedVehicle[]>([]);
   const [busy, setBusy] = useState(false);
   const [ocr, setOcr] = useState<{ name: string; pct: number } | null>(null); // สถานะ OCR รูป
@@ -21,6 +21,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
   const [saved, setSaved] = useState(0);
   const [skipped, setSkipped] = useState(0);         // จำนวนที่ข้ามเพราะ SN ซ้ำ
   const [savedMto, setSavedMto] = useState(0);       // จำนวนรถสั่งผลิต (KD) ที่บันทึกจริง
+  const [savedFilled, setSavedFilled] = useState(0); // จำนวนที่เติม SN ลงแถวเดิม (ไม่สร้างแถวใหม่)
   // ── ด่านตรวจจำนวน: เก็บ "จำนวนที่เอกสารระบุ" ของแต่ละไฟล์ ไว้เทียบกับที่อ่านได้ ──
   const [docChecks, setDocChecks] = useState<{ file: string; check: QuoteDocCheck }[]>([]);
   const [confirmDiff, setConfirmDiff] = useState(false); // ติ๊กยืนยันเมื่อจำนวนไม่ตรงกับเอกสาร
@@ -58,6 +59,37 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
     const id = String(toForklift(v, i).id).trim().toUpperCase();
     return taken.has(id) ? id : sn && taken.has(sn) ? sn : null;
   };
+
+  // ── แถว "รอ SN" ที่รอเติม (รถสั่งผลิต/รอรับ ที่ยังไม่มี SN) ──
+  // ใช้จับคู่ตอนนำเข้าใบที่มี SN แล้ว → เติมลงแถวเดิมแทนการสร้างแถวใหม่ (กันรถผี)
+  const PH_STATUS = ["สั่งผลิต", "รอรับ", "รอยืนยันนำเข้าสต็อก"];
+  const norm = (v: unknown) => String(v ?? "").trim().toUpperCase();
+  const placeholders = forklifts.filter(
+    (f) => !String(f.SN ?? "").trim() && PH_STATUS.includes(String(f.status ?? "").trim()),
+  );
+  /** หาแถวรอ SN ที่ "เป็นคันเดียวกัน" — ต้องรุ่นตรง และอ้างอิงเอกสารเดียวกัน (เลข PI หรือรหัสอ้างอิงนำเข้า) */
+  const findPlaceholder = (v: ParsedVehicle, used: Set<string>) => {
+    const model = norm(v.model);
+    const pi = norm(v.pi_no), ref = norm(v.import_ref);
+    if (!model || (!pi && !ref)) return undefined;
+    return placeholders.find((f) => {
+      if (used.has(f.id) || norm(f.model) !== model) return undefined;
+      const fRef = norm((f.custom_fields as Record<string, unknown> | undefined)?.["รหัสอ้างอิงนำเข้า"]);
+      return (pi && norm(f.pi_no) === pi) || (ref && (fRef === ref || norm(f.pi_no) === ref));
+    });
+  };
+
+  /** แถวไหนจะ "เติม SN ลงแถวเดิม" (คำนวณลำดับเดียวกับตอนบันทึก) */
+  const fillTargets = (() => {
+    const used = new Set<string>();
+    return rows.map((v, i) => {
+      if (dupKeyOf(v, i) || !String(v.SN ?? "").trim()) return undefined;
+      const ph = findPlaceholder(v, used);
+      if (ph) used.add(ph.id);
+      return ph;
+    });
+  })();
+  const fillCount = fillTargets.filter(Boolean).length;
 
   // ── รถสั่งผลิต (KD) — ใบที่เลข PI ลงท้าย KD ยังไม่มี SN ตอนนี้ · SN มาตอนผลิตเสร็จ 60-90 วัน ──
   const isMto = (v: ParsedVehicle) => !!v.made_to_order && !String(v.SN ?? "").trim();
@@ -209,17 +241,43 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
     const seen = new Set(taken);
     const fresh: Forklift[] = [];
     const skipSns: string[] = [];
+    const usedPh = new Set<string>();     // แถวรอ SN ที่ถูกจองไว้แล้วในรอบนี้ (กันเติมซ้ำคันเดียว)
+    let filled = 0;                        // เติม SN ลงแถวเดิม (ไม่สร้างแถวใหม่)
     let mto = 0;
     rows.forEach((v, i) => {
       const fk = toForklift(v, i);
       const id = String(fk.id).trim().toUpperCase();
       const sn = String(fk.SN ?? "").trim().toUpperCase();
       if (seen.has(id) || (sn && seen.has(sn))) { skipSns.push(sn || String(fk.id)); return; }
+      // ⭐ (24 ก.ย. 2569) รถสั่งผลิตที่ผลิตเสร็จแล้ว → **เติม SN ลงแถวเดิม** ไม่สร้างแถวใหม่
+      //    เดิมนำเข้าใบที่มี SN จะได้แถวใหม่ ส่วนแถวรอ SN เดิมค้างเป็น "รถผี" (สต็อกเกินจริง)
+      //    เติมลงแถวเดิมดีกว่าลบทิ้งแล้วสร้างใหม่ เพราะดีล/ใบตรวจที่ผูกกับรหัสเดิมไม่ขาด
+      const ph = sn ? findPlaceholder(v, usedPh) : undefined;
+      if (ph) {
+        usedPh.add(ph.id);
+        updateForklift({
+          ...ph,
+          SN: fk.SN,
+          status: fk.status,                                   // รถมาถึงแล้ว → ใช้สถานะของล็อตนี้
+          cost_price: fk.cost_price || ph.cost_price,
+          capacity: fk.capacity || ph.capacity,
+          capacity_kg: fk.capacity_kg || ph.capacity_kg,
+          height: fk.height || ph.height,
+          fuel: fk.fuel || ph.fuel,
+          received_date: fk.received_date || ph.received_date,
+          pi_no: ph.pi_no || fk.pi_no,
+          custom_fields: { ...(ph.custom_fields ?? {}), ...(fk.custom_fields ?? {}) },
+        });
+        seen.add(sn);
+        filled++;
+        return;
+      }
       seen.add(id); if (sn) seen.add(sn);
       if (isMto(v)) mto++;
       fresh.push(fk);
     });
     setSavedMto(mto);
+    setSavedFilled(filled);
     if (fresh.length) addForkliftsBulk(fresh);
     setImportedIds(fresh.map((f) => String(f.id)));
     setSkipped(skipSns.length);
@@ -285,6 +343,11 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
               {savedMto > 0 && (
                 <p className="text-sm text-violet-700 mt-1">
                   ในนี้เป็น <b>รถสั่งผลิต (KD) {savedMto} คัน</b> — สถานะ &ldquo;สั่งผลิต&rdquo; · คาดได้ SN {kdFrom ? thaiDate(kdFrom) : "?"} ถึง {kdTo ? thaiDate(kdTo) : "?"}
+                </p>
+              )}
+              {savedFilled > 0 && (
+                <p className="text-sm text-sky-700 mt-1">
+                  ในนี้ <b>เติม SN ลงแถวเดิม {savedFilled} คัน</b> — รถที่เคยลงไว้ตอนสั่งผลิต/รอรับ ไม่ได้สร้างแถวใหม่ (สต็อกไม่บวมเกินจริง)
                 </p>
               )}
               {skipped > 0 && (
@@ -447,6 +510,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                               <span className="text-sm font-bold text-slate-700">คันที่ {i + 1}</span>
                               {v.model?.trim() && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">{categorizeModel(v.model)}</span>}
                               {dup && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700" title={`ตรงกับ ${dupKey} ที่มีในสต็อกแล้ว`}>⚠️ มีในสต็อกแล้ว ({dupKey})</span>}
+                              {fillTargets[i] && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-sky-100 text-sky-700" title="รถคันนี้เคยลงไว้ตอนสั่งผลิต/รอรับ — ระบบจะเติม SN ลงแถวเดิม ไม่สร้างแถวใหม่ (กันรถผี)">↻ เติม SN ลงแถวเดิม ({fillTargets[i]!.id})</span>}
                               {/* กดสลับได้ — เผื่อเอกสารไม่ได้เขียน KD ไว้ หรืออ่านไม่เจอ · คันที่มี SN แล้วไม่ต้องถาม */}
                               {!String(v.SN ?? "").trim() && <button onClick={() => toggleMto(i)}
                                 title={v.made_to_order ? "กดเพื่อยกเลิกการเป็นรถสั่งผลิต" : "กดถ้าคันนี้เป็นรถสั่งผลิต (SN มาทีหลัง)"}

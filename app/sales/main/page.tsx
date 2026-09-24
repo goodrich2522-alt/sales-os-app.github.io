@@ -20,7 +20,7 @@ import { MoneyInput } from "@/components/ui/MoneyInput";
 import { WarrantyBlock } from "@/components/WarrantyBlock";
 import { parseSvc, nextDue, SVC_SOON_DAYS } from "@/lib/warranty";
 import { formatBaht } from "@/lib/format";
-import { hasActiveSession, signOutSupabase } from "@/lib/auth";
+import { hasActiveSession, signOutSupabase, OWNER_EMAILS } from "@/lib/auth";
 import { COMMISSION_FIELD, COMMISSION_CATEGORIES, isStackerModel, isOtherGroup, priorPurchaseByCustomer, toGregorian, isClosedSale, closeMonth, warrantyFilled, isForkliftVehicle } from "@/lib/commission";
 import { apiEnabled, uploadImageApi } from "@/lib/api";
 import AiAssistant from "@/components/AiAssistant";
@@ -455,7 +455,8 @@ export default function SalesMain() {
   // ทำให้ตามแก้ข้อมูล (เช่น เติมข้อมูลรับประกันที่ค้าง) แทนทีมไม่ได้เลย
   const myEmail = String(salesUser?.email ?? "").trim().toLowerCase();
   const isAdminUser = !!myEmail && (
-    (fieldConfig.adminEmails ?? []).some(e => String(e).trim().toLowerCase() === myEmail)
+    OWNER_EMAILS.some(e => e.trim().toLowerCase() === myEmail)          // เจ้าของระบบ — เห็นได้เสมอ
+    || (fieldConfig.adminEmails ?? []).some(e => String(e).trim().toLowerCase() === myEmail)
     || String(fieldConfig.knownUsers?.[myEmail]?.role ?? "") === "admin"
   );
   const seeAll = isAdminUser && viewAllDeals;

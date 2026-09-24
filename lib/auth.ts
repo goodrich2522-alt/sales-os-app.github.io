@@ -16,6 +16,10 @@ type CfgWithUsers = {
 // แอดมินเริ่มต้น — ค่าจริงอยู่ที่ adminEmails ใน app_config (แก้ได้หน้า /admin/users)
 export const DEFAULT_ADMIN_EMAILS = ["goodrichforklift@gmail.com"];
 
+// ⭐ เจ้าของระบบ — เป็นแอดมิน "เสมอ" ไม่ว่า app_config จะตั้งค่าไว้ยังไง (24 ก.ย. 2569)
+// กันกรณีตั้งค่าใน app_config พลาดแล้วล็อกตัวเองออกจากสิทธิ์แอดมิน (จะเข้า /admin/users ไปแก้ก็ไม่ได้)
+export const OWNER_EMAILS = ["goodrichforklift@gmail.com", "woralakpor789@gmail.com"];
+
 // บทบาทที่ระบบรองรับ + ป้ายภาษาไทย
 export const ROLE_LABELS: Record<string, string> = {
   sales: "ทีมขาย",
