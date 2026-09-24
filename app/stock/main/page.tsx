@@ -494,7 +494,14 @@ export default function StockMain() {
     const m = new Map<string, string>();
     [...sales]
       .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))
-      .forEach(s => { if (s.sales_staff) m.set(s.forklift_id, s.sales_staff); });
+      .forEach(s => {
+        if (!s.sales_staff) return;
+        // ⭐ (24 ก.ย. 2569) ใส่ทั้ง 2 คีย์ — ดีลบางใบผูกกับรหัสชั่วคราว (PI027#1) บางใบผูกกับ SN
+        [s.forklift_id, s.forklift_unit_no].forEach(k => {
+          const key = String(k ?? "").trim().toUpperCase();
+          if (key) m.set(key, s.sales_staff);
+        });
+      });
     return m;
   }, [sales]);
   // ดีลล่าสุดต่อคัน (ทั้งก้อน) — ใช้เติมข้อมูลลูกค้าในรายงาน Export
@@ -541,15 +548,21 @@ export default function StockMain() {
     st === "ขายแล้ว" ? "ปิดการขายแล้ว" : st === "จอง" ? "จอง" : st === "รอผ่านไฟแนนซ์" ? "รอผ่านไฟแนนซ์" : (st || "จอง");
   // ยืนยันนำเข้าสต็อก: มีเซลล์เจ้าของงาน/ดีลแล้ว → ไม่ขึ้น "พร้อมขาย" (คงสถานะตามดีล หรือ "จอง") · ไม่มี → "พร้อมขาย"
   const confirmImportOne = (f: Forklift) => {
-    const sale = [...sales].filter(s => s.forklift_id === f.id)
+    // ⚠️ ต้องหาดีลด้วย **ทั้งรหัสรถและ SN** — ดีลที่ผูกกับ SN (เปิดตอนรถมี SN แล้ว)
+    //    เคยหาไม่เจอ ทำให้รถที่ขายไปแล้วถูกตั้งสถานะเป็น "พร้อมขาย" (เจอจริง PI027 2 คัน)
+    const key = (v: unknown) => String(v ?? "").trim().toUpperCase();
+    const sale = [...sales].filter(s => key(s.forklift_id) === key(f.id) || (f.SN && key(s.forklift_unit_no) === key(f.SN)))
       .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
-    const owner = saleOwnerByFk.get(f.id) || (f.custom_fields?.["เซลล์ผู้ดูแล"] as string) || "";
+    const owner = ownerOf(f);
     const nextStatus = sale ? saleStatusToStock(sale.sale_status) : (owner ? "จอง" : "พร้อมขาย");
     const stamp = new Date().toLocaleDateString("th-TH");
     const cf = { ...(f.custom_fields || {}), "ยืนยันนำเข้าสต็อก": `${stamp} · ${username || "สต็อก"}` };
     updateForklift({ ...f, status: nextStatus, custom_fields: cf });
   };
-  const ownerOf = (f: Forklift) => saleOwnerByFk.get(f.id) || (f.custom_fields?.["เซลล์ผู้ดูแล"] as string) || "";
+  const ownerOf = (f: Forklift) =>
+    saleOwnerByFk.get(String(f.id ?? "").trim().toUpperCase())
+    || saleOwnerByFk.get(String(f.SN ?? "").trim().toUpperCase())
+    || (f.custom_fields?.["เซลล์ผู้ดูแล"] as string) || "";
 
   // ── คำขอจอง รออนุมัติ (เซลล์จองเข้ามา รอฝ่ายสต็อกอนุมัติ/ปฏิเสธ) ──
   const pendingBookings = useMemo(
@@ -2149,6 +2162,28 @@ export default function StockMain() {
                     </button>
                   </div>
                 )}
+                {/* ── สถานะรถไม่ตรงกับดีล — กดตั้งให้ตรงได้เลย ── */}
+                {/* (24 ก.ย. 2569) เจอจริง PI027: ดีลผูกกับ SN แต่ตัวรถใช้รหัสชั่วคราว พอกดยืนยันนำเข้าสต็อก
+                    ระบบหาดีลไม่เจอ เลยตั้งเป็น "พร้อมขาย" ทั้งที่ขาย/จองไปแล้ว */}
+                {saleForItem && (() => {
+                  const want = saleStatusToStock(saleForItem.sale_status);
+                  if (String(it.status ?? "").trim() === want) return null;
+                  return (
+                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 flex items-center gap-3 flex-wrap">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-amber-800 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />สถานะรถไม่ตรงกับดีล</p>
+                        <p className="text-[11px] text-amber-700 mt-0.5">
+                          ดีลของ <b>{saleForItem.customer_name || "(ไม่มีชื่อลูกค้า)"}</b> สถานะ &ldquo;{saleForItem.sale_status || "—"}&rdquo;
+                          {saleForItem.sales_staff ? ` · เซลล์ ${saleForItem.sales_staff}` : ""} แต่สถานะรถคือ &ldquo;{it.status}&rdquo;
+                        </p>
+                      </div>
+                      <button onClick={() => { updateForklift({ ...it, status: want }); setDetailItem({ ...it, status: want }); showToast(`ตั้งสถานะเป็น “${want}” แล้ว ✓`); }}
+                        className="flex-shrink-0 text-sm font-bold bg-amber-500 hover:bg-amber-600 text-white px-4 py-2.5 rounded-xl transition-all active:scale-95">
+                        ตั้งเป็น &ldquo;{want}&rdquo;
+                      </button>
+                    </div>
+                  );
+                })()}
                 <Section title="สเปกรถ" rows={spec} keepAlways={SPEC_ALWAYS} />
                 <Section title="ข้อมูลสต็อก / จัดซื้อ" rows={info} />
                 {/* ข้อมูลการขาย (ลูกค้า/ราคา/สถานะ) — สำคัญสุดสำหรับรถที่ขายแล้ว จึงอยู่บนสุด */}
