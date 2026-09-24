@@ -110,6 +110,7 @@ npm run lint     # eslint
 - ✅ **RLS เปิดใช้งานแล้ว (ยืนยัน 31 ก.ค. 2026):** forklifts/sales/inspections/app_config select ต้อง `is_approved()` · write แยกตาม role (`user_role()` = stock/sales/transporter, `is_admin()`) · **public (anon) ดึงข้อมูลไม่ได้ = 0 rows** · ผู้ขนส่ง (anon) อ่านผ่าน RPC `transporter_stock`/`transporter_inspections` (ตัดราคาทุน/ลูกค้า) · audit_log: insert เปิด, select=approved · **ที่เหลือ (optional):** column-level — ซ่อน cost_price จาก sales, ซ่อนข้อมูลลูกค้าจาก stock (staff-vs-staff เท่านั้น ไม่ใช่ public)
 - **RLS**: เตือน rls_disabled_in_public (18 ก.ย. 69) → [supabase-rls-fix-2026-09-18.sql](supabase-rls-fix-2026-09-18.sql) หาตารางที่ยังไม่เปิด RLS เองแล้วเปิดให้ · 6 ตารางที่แอปใช้ตรวจแล้วปลอดภัย
 - **[QUOTE-IMPORT-RULES.md](QUOTE-IMPORT-RULES.md)** — กติกาอ่าน/นำเข้ารถจากใบ PI (1 รุ่น = 1 บล็อก · ต้องเทียบจำนวนกับเอกสารก่อนบันทึกเสมอ)
+- **สิทธิ์แอดมิน 2 ชั้น**: ฝั่งแอป = `OWNER_EMAILS` + `adminEmails` ใน [lib/auth.ts](lib/auth.ts) · ฝั่ง DB = `app_config.data->adminEmails` ที่ `is_admin()` อ่าน — เพิ่มคนใหม่ต้องทำทั้งสองที่ (ดู [supabase-add-admin-2026-09-24.sql](supabase-add-admin-2026-09-24.sql))
 - **[STOCK-RULES.md](STOCK-RULES.md)** — กติกาสต็อก/วางแผนสั่งของ (รถมือสองไม่สั่งเข้าสต็อก · ROCKMAN=ยี่ห้อ CNC=บริษัท · ไม่เดาต้นทุน · แยกตามความสูงเสา)
 - **[DATA-SYNC-PLAN.md](DATA-SYNC-PLAN.md)** — ซิงก์ DB กับ Excel สต็อกจริง (gitignored — มีข้อมูลลูกค้า)
 - ก่อนเพิ่มฟีเจอร์ใหม่ให้เช็คว่างานนั้นชนกับแผนหรือไม่ และอัปเดตสถานะ ☐→☑ เมื่อทำเสร็จ
