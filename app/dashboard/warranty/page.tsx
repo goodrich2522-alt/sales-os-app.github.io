@@ -22,20 +22,25 @@ function WarrantyPageInner() {
     try { const du = localStorage.getItem("dash_user"); if (du) { const p = JSON.parse(du); setActor(p.name || p.email || "แดชบอร์ด"); } } catch {}
   }, []);
 
-  // ลูกค้าล่าสุดต่อรถ (จากดีล)
-  const custByFk = useMemo(() => {
-    const m = new Map<string, string>();
+  // ── ลูกค้า/เซลล์ล่าสุดต่อรถ (จากดีล) ──
+  // ⭐ (24 ก.ย. 2569) จับคู่ด้วย **ทั้งรหัสรถและ SN** — ดีลเก่าบางใบผูกไว้กับรหัสชั่วคราว
+  //    (เช่น PI124#20) ตั้งแต่ตอนรถยังไม่มี SN พอได้ SN จริงรหัสรถเปลี่ยน ดีลเลยชี้ไม่ถึงคันนั้น
+  //    → หน้านี้เคยขึ้นชื่อลูกค้า/เซลล์เป็น "—" ทั้งที่ขายไปแล้ว (เจอจริง 2 คัน)
+  const { custByFk, sellerByFk } = useMemo(() => {
+    const cust = new Map<string, string>(), seller = new Map<string, string>();
+    const put = (m: Map<string, string>, k: string, v: string) => { const key = k.trim().toUpperCase(); if (key && v) m.set(key, v); };
     [...sales].sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))
-      .forEach(s => { if (s.forklift_id && s.customer_name) m.set(s.forklift_id, s.customer_name); });
-    return m;
+      .forEach(s => {
+        [s.forklift_id, s.forklift_unit_no].forEach(k => {
+          put(cust, String(k ?? ""), String(s.customer_name ?? ""));
+          put(seller, String(k ?? ""), String(s.sales_staff ?? ""));
+        });
+      });
+    return { custByFk: cust, sellerByFk: seller };
   }, [sales]);
-  // เซลล์เจ้าของงาน (ผู้ขาย) ต่อรถ — ให้ฝ่ายสต็อกรู้ว่าคันไหนของเซลล์ใคร
-  const sellerByFk = useMemo(() => {
-    const m = new Map<string, string>();
-    [...sales].sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))
-      .forEach(s => { if (s.forklift_id && s.sales_staff) m.set(s.forklift_id, s.sales_staff); });
-    return m;
-  }, [sales]);
+  /** หาค่าจากดีล — ลองรหัสรถก่อน ไม่เจอค่อยลอง SN */
+  const fromSale = (m: Map<string, string>, f: { id: string; SN?: string }) =>
+    m.get(String(f.id ?? "").trim().toUpperCase()) || m.get(String(f.SN ?? "").trim().toUpperCase()) || "";
 
   // รถที่มีข้อมูลบริการหลังการขาย → คำนวณรอบถัดไป + จำนวนวันถึงกำหนด
   const rows = useMemo(() => {
@@ -47,7 +52,7 @@ function WarrantyPageInner() {
       const doneCount = svc.rounds.filter(r => r.done).length;
       const days = nd ? daysUntil(nd.due, today) : null;
       return [{
-        fk: f, svc, customer: custByFk.get(f.id) || "", seller: sellerByFk.get(f.id) || "",
+        fk: f, svc, customer: fromSale(custByFk, f), seller: fromSale(sellerByFk, f),
         nextIndex: nd?.index ?? null, due: nd?.due ?? "", days,
         doneCount, complete: !nd,
       }];

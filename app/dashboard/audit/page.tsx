@@ -6,7 +6,7 @@ import { ArrowLeft, ShieldCheck, RefreshCw, Search, Package, ShoppingCart, Trash
 import { fetchAuditApi, AuditEntry } from "@/lib/api";
 import { DashboardGuard } from "@/components/DashboardGuard";
 import { useApp } from "@/lib/AppContext";
-import { runHealthChecks, saleModelMismatch } from "@/lib/dataHealth";
+import { runHealthChecks, saleModelMismatch, orphanSales } from "@/lib/dataHealth";
 
 const fmtTime = (s?: string) => { if (!s) return ""; try { return new Date(s).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" }); } catch { return s; } };
 
@@ -55,6 +55,16 @@ function AuditPageInner() {
 
   // ── ตรวจสุขภาพข้อมูลสต็อก (SN ซ้ำ/เพี้ยน · แถวรอ SN ค้าง · ชื่อรุ่นขัดกับความจริง) ──
   const health = useMemo(() => runHealthChecks(forklifts, sales), [forklifts, sales]);
+  // ใบขายที่ผูกรถไม่เจอ — ถ้า SN ตรงกับรถที่มีอยู่ ผูกใหม่ให้ได้เลย
+  const orphans = useMemo(() => orphanSales(sales, forklifts), [sales, forklifts]);
+  const relinkable = orphans.filter(o => !!o.match);
+  const [relinkConfirm, setRelinkConfirm] = useState(false);
+  const [relinkDone, setRelinkDone] = useState(0);
+  const relink = () => {
+    relinkable.forEach(({ s, match }) => updateSale({ ...s, forklift_id: match!.id, forklift_unit_no: match!.SN || match!.id }));
+    setRelinkDone(relinkable.length);
+    setRelinkConfirm(false);
+  };
   const [openCheck, setOpenCheck] = useState<string | null>(null);
 
   const syncMismatches = () => {
@@ -137,6 +147,42 @@ function AuditPageInner() {
                 })}
               </div>}
         </div>
+
+        {/* ── ใบขายที่ผูกรถไม่เจอ (รหัสรถเปลี่ยนหลังได้ SN หรือรถถูกลบ) ── */}
+        {orphans.length > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-2xl p-4">
+            <p className="text-sm font-bold text-red-700">🔗 ใบขาย {orphans.length} ใบ ผูกกับรถที่หาไม่เจอ</p>
+            <p className="text-[11px] text-red-600 mt-0.5 mb-2">
+              ใบขายชี้ไปที่รหัสรถที่ไม่มีแล้ว (มักเกิดตอนรถได้ SN จริงแล้วรหัสเปลี่ยน หรือรถถูกลบ) →
+              หน้ารับประกัน/เช็กระยะจะไม่รู้ว่าลูกค้าใคร · รายงานกำไรหาต้นทุนของคันนั้นไม่เจอ
+            </p>
+            <div className="flex flex-col gap-1.5 mb-2">
+              {orphans.slice(0, 8).map(({ s, match }) => (
+                <div key={s.id} className="text-xs bg-white border border-red-100 rounded-lg px-2.5 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="font-semibold text-slate-800">{s.customer_name || "(ไม่มีชื่อลูกค้า)"}</span>
+                  <span className="text-slate-500">{s.forklift_brand} {s.forklift_model}</span>
+                  <span className="text-red-600">ผูกกับ {s.forklift_id}</span>
+                  {match
+                    ? <span className="ml-auto text-emerald-700 font-semibold">→ พบรถ SN {match.SN || match.id} · ผูกใหม่ได้</span>
+                    : <span className="ml-auto text-slate-400">ไม่พบรถที่ SN ตรงกัน — ต้องตรวจเอง</span>}
+                </div>
+              ))}
+              {orphans.length > 8 && <span className="text-[11px] text-red-600">…และอีก {orphans.length - 8} ใบ</span>}
+            </div>
+            {relinkable.length > 0 && (!relinkConfirm
+              ? <button onClick={() => setRelinkConfirm(true)} className="text-xs font-bold bg-red-500 hover:bg-red-600 text-white rounded-lg px-3 py-2 transition-colors">
+                  ผูกใหม่ให้ตรงกับรถที่ SN ตรงกัน ({relinkable.length} ใบ)
+                </button>
+              : <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-red-800 font-semibold">ยืนยัน? จะเปลี่ยนรหัสรถในใบขาย {relinkable.length} ใบ ให้ชี้ไปที่คันที่ SN ตรงกัน</span>
+                  <button onClick={relink} className="text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-1.5">ยืนยันผูกใหม่</button>
+                  <button onClick={() => setRelinkConfirm(false)} className="text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg px-3 py-1.5">ยกเลิก</button>
+                </div>)}
+          </div>
+        )}
+        {relinkDone > 0 && orphans.length === 0 && (
+          <p className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl px-3 py-2">✓ ผูกใบขายกับรถใหม่แล้ว {relinkDone} ใบ</p>
+        )}
 
         {/* ── ใบขายที่ชื่อยี่ห้อ/รุ่นไม่ตรงกับทะเบียนรถ (ของเก่าที่แก้ก่อนระบบซิงก์อัตโนมัติ) ── */}
         {mismatches.length > 0 && (

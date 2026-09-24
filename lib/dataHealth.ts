@@ -126,6 +126,50 @@ function badModel(forklifts: Forklift[]): HealthItem[] {
     .map(({ f, warn }) => ({ id: f.id, label: `${t(f.model)} (${snOf(f) || f.id})`, detail: warn!, status: t(f.status) }));
 }
 
+/** สถานะที่แปลว่า "ขายไปแล้ว" */
+const SOLD = ["ปิดการขายแล้ว", "ส่งมอบแล้ว", "ขายแล้ว"];
+
+/** ใบขายผูกกับรถคันไหน — เทียบทั้งรหัสรถและ SN (ใบเก่าบางใบผูกด้วยรหัสชั่วคราวที่เลิกใช้แล้ว) */
+function saleKeys(sales: Sale[]): { byId: Set<string>; bySn: Set<string> } {
+  const byId = new Set<string>(), bySn = new Set<string>();
+  sales.forEach(s => {
+    const id = t(s.forklift_id).toUpperCase(); if (id) byId.add(id);
+    const sn = t(s.forklift_unit_no).toUpperCase(); if (sn) bySn.add(sn);
+  });
+  return { byId, bySn };
+}
+
+/**
+ * ── รถที่ปิดการขายแล้วแต่ไม่มีใบขายผูกอยู่ ──
+ * อาการที่เห็น: หน้ารับประกัน/เช็กระยะขึ้นชื่อลูกค้าและเซลล์เป็น "—"
+ * สาเหตุที่พบบ่อย: เปลี่ยนสถานะเป็น "ปิดการขายแล้ว" ที่หน้าสต็อกโดยไม่ได้เปิดดีล
+ * หรือดีลถูกผูกไว้กับรถคันเก่า (รหัสชั่วคราว) ที่ถูกลบ/แทนที่ไปแล้ว
+ */
+function soldNoSale(forklifts: Forklift[], sales: Sale[]): HealthItem[] {
+  const { byId, bySn } = saleKeys(sales);
+  return forklifts
+    .filter(f => SOLD.includes(t(f.status)))
+    .filter(f => !byId.has(t(f.id).toUpperCase()) && !(snOf(f) && bySn.has(snOf(f).toUpperCase())))
+    .map(f => ({
+      id: f.id,
+      label: `${snOf(f) || f.id} · ${label(f)}`,
+      detail: `สถานะ "${t(f.status)}" แต่ไม่มีใบขายผูกอยู่ — หน้ารับประกัน/เช็กระยะจะไม่รู้ว่าลูกค้าใคร เซลล์คนไหน${t(f.pi_no) ? ` · PI ${t(f.pi_no)}` : ""}`,
+      status: t(f.status),
+    }));
+}
+
+/**
+ * ── ใบขายที่ผูกรถไม่เจอ (รถถูกลบ หรือรหัสรถเปลี่ยนหลังได้ SN) ──
+ * ถ้า SN ในใบขายตรงกับรถที่มีอยู่ → ผูกใหม่ได้ทันที (หน้า Audit มีปุ่มให้)
+ */
+export function orphanSales(sales: Sale[], forklifts: Forklift[]): { s: Sale; match?: Forklift }[] {
+  const byId = new Map(forklifts.map(f => [t(f.id).toUpperCase(), f]));
+  const bySn = new Map(forklifts.filter(f => snOf(f)).map(f => [snOf(f).toUpperCase(), f]));
+  return sales
+    .filter(s => t(s.forklift_id) && !byId.has(t(s.forklift_id).toUpperCase()))
+    .map(s => ({ s, match: bySn.get(t(s.forklift_unit_no).toUpperCase()) }));
+}
+
 /** ── ใบขายที่ชื่อยี่ห้อ/รุ่นไม่ตรงกับทะเบียนรถ ── */
 export function saleModelMismatch(sales: Sale[], forklifts: Forklift[]): { s: Sale; f: Forklift }[] {
   const byId = new Map(forklifts.map(f => [f.id, f]));
@@ -152,6 +196,9 @@ export function runHealthChecks(forklifts: Forklift[], sales: Sale[]): HealthChe
     { key: "ghost", title: "แถวรอ SN ค้าง (อาจเป็นรถผี)", severity: "high",
       hint: "SN มาแล้วแต่แถวเดิมที่ยังไม่มี SN ไม่ถูกแทนที่ → สต็อกเกินจริง เทียบกับใบ PI ก่อนลบ",
       items: ghostRows(forklifts) },
+    { key: "soldNoSale", title: "ขายไปแล้วแต่ไม่มีใบขายผูกอยู่", severity: "high",
+      hint: "หน้ารับประกัน/เช็กระยะจะขึ้นชื่อลูกค้าและเซลล์เป็น \"—\" · มักเกิดจากเปลี่ยนสถานะที่หน้าสต็อกโดยไม่ได้เปิดดีล หรือดีลผูกไว้กับรถคันเก่าที่ถูกแทนที่ไปแล้ว — เปิดดีลย้อนหลังให้ตรงคัน หรือเช็กว่าดีลเดิมผูกรถผิดคัน",
+      items: soldNoSale(forklifts, sales) },
     { key: "snChars", title: "SN มีช่องว่างเกิน", severity: "medium",
       hint: "ช่องว่างใน SN ทำให้ค้นหาไม่เจอและจับคู่เอกสารพลาด",
       items: oddSnChars(forklifts) },
