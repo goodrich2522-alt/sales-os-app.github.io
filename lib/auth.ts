@@ -73,8 +73,15 @@ export async function getAccessConfig(): Promise<{
   }
 }
 
+/**
+ * เป็นแอดมินไหม — เจ้าของระบบ (OWNER_EMAILS) เป็นแอดมินเสมอ
+ * (24 ก.ย. 2569 · ผู้ใช้ยืนยันให้เพิ่ม woralakpor789@gmail.com เป็นแอดมินเต็มสิทธิ์)
+ * หมายเหตุ: อันนี้คุมสิทธิ์ "ฝั่งแอป" เท่านั้น — สิทธิ์เขียนระดับฐานข้อมูลยังคุมด้วย RLS/is_admin() ใน Supabase แยกต่างหาก
+ */
 export function isAdminEmail(email: string, adminEmails: string[]): boolean {
-  return adminEmails.map(norm).includes(norm(email));
+  const e = norm(email);
+  if (!e) return false;
+  return OWNER_EMAILS.map(norm).includes(e) || adminEmails.map(norm).includes(e);
 }
 
 /** เช็คสิทธิ์ตัวเองผ่าน RPC (เห็นเฉพาะข้อมูลตัวเอง — ใช้ได้แม้ยังไม่อนุมัติ) */
