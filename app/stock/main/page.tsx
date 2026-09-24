@@ -498,13 +498,24 @@ export default function StockMain() {
     return m;
   }, [sales]);
   // ดีลล่าสุดต่อคัน (ทั้งก้อน) — ใช้เติมข้อมูลลูกค้าในรายงาน Export
+  // ดีลล่าสุดของรถแต่ละคัน — จับคู่ด้วย **ทั้งรหัสรถและ SN**
+  // (24 ก.ย. 2569) ดีลที่เปิดตอนรถยังไม่มี SN จะผูกกับรหัสชั่วคราว (เช่น PI027#1)
+  // ส่วนดีลที่เปิดหลังรถได้ SN จะผูกกับ SN — ถ้าจับคู่ด้วยคีย์เดียวจะหาดีลไม่เจอสลับกันไปมา
   const saleByFk = useMemo(() => {
     const m = new Map<string, Sale>();
     [...sales]
       .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))
-      .forEach(s => m.set(s.forklift_id, s));
+      .forEach(s => {
+        [s.forklift_id, s.forklift_unit_no].forEach(k => {
+          const key = String(k ?? "").trim().toUpperCase();
+          if (key) m.set(key, s);
+        });
+      });
     return m;
   }, [sales]);
+  /** ดีลของรถคันนี้ — ลองรหัสรถก่อน ไม่เจอค่อยลอง SN */
+  const dealOf = (f: { id: string; SN?: string }) =>
+    saleByFk.get(String(f.id ?? "").trim().toUpperCase()) ?? saleByFk.get(String(f.SN ?? "").trim().toUpperCase());
 
   // นับแยกตามสถานะมาตรฐาน 5 ค่า — ฝ่ายสต็อกเห็นชัดว่าเหลือ/ขาย/ไฟแนนซ์/จอง กี่คัน
   const countStatus = (s: string) => forklifts.filter(f => String(f.status) === s).length;
@@ -629,7 +640,7 @@ export default function StockMain() {
       return;
     }
     const rows = listFiltered.map(f => {
-      const sale = saleByFk.get(f.id); // ดีลล่าสุดของคันนี้ (ถ้ามี) → เติมข้อมูลลูกค้า
+      const sale = dealOf(f); // ดีลล่าสุดของคันนี้ (ถ้ามี) → เติมข้อมูลลูกค้า
       return {
       "รหัส (SN)": f.id ?? "",
       "SN": f.SN ?? "",
@@ -2411,7 +2422,7 @@ export default function StockMain() {
                 {(() => {
                   const cf = (it.custom_fields || {}) as Record<string, unknown>;
                   // ถ้ายังไม่บันทึกเอง (cf ว่าง) → ใช้ข้อมูลจากดีลฝ่ายขายที่ลงมาแล้ว
-                  const deal = saleByFk.get(it.id);
+                  const deal = dealOf(it);
                   const dealAddon = (deal?.add_ons ?? []).reduce((s, a) => s + (Number(a.price) || 0), 0);
                   const sale = Number(cf["ราคาขายจริง"]) || Number(deal?.actual_sale) || 0;
                   const ship = Number(cf["ค่าขนส่งจริง"]) || Number(deal?.shipping_cost) || 0;
