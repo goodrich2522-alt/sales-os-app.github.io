@@ -18,6 +18,7 @@ import { DEFAULT_WARRANTY, emptySvcRounds } from "@/lib/warranty";
 import { DashboardGuard } from "@/components/DashboardGuard";
 import { PaymentImport } from "@/components/PaymentImport";
 import { staffLabel, canonicalStaff } from "@/lib/constants";
+import { thaiDateShort } from "@/lib/format";
 import { supabase } from "@/lib/supabaseClient";
 import type { Sale, Forklift } from "@/lib/types";
 
@@ -123,6 +124,7 @@ function CommissionPageInner() {
   const [month, setMonth] = useState<string>("");
   const activeMonth = month || months[0] || "";
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [showWarrantyMissing, setShowWarrantyMissing] = useState(false);  // กางดูดีลที่ยังไม่ลงรับประกัน
 
   // ดีลของเดือนที่เลือก + คำนวณค่าคอมต่อดีล
   const rows = useMemo(() => {
@@ -463,10 +465,45 @@ function CommissionPageInner() {
             มีดีลโฟล์คลิฟท์ <b>{dMissing}</b> รายการยังไม่ได้เลือก &ldquo;หมวดลูกค้า&rdquo; — กางดูรายดีลแล้วเลือกหมวดให้ครบ ค่าคอมถึงจะคำนวณถูก
           </div>
         )}
+        {/* ── ดีลที่ยังไม่ลงรับประกัน → ค่าคอม 0 · กดเพื่อกางดูว่าเป็นดีลไหนบ้าง ── */}
         {totalWarrantyMissing > 0 && !locked && (
-          <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5 flex items-start gap-2">
-            <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-            มี <b>{totalWarrantyMissing}</b> ดีล<b>ยังไม่ลงข้อมูลรับประกัน/บริการหลังการขาย → ค่าคอม 0</b> · ฝ่ายขายต้องลงข้อมูลรับประกันในหน้าขาย (กล่องรายละเอียดการขาย) ให้ครบก่อน
+          <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5">
+            <button onClick={() => setShowWarrantyMissing(v => !v)} className="w-full flex items-start gap-2 text-left">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>
+                มี <b>{totalWarrantyMissing}</b> ดีล<b>ยังไม่ลงข้อมูลรับประกัน/บริการหลังการขาย → ค่าคอม 0</b> · ฝ่ายขายต้องลงข้อมูลรับประกันในหน้าขาย (กล่องรายละเอียดการขาย) ให้ครบก่อน
+              </span>
+              <span className="ml-auto flex-shrink-0 font-bold underline">{showWarrantyMissing ? "ซ่อน" : "ดูรายการ"}</span>
+            </button>
+            {showWarrantyMissing && (
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full text-[11px] min-w-[560px]">
+                  <thead>
+                    <tr className="text-red-700/70 border-b border-red-200">
+                      <th className="text-left py-1.5 px-2 font-semibold whitespace-nowrap">วันที่ปิด</th>
+                      <th className="text-left py-1.5 px-2 font-semibold whitespace-nowrap">รหัสรถ</th>
+                      <th className="text-left py-1.5 px-2 font-semibold">ลูกค้า</th>
+                      <th className="text-left py-1.5 px-2 font-semibold">รุ่น</th>
+                      <th className="text-left py-1.5 px-2 font-semibold whitespace-nowrap">เซลล์</th>
+                      <th className="text-right py-1.5 px-2 font-semibold whitespace-nowrap">ราคาขาย</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.filter(r => !r.warranty).map(r => (
+                      <tr key={r.sale.id} className="border-b border-red-100 bg-white/60">
+                        <td className="py-1.5 px-2 whitespace-nowrap">{thaiDateShort(closeDate(r.sale))}</td>
+                        <td className="py-1.5 px-2 whitespace-nowrap font-semibold">{String(r.sale.forklift_unit_no || r.sale.forklift_id || "—").replace(/#\d+$/, "")}</td>
+                        <td className="py-1.5 px-2 text-slate-700">{r.sale.customer_name || "(ไม่มีชื่อลูกค้า)"}</td>
+                        <td className="py-1.5 px-2 text-slate-600">{r.sale.forklift_brand} {r.sale.forklift_model}</td>
+                        <td className="py-1.5 px-2 whitespace-nowrap text-slate-600">{staffLabel(r.sale.sales_staff || "(ไม่ระบุเซลล์)", fieldConfig.resignedStaff ?? [])}</td>
+                        <td className="py-1.5 px-2 text-right whitespace-nowrap text-slate-700">฿{Math.round(Number(r.sale.actual_sale) || 0).toLocaleString("th-TH")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="mt-1.5 text-[11px] text-red-600">วิธีแก้: เปิดหน้าฝ่ายขาย → ค้นรหัสรถข้างบน → เปิดดีล → กรอกกล่อง &ldquo;รับประกัน / บริการหลังการขาย&rdquo; ให้ครบ แล้วค่าคอมจะคำนวณให้เอง</p>
+              </div>
+            )}
           </div>
         )}
 
