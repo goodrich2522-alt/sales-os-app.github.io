@@ -116,7 +116,9 @@ function AuditPageInner() {
             <p className="text-sm font-bold text-slate-800">🩺 ตรวจสุขภาพข้อมูลสต็อก</p>
             <span className="text-[11px] text-slate-400">ตรวจจากข้อมูลปัจจุบัน {forklifts.length} คัน · อ่านอย่างเดียว ระบบไม่แก้ให้เอง</span>
           </div>
-          {health.length === 0
+          {forklifts.length === 0
+            ? <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 mt-2">กำลังโหลดข้อมูล… (ถ้าค้างนาน กดรีเฟรชหน้า)</p>
+            : health.length === 0
             ? <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 mt-2">✓ ไม่พบข้อมูลผิดปกติ</p>
             : <div className="flex flex-col gap-2 mt-2">
                 {health.map(c => {

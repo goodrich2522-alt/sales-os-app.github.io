@@ -26,17 +26,20 @@ function WarrantyPageInner() {
   // ⭐ (24 ก.ย. 2569) จับคู่ด้วย **ทั้งรหัสรถและ SN** — ดีลเก่าบางใบผูกไว้กับรหัสชั่วคราว
   //    (เช่น PI124#20) ตั้งแต่ตอนรถยังไม่มี SN พอได้ SN จริงรหัสรถเปลี่ยน ดีลเลยชี้ไม่ถึงคันนั้น
   //    → หน้านี้เคยขึ้นชื่อลูกค้า/เซลล์เป็น "—" ทั้งที่ขายไปแล้ว (เจอจริง 2 คัน)
-  const { custByFk, sellerByFk } = useMemo(() => {
+  const { custByFk, sellerByFk, hasSaleKeys } = useMemo(() => {
     const cust = new Map<string, string>(), seller = new Map<string, string>();
+    const hasSaleKeys = new Set<string>();   // คีย์ที่ "มีใบขาย" (ต่อให้ใบขายไม่ได้กรอกชื่อลูกค้า)
     const put = (m: Map<string, string>, k: string, v: string) => { const key = k.trim().toUpperCase(); if (key && v) m.set(key, v); };
     [...sales].sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))
       .forEach(s => {
         [s.forklift_id, s.forklift_unit_no].forEach(k => {
+          const key = String(k ?? "").trim().toUpperCase();
+          if (key) hasSaleKeys.add(key);
           put(cust, String(k ?? ""), String(s.customer_name ?? ""));
           put(seller, String(k ?? ""), String(s.sales_staff ?? ""));
         });
       });
-    return { custByFk: cust, sellerByFk: seller };
+    return { custByFk: cust, sellerByFk: seller, hasSaleKeys };
   }, [sales]);
   /** หาค่าจากดีล — ลองรหัสรถก่อน ไม่เจอค่อยลอง SN */
   const fromSale = (m: Map<string, string>, f: { id: string; SN?: string }) =>
@@ -53,6 +56,7 @@ function WarrantyPageInner() {
       const days = nd ? daysUntil(nd.due, today) : null;
       return [{
         fk: f, svc, customer: fromSale(custByFk, f), seller: fromSale(sellerByFk, f),
+        hasSale: hasSaleKeys.has(String(f.id ?? "").trim().toUpperCase()) || hasSaleKeys.has(String(f.SN ?? "").trim().toUpperCase()),
         nextIndex: nd?.index ?? null, due: nd?.due ?? "", days,
         doneCount, complete: !nd,
       }];
@@ -60,7 +64,7 @@ function WarrantyPageInner() {
       if (a.complete !== b.complete) return a.complete ? 1 : -1; // ยังไม่ครบก่อน
       return (a.days ?? 9999) - (b.days ?? 9999);                // ใกล้/เกินกำหนดก่อน
     });
-  }, [forklifts, custByFk, sellerByFk, today]);
+  }, [forklifts, custByFk, sellerByFk, hasSaleKeys, today]);
 
   const overdue = rows.filter(r => !r.complete && r.days != null && r.days < 0);
   const soon = rows.filter(r => !r.complete && r.days != null && r.days >= 0 && r.days <= SVC_SOON_DAYS);
@@ -158,7 +162,12 @@ function WarrantyPageInner() {
                       <span className="font-bold text-slate-800 text-sm">{r.fk.brand} {r.fk.model}</span>
                     </div>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      {r.customer || "—"}{r.seller ? ` · เซลล์ ${r.seller}` : ""} · เริ่มรับประกัน {r.svc.start || "—"} · เช็คแล้ว {r.doneCount}/{SVC_ROUNDS} รอบ
+                      {/* แยกให้ชัด: ไม่มีใบขายเลย ≠ มีใบขายแต่ไม่ได้กรอกชื่อลูกค้า (เดิมขึ้น "—" เหมือนกันจนบอกไม่ได้) */}
+                      {r.customer ? r.customer
+                        : r.hasSale
+                          ? <span className="text-amber-600 font-semibold" title="มีใบขายผูกอยู่ แต่ในใบขายไม่ได้กรอกชื่อลูกค้า (มักเป็นดีลที่นำเข้าจากบิลภาษี)">ใบขายไม่ได้กรอกชื่อลูกค้า</span>
+                          : <span className="text-red-600 font-semibold" title="ไม่มีใบขายผูกกับรถคันนี้เลย — ต้องเปิดดีลย้อนหลัง">ไม่มีใบขายผูกอยู่</span>}
+                      {r.seller ? ` · เซลล์ ${r.seller}` : ""} · เริ่มรับประกัน {r.svc.start || "—"} · เช็คแล้ว {r.doneCount}/{SVC_ROUNDS} รอบ
                     </p>
                     {!r.complete && (
                       <p className="text-[11px] text-teal-700 mt-0.5 font-semibold">รอบถัดไป: รอบที่ {(r.nextIndex ?? 0) + 1} · กำหนด {r.due || "— (ยังไม่ระบุวันเริ่ม)"}</p>

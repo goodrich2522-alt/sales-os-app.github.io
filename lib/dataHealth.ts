@@ -170,6 +170,18 @@ export function orphanSales(sales: Sale[], forklifts: Forklift[]): { s: Sale; ma
     .map(s => ({ s, match: bySn.get(t(s.forklift_unit_no).toUpperCase()) }));
 }
 
+/** ── ใบขายที่ไม่ได้กรอกชื่อลูกค้า (มักเป็นดีลที่นำเข้าจากบิลภาษี) ── */
+function saleNoCustomer(sales: Sale[]): HealthItem[] {
+  return sales
+    .filter(s => !t(s.customer_name))
+    .map(s => ({
+      id: s.id,
+      label: `${t(s.forklift_unit_no) || t(s.forklift_id)} · ${t(s.forklift_brand)} ${t(s.forklift_model)}`.trim(),
+      detail: `ใบขายนี้ไม่มีชื่อลูกค้า${t(s.sales_staff) ? ` · เซลล์ ${t(s.sales_staff)}` : " · ไม่มีชื่อเซลล์ด้วย"}${t(s.delivery_date) ? ` · ส่งมอบ ${t(s.delivery_date)}` : ""} — หน้ารับประกัน/ประวัติลูกค้าจะไม่รู้ว่าเป็นของใคร`,
+      status: t(s.sale_status),
+    }));
+}
+
 /** ── ใบขายที่ชื่อยี่ห้อ/รุ่นไม่ตรงกับทะเบียนรถ ── */
 export function saleModelMismatch(sales: Sale[], forklifts: Forklift[]): { s: Sale; f: Forklift }[] {
   const byId = new Map(forklifts.map(f => [f.id, f]));
@@ -199,6 +211,9 @@ export function runHealthChecks(forklifts: Forklift[], sales: Sale[]): HealthChe
     { key: "soldNoSale", title: "ขายไปแล้วแต่ไม่มีใบขายผูกอยู่", severity: "high",
       hint: "หน้ารับประกัน/เช็กระยะจะขึ้นชื่อลูกค้าและเซลล์เป็น \"—\" · มักเกิดจากเปลี่ยนสถานะที่หน้าสต็อกโดยไม่ได้เปิดดีล หรือดีลผูกไว้กับรถคันเก่าที่ถูกแทนที่ไปแล้ว — เปิดดีลย้อนหลังให้ตรงคัน หรือเช็กว่าดีลเดิมผูกรถผิดคัน",
       items: soldNoSale(forklifts, sales) },
+    { key: "saleNoCust", title: "ใบขายไม่ได้กรอกชื่อลูกค้า", severity: "medium",
+      hint: "เปิดดีลนั้นในหน้าฝ่ายขายแล้วเติมชื่อลูกค้า — หน้ารับประกัน/เช็กระยะจะได้รู้ว่าเป็นของใคร (ดีลที่นำเข้าจากบิลภาษีมักไม่มีชื่อมาให้)",
+      items: saleNoCustomer(sales) },
     { key: "snChars", title: "SN มีช่องว่างเกิน", severity: "medium",
       hint: "ช่องว่างใน SN ทำให้ค้นหาไม่เจอและจับคู่เอกสารพลาด",
       items: oddSnChars(forklifts) },
