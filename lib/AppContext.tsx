@@ -13,6 +13,7 @@ import {
 } from "./mockData";
 import * as api from "./api";
 import { supabase } from "./supabaseClient";
+import { isPendingId } from "./productId";
 import type { CommissionLock } from "./commission";
 
 // ── Field configuration ───────────────────────────────────────────────────────
@@ -414,10 +415,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // ⭐ (23 ก.ย. 2569) ชื่อยี่ห้อ/รุ่นในใบขายเป็น "สำเนาข้อความ" ไม่ได้ join กับทะเบียนรถ
     //    แก้ชื่อรุ่นที่รถแล้วใบขายยังค้างชื่อเก่า → รายงาน (รุ่นขายดี/วางแผนสั่งสต็อก) ยังโชว์ชื่อผิด
     //    จึงอัปเดตใบขายของคันนั้นตามไปด้วย (เฉพาะยี่ห้อ/รุ่น — ฟิลด์อื่นของใบขายไม่แตะ)
-    if (before && (String(before.model ?? "") !== String(f.model ?? "") || String(before.brand ?? "") !== String(f.brand ?? ""))) {
+    // ⭐ (25 ก.ย. 2569) SN ก็เป็นสำเนาในใบขาย (forklift_unit_no) — รถสั่งผลิตที่เพิ่งได้ SN
+    //    ใบขายจะค้างรหัสชั่วคราว (PI#4) ทำให้หน้าประวัติการขายโชว์ "PI#4" แทน SN จริง
+    const snFilled = !String(before?.SN ?? "").trim() && !!String(f.SN ?? "").trim();
+    if (before && (String(before.model ?? "") !== String(f.model ?? "") || String(before.brand ?? "") !== String(f.brand ?? "") || snFilled)) {
       const linked = salesRef.current.filter(s => s.forklift_id === f.id);
       if (linked.length) {
-        const fix = (s: Sale): Sale => ({ ...s, forklift_brand: f.brand, forklift_model: f.model });
+        const fix = (s: Sale): Sale => ({
+          ...s, forklift_brand: f.brand, forklift_model: f.model,
+          // เติม SN ลงใบขายเมื่อรถเพิ่งได้ SN (ของเดิมเป็นรหัสชั่วคราว/ว่าง เท่านั้น — ไม่ทับ SN ที่กรอกไว้แล้ว)
+          ...(snFilled && (!String(s.forklift_unit_no ?? "").trim() || isPendingId(s.forklift_unit_no))
+            ? { forklift_unit_no: f.SN } : {}),
+        });
         setSales(p => p.map(s => (s.forklift_id === f.id ? fix(s) : s)));
         if (api.apiEnabled) linked.forEach(s => api.updateSaleApi(fix(s)).catch(e => console.warn("sync sale model", e)));
         logAudit("แก้ชื่อรุ่นในใบขายตามรถ", "forklift", f.id, {
