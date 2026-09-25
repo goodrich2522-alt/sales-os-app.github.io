@@ -5,6 +5,7 @@ import { parseEp } from "./ep";
 import { parseRockman } from "./rockman";
 import { parseHangcha } from "./hangcha";
 import { parseHangchaTax, isTaxInvoice } from "./hangchaTax";
+import { parseHeliTax, isHeliTax } from "./heliTax";
 import { parseStaxxSerialSheet, parseStaxxProforma, normalizeStaxxModel } from "./staxx";
 import { QuoteParseResult, QuoteVendor } from "./types";
 
@@ -29,7 +30,8 @@ export function detectVendor(text: string): QuoteVendor {
 /** อ่านข้อความใบเสนอราคา (PDF text layer) → รายการรถ */
 export function parseQuoteText(text: string): QuoteParseResult {
   const vendor = detectVendor(text);
-  // ใบกำกับภาษี = คนละโครงสร้างกับใบสั่งซื้อ (มี SN จริง + วันส่งรถ) → parser แยก
+  // ใบกำกับภาษี = คนละโครงสร้างกับใบสั่งซื้อ (มี SN จริง + ราคาที่เรียกเก็บจริง) → parser แยกตามเจ้า
+  if (isHeliTax(text)) return parseHeliTax(text);        // HELI: ORIGINAL RECEIPT/TAX INVOICE (มักเป็นไฟล์สแกน)
   if (isTaxInvoice(text)) return parseHangchaTax(text);
   switch (vendor) {
     case "HELI":
