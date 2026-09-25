@@ -16,18 +16,19 @@ const defaultTerms = (f: Forklift, isFork: boolean): string => {
   if (isFork) return DEFAULT_WARRANTY;
   return (f.vehicle_category === "Handlift" || f.vehicle_category === "Stacker") ? HYDRAULIC_WARRANTY : "";
 };
-const initSvc = (f: Forklift, isFork: boolean): SvcData =>
-  parseSvc(f) ?? { start: f.received_date || "", terms: defaultTerms(f, isFork), rounds: emptySvcRounds(), history: [] };
+// defaultStart = วันส่งมอบที่กรอกในฟอร์มขาย (ยังไม่เคยบันทึก → ใช้เป็นวันเริ่มประกันให้เลย ไม่ต้องพิมพ์ซ้ำ)
+const initSvc = (f: Forklift, isFork: boolean, defaultStart = ""): SvcData =>
+  parseSvc(f) ?? { start: defaultStart || f.received_date || "", terms: defaultTerms(f, isFork), rounds: emptySvcRounds(), history: [] };
 
-export function WarrantyBlock({ forklift, actor, onSaved, canEdit = true }: {
-  forklift: Forklift; actor: string; onSaved?: (f: Forklift) => void; canEdit?: boolean;
+export function WarrantyBlock({ forklift, actor, onSaved, canEdit = true, defaultStart = "" }: {
+  forklift: Forklift; actor: string; onSaved?: (f: Forklift) => void; canEdit?: boolean; defaultStart?: string;
 }) {
   const { updateForklift } = useApp();
   const isFork = isForkliftVehicle(forklift.brand, forklift.model);
-  const [svc, setSvc] = useState<SvcData>(() => initSvc(forklift, isFork));
+  const [svc, setSvc] = useState<SvcData>(() => initSvc(forklift, isFork, defaultStart));
   const [saved, setSaved] = useState(false);
   const [showHist, setShowHist] = useState(false);
-  useEffect(() => { setSvc(initSvc(forklift, isForkliftVehicle(forklift.brand, forklift.model))); setSaved(false); }, [forklift]);
+  useEffect(() => { setSvc(initSvc(forklift, isForkliftVehicle(forklift.brand, forklift.model), defaultStart)); setSaved(false); }, [forklift, defaultStart]);
 
   const inp = "w-full mt-0.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400 disabled:bg-slate-50 disabled:text-slate-500";
   const setRound = (i: number, patch: Partial<{ date: string; done: boolean; note: string }>) => {
