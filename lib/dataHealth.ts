@@ -16,6 +16,8 @@ export interface HealthItem {
   status?: string;       // สถานะรถ (ถ้ามี) — บอกว่าแก้ที่ไหน
   group?: string;        // ป้ายจัดกลุ่ม (เช่น ปีที่รับรถ) — หน้าตรวจสอบข้อมูลใช้สรุปว่ากองอยู่ตรงไหน
   extra?: Record<string, string>;  // คอลัมน์เพิ่มตอนส่งออก Excel
+  kind?: "forklift" | "sale";      // รายการนี้ผูกกับอะไร (ค่าตั้งต้น = รถ)
+  dismissed?: string;              // ทำเครื่องหมาย "ตรวจแล้ว" ไว้เมื่อไหร่/โดยใคร
 }
 
 /** กลุ่มการตรวจ 1 หัวข้อ */
@@ -25,9 +27,23 @@ export interface HealthCheck {
   hint: string;          // อธิบายว่าเรื่องนี้คืออะไร / แก้ยังไง
   severity: "high" | "medium";
   items: HealthItem[];
+  dismissed?: HealthItem[];  // รายการที่ทำเครื่องหมาย "ตรวจแล้ว" ไว้ — ไม่นับเป็นปัญหาแล้ว แต่ยังดูย้อนหลังได้
 }
 
 const t = (v: unknown) => String(v ?? "").trim();
+
+/**
+ * ── เครื่องหมาย "ตรวจแล้ว" ──
+ * บางรายการไม่ใช่ข้อมูลผิด แต่เป็นของที่ยอมรับได้ (เช่น รถมือสองที่ไม่ได้ลงทะเบียนไว้ก่อนขาย)
+ * เดิมจะค้างอยู่ในรายการตลอดจนกลบรายการที่ต้องแก้จริง
+ * → ทำเครื่องหมายไว้ที่ตัวข้อมูลเอง (custom_fields) แล้วย้ายไปอยู่ "รายการที่ตรวจแล้ว"
+ *   เก็บเป็นประวัติในตัว + การกดครั้งนั้นถูกบันทึกลง audit log ตามปกติ
+ * (25 ก.ย. 2569 · ผู้ใช้ขอ)
+ */
+export const DISMISS_PREFIX = "ตรวจแล้ว:";
+export const dismissField = (checkKey: string) => `${DISMISS_PREFIX}${checkKey}`;
+export const dismissedNote = (rec: { custom_fields?: Record<string, unknown> } | undefined, checkKey: string) =>
+  t(rec?.custom_fields?.[dismissField(checkKey)]);
 const snOf = (f: Forklift) => t(f.SN);
 const label = (f: Forklift) => `${t(f.brand)} ${t(f.model)}`.trim() || "(ไม่ระบุรุ่น)";
 
@@ -180,7 +196,7 @@ function soldNoSale(forklifts: Forklift[], sales: Sale[]): HealthItem[] {
  */
 export function oddReceivedDate(forklifts: Forklift[]): HealthItem[] {
   return forklifts
-    .filter(f => { const d = t(f.received_date); return d && !/^d{4}-d{2}-d{2}$/.test(d); })
+    .filter(f => { const d = t(f.received_date); return d && !/^\d{4}-\d{2}-\d{2}$/.test(d); })
     .map(f => {
       const iso = toIsoDate(f.received_date);
       return {
@@ -248,6 +264,7 @@ function saleNoCustomer(sales: Sale[]): HealthItem[] {
   return sales
     .filter(s => !t(s.customer_name))
     .map(s => ({
+      kind: "sale" as const,
       id: s.id,
       label: `${t(s.forklift_unit_no) || t(s.forklift_id)} · ${t(s.forklift_brand)} ${t(s.forklift_model)}`.trim(),
       detail: `ใบขายนี้ไม่มีชื่อลูกค้า${t(s.sales_staff) ? ` · เซลล์ ${t(s.sales_staff)}` : " · ไม่มีชื่อเซลล์ด้วย"}${t(s.delivery_date) ? ` · ส่งมอบ ${t(s.delivery_date)}` : ""} — หน้ารับประกัน/ประวัติลูกค้าจะไม่รู้ว่าเป็นของใคร`,
@@ -300,5 +317,20 @@ export function runHealthChecks(forklifts: Forklift[], sales: Sale[]): HealthChe
       hint: "มักเกิดจากพิมพ์ตก 0 นำหน้า หรือเกินมา 1 หลัก — เทียบกับ SN บนตัวรถ/ใบกำกับภาษีก่อนแก้",
       items: snLength(forklifts) },
   ];
-  return checks.filter(c => c.items.length > 0);
+  // แยก "ตรวจแล้ว" ออกจาก "ต้องแก้" — ดูเครื่องหมายที่ตัวรถ/ใบขายของรายการนั้น
+  const fkById = new Map(forklifts.map(f => [t(f.id), f]));
+  const fkBySn = new Map(forklifts.filter(f => snOf(f)).map(f => [snOf(f).toUpperCase(), f]));
+  const saleById = new Map(sales.map(s => [t(s.id), s]));
+  const recOf = (it: HealthItem) => it.kind === "sale"
+    ? saleById.get(t(it.id))
+    : (fkById.get(t(it.id)) ?? fkBySn.get(t(it.id).toUpperCase()));
+  for (const c of checks) {
+    const keep: HealthItem[] = [], gone: HealthItem[] = [];
+    for (const it of c.items) {
+      const note = dismissedNote(recOf(it), c.key);
+      (note ? gone : keep).push(note ? { ...it, dismissed: note } : it);
+    }
+    c.items = keep; c.dismissed = gone;
+  }
+  return checks.filter(c => c.items.length > 0 || (c.dismissed?.length ?? 0) > 0);
 }
