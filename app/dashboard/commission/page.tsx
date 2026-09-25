@@ -242,6 +242,33 @@ function CommissionPageInner() {
     updateSale({ ...sale, custom_fields: cf });
   };
 
+  /** ส่งออกรายการดีลที่ยังไม่ลงรับประกัน (ค่าคอม 0) — ส่งให้เซลล์แต่ละคนไปไล่เติม */
+  const exportWarrantyMissing = async () => {
+    const miss = rows.filter(r => !r.warranty);
+    if (miss.length === 0) return;
+    const XLSX = await import("xlsx");
+    const data = [...miss]
+      .sort((a, b) => String(a.sale.sales_staff || "").localeCompare(String(b.sale.sales_staff || ""))
+        || closeDate(a.sale).localeCompare(closeDate(b.sale)))
+      .map(r => ({
+        "เซลล์": canonicalStaff(r.sale.sales_staff, fieldConfig.staffAliases) || "(ไม่ระบุเซลล์)",
+        "วันที่ปิด": closeDate(r.sale),
+        "รหัสรถ": String(r.sale.forklift_unit_no || r.sale.forklift_id || "").replace(/#\d+$/, ""),
+        "ยี่ห้อ": r.sale.forklift_brand ?? "",
+        "รุ่น": r.sale.forklift_model ?? "",
+        "ลูกค้า": r.sale.customer_name ?? "",
+        "จังหวัด": r.sale.province ?? "",
+        "ราคาขาย (บาท)": Math.round(Number(r.sale.actual_sale) || 0),
+        "สถานะดีล": r.sale.sale_status ?? "",
+        "ต้องกรอก": "บริการหลังการขาย/รับประกัน — วันเริ่มประกัน + เงื่อนไข (หน้าฝ่ายขาย → เปิดดีล)",
+      }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = [18, 12, 16, 12, 20, 28, 14, 16, 18, 52].map(w => ({ wch: w }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "ดีลค้างรับประกัน");
+    XLSX.writeFile(wb, `ดีลค้างข้อมูลรับประกัน_${activeMonth}.xlsx`);
+  };
+
   const exportExcel = async () => {
     if (displayGroups.length === 0) return;
     const XLSX = await import("xlsx");
@@ -517,6 +544,13 @@ function CommissionPageInner() {
                     ))}
                   </tbody>
                 </table>
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  <button onClick={exportWarrantyMissing}
+                    className="text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-2 flex items-center gap-1.5">
+                    <Download className="w-3.5 h-3.5" />ส่งออก Excel ({rows.filter(r => !r.warranty).length} ดีล)
+                  </button>
+                  <span className="text-[11px] text-red-600">ไฟล์เรียงตามเซลล์ → ส่งให้แต่ละคนไล่เติมได้เลย</span>
+                </div>
                 <p className="mt-1.5 text-[11px] text-red-600">วิธีแก้: เปิดหน้าฝ่ายขาย → ค้นรหัสรถข้างบน → เปิดดีล → กรอกกล่อง &ldquo;รับประกัน / บริการหลังการขาย&rdquo; ให้ครบ แล้วค่าคอมจะคำนวณให้เอง</p>
               </div>
             )}
