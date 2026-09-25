@@ -134,8 +134,7 @@ function CommissionPageInner() {
 
   // แก้วันส่งมอบได้จากหน้าค่าคอมเลย — คนดูค่าคอมแก้เองเร็วกว่าให้ฝ่ายขายไล่แก้ทีละคน
   const [dateEdit, setDateEdit] = useState<Record<string, string>>({});
-  const [editDateFor, setEditDateFor] = useState<string | null>(null);   // ดีลที่กำลังเปิดช่องแก้วันส่งมอบ
-  const saleById = useMemo(() => new Map(closedSales.map(s => [s.id, s])), [closedSales]);
+  const [editDateFor, setEditDateFor] = useState<string | null>(null);   // ดีลที่กำลังเปิดช่องแก้วันส่งมอบ (ใช้ saleById ด้านบน)
   const saveDeliveryDate = (sale: Sale) => {
     const v = String(dateEdit[sale.id] ?? "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
