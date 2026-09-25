@@ -6,6 +6,7 @@ import { Upload, X, CheckCircle, Truck, Camera, AlertCircle, LogOut, ChevronRigh
 import { useApp } from "@/lib/AppContext";
 import { Forklift, Sale, InspectionRecord, INSPECTION_SLOTS, INSPECTION_EXTRA_SLOTS, InspectionSlotKey, SLOT_LABELS } from "@/lib/types";
 import { driveImg } from "@/lib/img";
+import { piLabel } from "@/lib/productId";
 import { thaiDate, today, specCode } from "@/lib/format";
 import { Lightbox } from "@/components/ui/Lightbox";
 
@@ -416,7 +417,7 @@ export default function TransporterMain() {
             {isReceiver && done.before && remainingInPI > 0 && (
               <button onClick={startNextInPI}
                 className="w-full flex items-center justify-center gap-1.5 bg-gradient-to-r from-amber-400 to-amber-500 text-slate-900 font-bold py-3.5 rounded-xl transition-all active:scale-[0.98]">
-                <Truck className="w-4 h-4" />รับคันถัดไปใน PI {openPI} (เหลือ {remainingInPI} คัน) <ChevronRight className="w-4 h-4" />
+                <Truck className="w-4 h-4" />รับคันถัดไปใน {piLabel(openPI)} (เหลือ {remainingInPI} คัน) <ChevronRight className="w-4 h-4" />
               </button>
             )}
             <div className="flex gap-2">
@@ -506,8 +507,12 @@ export default function TransporterMain() {
                 /* ── ระดับ 2: รายการรถใน PI ที่เลือก ── */
                 <>
                   <button onClick={() => setOpenPI(null)} className="flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-amber-700 mb-3"><ChevronRight className="w-3.5 h-3.5 rotate-180" />เลือก PI อื่น</button>
-                  <h2 className="text-base font-bold text-slate-800 mb-1 flex items-center gap-2"><Hash className="w-4 h-4 text-amber-500" />PI {openPI} — {openPICars.length} คัน</h2>
-                  <p className="text-xs text-slate-500 mb-3">แตะรถที่จะรับเข้า แล้วกรอก SN (ถ้ายังไม่มี) + แนบรูป 6 ด้าน</p>
+                  <h2 className="text-base font-bold text-slate-800 mb-1 flex items-center gap-2"><Hash className="w-4 h-4 text-amber-500" />{piLabel(openPI)} — {openPICars.length} คัน</h2>
+                  {/* บอกสถานะจริงของ PI นี้ — เดิมขึ้นข้อความ "แตะรถที่จะรับเข้า" เสมอ ทั้งที่รับครบแล้ว
+                      ทำให้ดูเหมือนยังมีงานค้าง (25 ก.ย. 2569 · ผู้ใช้แจ้ง) */}
+                  {remainingInPI > 0
+                    ? <p className="text-xs text-slate-500 mb-3">แตะรถที่จะรับเข้า แล้วกรอก SN (ถ้ายังไม่มี) + แนบรูป 6 ด้าน · <b className="text-amber-700">เหลือรอรับ {remainingInPI} คัน</b></p>
+                    : <p className="text-xs mb-3 text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5 inline-block">✓ PI นี้รับรถเข้าระบบครบแล้ว — แตะที่คันเพื่อดูข้อมูล/ประวัติ (ไม่ต้องรับซ้ำ)</p>}
                   {/* เลขเอกสารตามคำสั่งซื้อของ PI นี้ (รหัสอ้างอิงนำเข้า / โน้ต PI) */}
                   {(() => {
                     const refs = [...new Set(openPICars.map(c => String(c.custom_fields?.["รหัสอ้างอิงนำเข้า"] || "").trim()).filter(Boolean))];
@@ -527,10 +532,11 @@ export default function TransporterMain() {
                       const docRef = String(c.custom_fields?.["รหัสอ้างอิงนำเข้า"] || "").trim();
                       const st = String(c.status || "").trim();
                       // มีบันทึกรับรถแล้วหรือยัง (จับคู่ SN หรือ id)
-                      const hasRecv = inspections.some(r => {
+                      const recvRec = inspections.find(r => {
                         const u = String(r.unit_no ?? "").toUpperCase();
                         return (u === String(c.SN ?? "").toUpperCase() || u === String(c.id ?? "").toUpperCase()) && (r.role ?? "ผู้รับรถ") === "ผู้รับรถ";
                       });
+                      const hasRecv = !!recvRec;
                       // รับได้ = ยังไม่รับเข้าคลัง: "รอรับ" หรือ รถสั่งผลิต/จอง/มัดจำ/ไฟแนนซ์ ที่ยังไม่มีบันทึกรับ (จองก่อนรถมา)
                       const receivable = /รอรับ|จอง|มัดจำ|ไฟแนนซ์|สั่งผลิต/.test(st);
                       const waiting = st === "รอรับ" || (receivable && !hasRecv); // ยังไม่รับ = ป้ายส้ม กดรับได้ · รับแล้ว/ปิด/เช่า = เทา
@@ -546,9 +552,16 @@ export default function TransporterMain() {
                               <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${waiting ? "bg-amber-100 text-amber-700" : "bg-slate-200 text-slate-600"}`}>{st || "—"}</span>
                             </div>
                             <p className="text-[11px] text-slate-500 mt-0.5">{noSN
-                              ? <span className="text-amber-600 font-semibold">รถสั่งผลิต · PI {c.pi_no || "—"} (ยังไม่มี SN — กรอกตอนรับ)</span>
+                              ? <span className="text-amber-600 font-semibold">รถสั่งผลิต · {c.pi_no ? piLabel(c.pi_no) : "—"} (ยังไม่มี SN — กรอกตอนรับ)</span>
                               : <>SN: <span className="font-semibold text-slate-700">{c.SN}</span></>}</p>
                             {docRef && <p className="text-[11px] text-sky-600 mt-0.5">เลขเอกสาร: <span className="font-semibold">{docRef}</span></p>}
+                            {/* รับเข้าระบบแล้วเมื่อไหร่/โดยใคร — บอกให้ชัดว่างานนี้ทำไปแล้ว ไม่ใช่งานค้าง */}
+                            {recvRec && (
+                              <p className="text-[11px] text-emerald-700 mt-0.5">
+                                ✓ รับเข้าระบบแล้ว {recvRec.date || "—"}{recvRec.transporter_name ? ` · โดย ${recvRec.transporter_name}` : ""}
+                                {Array.isArray(recvRec.images) && recvRec.images.length ? ` · รูป ${recvRec.images.length}` : ""}
+                              </p>
+                            )}
                           </div>
                           {waiting ? <ChevronRight className="w-4 h-4 text-slate-400 flex-shrink-0" /> : <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0" />}
                         </button>
@@ -561,7 +574,7 @@ export default function TransporterMain() {
           ) : (
             /* ── ระดับ 3: ฟอร์มรับรถของคันที่เลือก ── */
             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
-              <button onClick={() => { setRecvCarId(null); setSlotImages({}); setExtraImages([]); }} className="flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-amber-700 mb-3"><ChevronRight className="w-3.5 h-3.5 rotate-180" />เลือกคันอื่นใน PI {recvTarget.pi_no}</button>
+              <button onClick={() => { setRecvCarId(null); setSlotImages({}); setExtraImages([]); }} className="flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-amber-700 mb-3"><ChevronRight className="w-3.5 h-3.5 rotate-180" />เลือกคันอื่นใน {piLabel(recvTarget.pi_no)}</button>
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4">
                 <p className="font-bold text-slate-800 text-sm">{recvTarget.brand} {recvTarget.model}</p>
                 <p className="text-[11px] text-slate-500 mt-0.5">{recvTarget.SN ? <>SN {recvTarget.SN} · </> : "รถสั่งผลิต · "}PI {recvTarget.pi_no || "—"}</p>
