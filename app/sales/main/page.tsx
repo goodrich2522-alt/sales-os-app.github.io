@@ -624,6 +624,8 @@ export default function SalesMain() {
   // ตรวจฟอร์มตามสถานะ — บางสถานะยังไม่ต้องมีสลิป/วันส่งมอบ (เช่น รอไฟแนนซ์ ยังไม่จ่าย)
   const validate = (status: SaleStatus) => {
     const e: Record<string, string> = {};
+    if (!String(salesUser?.name ?? "").trim())
+      e.staff = "ไม่พบชื่อเซลล์ผู้บันทึก — ออกจากระบบแล้วเข้าใหม่ก่อนบันทึก (ดีลต้องมีชื่อเจ้าของงานเสมอ)";
     if (!form.customer_name.trim()) e.customer_name = "กรุณากรอกชื่อลูกค้า";
     if (!form.customer_tel.trim()) e.customer_tel = "กรุณากรอกเบอร์โทร";
     if (!form.customer_type) e.customer_type = "กรุณาเลือกประเภทลูกค้า";
