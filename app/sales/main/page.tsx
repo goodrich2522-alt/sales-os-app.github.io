@@ -19,8 +19,9 @@ import { STATUS_BADGE, SALE_STATUS_BADGE, CONTACT_SOURCE_COLORS, VEHICLE_CATS, p
 import { MoneyInput } from "@/components/ui/MoneyInput";
 import { WarrantyBlock } from "@/components/WarrantyBlock";
 import { SVC_ROUNDS } from "@/lib/warranty";
+import { CLOSE_SALE_ALERT_DAYS } from "@/lib/dataHealth";
 import { parseSvc, nextDue, SVC_SOON_DAYS } from "@/lib/warranty";
-import { formatBaht } from "@/lib/format";
+import { formatBaht, toIsoDate } from "@/lib/format";
 import { hasActiveSession, signOutSupabase, OWNER_EMAILS } from "@/lib/auth";
 import { COMMISSION_FIELD, COMMISSION_CATEGORIES, isStackerModel, isOtherGroup, priorPurchaseByCustomer, toGregorian, isClosedSale, closeMonth, warrantyFilled, isForkliftVehicle } from "@/lib/commission";
 import { apiEnabled, uploadImageApi } from "@/lib/api";
@@ -462,6 +463,22 @@ export default function SalesMain() {
   );
   const seeAll = isAdminUser && viewAllDeals;
   const mySales = seeAll ? sales : (salesUser ? sales.filter(s => sameStaff(s.sales_staff, salesUser.name, fieldConfig.staffAliases)) : []);
+
+  // ── รถถึงคลังแล้วแต่ดีลยังไม่ปิด — เตือนให้ฝ่ายขายกดปิดการขายให้จบ ──
+  const toCloseDeals = useMemo(() => {
+    const now = Date.now();
+    return mySales.flatMap(s => {
+      if (isClosedSale(s)) return [];
+      const key = (v: unknown) => String(v ?? "").trim().toUpperCase();
+      const f = forklifts.find(x => key(x.id) === key(s.forklift_id) || (x.SN && key(x.SN) === key(s.forklift_unit_no)));
+      if (!f) return [];
+      const iso = toIsoDate(f.received_date);
+      if (!iso) return [];
+      const days = Math.floor((now - new Date(iso + "T00:00:00").getTime()) / 86400000);
+      return days >= CLOSE_SALE_ALERT_DAYS ? [{ s, f, days }] : [];
+    }).sort((a, b) => b.days - a.days);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mySales, forklifts]);
 
   // ── ดีลที่ปิดแล้วแต่ยังไม่ลงข้อมูลรับประกัน → ค่าคอมยังไม่ออก (บังคับตั้งแต่ ส.ค. 69) ──
   const WARRANTY_GATE_FROM = "2026-08";
@@ -1155,6 +1172,25 @@ export default function SalesMain() {
             </span>
             <span className="text-xs font-bold text-white bg-red-600 rounded-lg px-3 py-1.5 flex-shrink-0 whitespace-nowrap">ลงข้อมูล</span>
           </button>
+        )}
+        {/* ── รถถึงคลังแล้วแต่ดีลยังไม่ปิด (25 ก.ย. 2569 · ผู้ใช้สั่งให้เตือน) ── */}
+        {/* รถรับเข้าคลังนานแล้วแต่ดีลยังค้างจอง/มัดจำ → ยอดขายและค่าคอมยังไม่เข้าเดือนไหนเลย */}
+        {toCloseDeals.length > 0 && (
+          <div className="bg-amber-50 border border-amber-300 rounded-2xl px-4 py-3">
+            <p className="font-bold text-amber-800 text-sm">🚚 รถถึงคลังแล้ว {toCloseDeals.length} คัน แต่ยังไม่ได้ปิดการขาย</p>
+            <p className="text-xs text-amber-700 mt-0.5 mb-2">ปิดให้จบเพื่อให้ยอดขายและค่าคอมเข้าเดือนที่ถูก — แตะที่รายการเพื่อเปิดดีล</p>
+            <div className="flex flex-col gap-1.5">
+              {toCloseDeals.map(({ s, days, f }) => (
+                <button key={s.id} onClick={() => setDetailSale(s)}
+                  className="flex items-center gap-2 flex-wrap text-left text-xs bg-white border border-amber-200 rounded-lg px-2.5 py-1.5 hover:bg-amber-100 transition-colors">
+                  <span className="font-semibold text-slate-800">{s.customer_name || "(ไม่มีชื่อลูกค้า)"}</span>
+                  <span className="text-slate-500">{s.forklift_brand} {s.forklift_model}</span>
+                  <span className="text-slate-400">{f.SN || f.id}</span>
+                  <span className="ml-auto font-bold text-amber-700">รับรถมาแล้ว {days} วัน · {s.sale_status || "จอง"}</span>
+                </button>
+              ))}
+            </div>
+          </div>
         )}
         {/* เฟส 2: แถบ "กำลังจะขายให้ลูกค้า X" — เลือกรถแล้วฟอร์มเติมข้อมูลลูกค้าให้เอง */}
         {pendingCustomer && (
