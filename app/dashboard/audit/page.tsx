@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ShieldCheck, RefreshCw, Search, Package, ShoppingCart, Trash2, CheckCircle, X, Pencil } from "lucide-react";
+import { ArrowLeft, ShieldCheck, RefreshCw, Search, Package, ShoppingCart, Trash2, CheckCircle, X, Pencil, Download } from "lucide-react";
 import { fetchAuditApi, AuditEntry } from "@/lib/api";
 import { DashboardGuard } from "@/components/DashboardGuard";
 import { useApp } from "@/lib/AppContext";
-import { runHealthChecks, saleModelMismatch, orphanSales } from "@/lib/dataHealth";
+import { runHealthChecks, saleModelMismatch, orphanSales, HealthCheck } from "@/lib/dataHealth";
 
 const fmtTime = (s?: string) => { if (!s) return ""; try { return new Date(s).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" }); } catch { return s; } };
 
@@ -66,6 +66,25 @@ function AuditPageInner() {
     setRelinkConfirm(false);
   };
   const [openCheck, setOpenCheck] = useState<string | null>(null);
+  // ⭐ (25 ก.ย. 2569) บางหัวข้อมีหลายร้อยรายการ (เช่น "ขายไปแล้วแต่ไม่มีใบขาย")
+  //    เดิมวาดทั้งหมดทีเดียว → หน้าหนัก/ค้าง และอ่านไม่รู้เรื่อง จึงโชว์ทีละ 30 + ส่งออก Excel ไปไล่แก้
+  const PAGE = 30;
+  const [showAll, setShowAll] = useState<Record<string, boolean>>({});
+  const exportCheck = async (c: HealthCheck) => {
+    const XLSX = await import("xlsx");
+    const rows = c.items.map(it => ({
+      "รายการ": it.label,
+      ...(it.group ? { "กลุ่ม": it.group } : {}),
+      "สถานะ": it.status ?? "",
+      ...(it.extra ?? {}),
+      "สิ่งที่เจอ": it.detail,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = Object.keys(rows[0] ?? {}).map(k => ({ wch: k === "สิ่งที่เจอ" ? 60 : k === "รายการ" ? 34 : 16 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "รายการ");
+    XLSX.writeFile(wb, `ตรวจสอบข้อมูล-${c.key}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
 
   const syncMismatches = () => {
     mismatches.forEach(({ s, f }) => updateSale({ ...s, forklift_brand: f.brand, forklift_model: f.model }));
@@ -132,18 +151,44 @@ function AuditPageInner() {
                         <span className="text-sm font-semibold text-slate-800">{c.title}</span>
                         <span className="ml-auto text-slate-400 text-xs">{open ? "ซ่อน" : "ดู"}</span>
                       </button>
-                      {open && (
+                      {open && (() => {
+                        // สรุปว่ากองอยู่กลุ่มไหน (เช่น ปีที่รับรถ) — รู้ทันทีว่าเป็นประวัติเก่าหรือของใหม่ที่ต้องตามแก้
+                        const groups = new Map<string, number>();
+                        c.items.forEach(it => { if (it.group) groups.set(it.group, (groups.get(it.group) ?? 0) + 1); });
+                        const all = !!showAll[c.key];
+                        const shown = all ? c.items : c.items.slice(0, PAGE);
+                        return (
                         <div className="px-3 pb-3 flex flex-col gap-1.5">
                           <p className="text-[11px] text-slate-500">{c.hint}</p>
-                          {c.items.map(it => (
+                          {groups.size > 1 && (
+                            <div className="flex flex-wrap gap-1">
+                              {[...groups].sort((a, b) => b[0].localeCompare(a[0])).map(([g, n]) => (
+                                <span key={g} className="text-[11px] bg-white border border-slate-200 rounded-full px-2 py-0.5 text-slate-600">
+                                  {g} <b className="text-slate-800">{n}</b>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <button onClick={() => exportCheck(c)}
+                            className="self-start flex items-center gap-1 text-[11px] font-semibold bg-white border border-slate-200 hover:bg-slate-50 rounded-lg px-2 py-1 text-slate-700">
+                            <Download className="w-3 h-3" />ส่งออก Excel ({c.items.length} รายการ)
+                          </button>
+                          {shown.map(it => (
                             <div key={it.id} className="text-xs bg-white border border-slate-100 rounded-lg px-2.5 py-1.5">
                               <span className="font-semibold text-slate-800">{it.label}</span>
                               {it.status && <span className="text-slate-400"> · {it.status}</span>}
                               <span className="text-slate-600"> — {it.detail}</span>
                             </div>
                           ))}
+                          {c.items.length > PAGE && (
+                            <button onClick={() => setShowAll(v => ({ ...v, [c.key]: !all }))}
+                              className="self-start text-[11px] font-semibold text-slate-600 hover:text-slate-900 underline">
+                              {all ? "ย่อรายการ" : `ดูทั้งหมด (อีก ${c.items.length - PAGE} รายการ)`}
+                            </button>
+                          )}
                         </div>
-                      )}
+                        );
+                      })()}
                     </div>
                   );
                 })}

@@ -14,6 +14,8 @@ export interface HealthItem {
   label: string;         // สิ่งที่เจอ (SN/รุ่น)
   detail: string;        // รายละเอียด + สิ่งที่ควรเป็น
   status?: string;       // สถานะรถ (ถ้ามี) — บอกว่าแก้ที่ไหน
+  group?: string;        // ป้ายจัดกลุ่ม (เช่น ปีที่รับรถ) — หน้าตรวจสอบข้อมูลใช้สรุปว่ากองอยู่ตรงไหน
+  extra?: Record<string, string>;  // คอลัมน์เพิ่มตอนส่งออก Excel
 }
 
 /** กลุ่มการตรวจ 1 หัวข้อ */
@@ -151,12 +153,23 @@ function soldNoSale(forklifts: Forklift[], sales: Sale[]): HealthItem[] {
   return forklifts
     .filter(f => SOLD.includes(t(f.status)))
     .filter(f => !byId.has(t(f.id).toUpperCase()) && !(snOf(f) && bySn.has(snOf(f).toUpperCase())))
-    .map(f => ({
-      id: f.id,
-      label: `${snOf(f) || f.id} · ${label(f)}`,
-      detail: `สถานะ "${t(f.status)}" แต่ไม่มีใบขายผูกอยู่ — หน้ารับประกัน/เช็กระยะจะไม่รู้ว่าลูกค้าใคร เซลล์คนไหน${t(f.pi_no) ? ` · PI ${t(f.pi_no)}` : ""}`,
-      status: t(f.status),
-    }));
+    .map(f => {
+      const recv = toIsoDate(t(f.received_date)) || toIsoDate(t(f.created_at));
+      const yr = recv.slice(0, 4);
+      return {
+        id: f.id,
+        label: `${snOf(f) || f.id} · ${label(f)}`,
+        detail: `สถานะ "${t(f.status)}" แต่ไม่มีใบขายผูกอยู่ — หน้ารับประกัน/เช็กระยะจะไม่รู้ว่าลูกค้าใคร เซลล์คนไหน${t(f.pi_no) ? ` · PI ${t(f.pi_no)}` : ""}`,
+        status: t(f.status),
+        // จัดกลุ่มตามปีที่รับรถ — แยก "ประวัติเก่าที่ยกมาทั้งก้อน" ออกจาก "ของปีนี้ที่ควรมีดีลจริง"
+        group: yr ? `รับรถปี ${Number(yr) + 543}` : "ไม่ระบุวันรับรถ",
+        extra: {
+          SN: snOf(f), "ยี่ห้อ": t(f.brand), "รุ่น": t(f.model),
+          PI: t(f.pi_no), "วันรับรถ": recv,
+        },
+      };
+    })
+    .sort((a, b) => String(b.extra["วันรับรถ"]).localeCompare(String(a.extra["วันรับรถ"])));
 }
 
 /**

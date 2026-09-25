@@ -100,6 +100,7 @@ export default function StockMain() {
   const [listNoCost, setListNoCost] = useState(false);                                       // เฉพาะคันที่ยังไม่มีราคาทุน
   const [listBadModel, setListBadModel] = useState(false);                                   // เฉพาะคันที่ชื่อรุ่นน่าสงสัย
   const [listNoWarranty, setListNoWarranty] = useState(false);                               // เฉพาะคันที่ขายแล้วแต่ยังไม่ลงรับประกัน
+  const [listNoDeal, setListNoDeal] = useState(false);                                       // เฉพาะคันที่ขายแล้วแต่ไม่มีใบขายผูกอยู่
   const [listSort, setListSort]     = useState<"recent" | "model" | "remain" | "sn" | "pi">("recent"); // การเรียง
   const [listView, setListView]     = useState<"list" | "table" | "byModel" | "aging">("list");  // มุมมอง: รายคัน / ตาราง / รวมตามรุ่น / ค้างนาน
   const [collapsedBrands, setCollapsedBrands] = useState<Set<string>>(new Set()); // แบรนด์ที่ยุบไว้ในมุมมองตามรุ่น
@@ -607,6 +608,14 @@ export default function StockMain() {
   // จำนวนคันที่ชื่อรุ่นน่าสงสัย (ดู modelWarning ใน constants.ts)
   const badModelCount = useMemo(() => forklifts.filter(f => !!modelWarning(f.model)).length, [forklifts]);
 
+  // ── รถที่สถานะว่าขายแล้ว แต่ไม่มีใบขายผูกอยู่ ──
+  // (25 ก.ย. 2569 · ผู้ใช้ถาม "ทำไมปิดการขายแล้วชื่อฝ่ายขายไม่ขึ้น")
+  // สาเหตุ: ตั้งสถานะเป็นขายแล้วที่หน้าสต็อกโดยไม่ได้เปิดดีล หรือยกประวัติเก่าเข้ามาทั้งก้อน
+  //         ไม่มีดีล = ไม่มีชื่อเซลล์/ลูกค้า/ยอดขาย → ค่าคอมและรายงานกำไรไม่นับคันนั้นเลย
+  const noDealSet = useMemo(() => new Set(
+    forklifts.filter(f => SOLD_STATUS.includes(String(f.status ?? "").trim()) && !dealOf(f)).map(f => f.id)
+  ), [forklifts, sales]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── รถที่ขายแล้วแต่ยังไม่ลงข้อมูลรับประกัน → ค่าคอมของเซลล์เป็น 0 ──
   // (25 ก.ย. 2569 · ผู้ใช้สั่ง) ให้ฝ่ายสต็อกช่วยเติมแทนเซลล์ได้ ไม่ต้องรอฝ่ายขายคนเดียว
   const WARRANTY_GATE_FROM = "2026-08";   // บังคับเฉพาะดีลที่ปิดตั้งแต่ ส.ค. 69 (ตรงกับหน้าค่าคอม)
@@ -658,7 +667,9 @@ export default function StockMain() {
       const okModelName = !listBadModel || !!modelWarning(f.model);
       // ขายแล้วแต่ยังไม่ลงรับประกัน (ค่าคอมเซลล์เป็น 0) — ฝ่ายสต็อกช่วยเติมได้
       const okWarranty = !listNoWarranty || needWarrantySet.has(f.id);
-      return okQ && okCat && okBrand && okModel && okMast && okFuel && okStatus && okCost && okModelName && okWarranty;
+      // ขายแล้วแต่ไม่มีใบขาย — ไม่มีชื่อเซลล์/ลูกค้า ต้องเปิดดีลย้อนหลังถึงจะเข้ารายงาน
+      const okDeal = !listNoDeal || noDealSet.has(f.id);
+      return okQ && okCat && okBrand && okModel && okMast && okFuel && okStatus && okCost && okModelName && okWarranty && okDeal;
     });
     const recent = (a: Forklift, b: Forklift) => String(b.created_at || "").localeCompare(String(a.created_at || ""));
     if (listSort === "model") rows.sort((a, b) => String(a.model || "").localeCompare(String(b.model || "")) || recent(a, b));
@@ -1426,6 +1437,14 @@ export default function StockMain() {
                     title="รถที่ขายแล้วแต่ยังไม่ลงข้อมูลรับประกัน — ค่าคอมของเซลล์เป็น 0 จนกว่าจะลงข้อมูล"
                     className={`rounded-lg px-2.5 py-1.5 text-xs font-bold border transition-all ${listNoWarranty ? "bg-teal-600 text-white border-teal-600" : "bg-white text-slate-600 border-slate-200 hover:border-teal-300 hover:text-teal-700"}`}>
                     🛡️ ยังไม่ลงรับประกัน ({needWarrantyList.length})
+                  </button>
+                )}
+                {/* ขายแล้วแต่ไม่มีใบขาย — การ์ดรถจะขึ้น "ไม่มีดีลผูกกับรถคันนี้" และไม่มีชื่อเซลล์ */}
+                {noDealSet.size > 0 && (
+                  <button onClick={() => setListNoDeal(v => !v)}
+                    title="รถที่สถานะว่าขายแล้ว แต่ไม่มีใบขายผูกอยู่ — ไม่มีชื่อเซลล์/ลูกค้า ยอดขายและค่าคอมไม่ถูกนับ"
+                    className={`rounded-lg px-2.5 py-1.5 text-xs font-bold border transition-all ${listNoDeal ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:text-indigo-700"}`}>
+                    🧾 ขายแล้วไม่มีใบขาย ({noDealSet.size})
                   </button>
                 )}
                 {badModelCount > 0 && (
