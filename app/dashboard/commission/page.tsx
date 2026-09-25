@@ -117,9 +117,21 @@ function CommissionPageInner() {
     return [...new Set([...raw, ...lockKeys])].sort().reverse();
   }, [closedSales, fieldConfig.commissionLocks]);
   // ดีลที่ตกอยู่ในเดือนที่เป็นไปไม่ได้ — ชี้เป้าให้ไปแก้วันที่ที่ต้นทาง (ไม่ซ่อนข้อมูล)
+  // รวม "เดือนล่วงหน้าที่ยังมาไม่ถึง" เข้ามาด้วย (เช่น ปิด ธ.ค. 69 ทั้งที่ยังไม่ถึง = พิมพ์เดือนผิด)
   const oddDeals = useMemo(
-    () => closedSales.filter(s => isOddMonth(periodOf(s))).map(s => ({ s, period: periodOf(s) })),
+    () => closedSales
+      .filter(s => isOddMonth(periodOf(s)) || isFutureMonth(periodOf(s)))
+      .map(s => ({ s, period: periodOf(s), odd: isOddMonth(periodOf(s)) })),
     [closedSales]);
+
+  // แก้วันส่งมอบได้จากกล่องนี้เลย — ไม่ต้องไปเปิดดีลในหน้าฝ่ายขาย
+  const [dateEdit, setDateEdit] = useState<Record<string, string>>({});
+  const saveDeliveryDate = (sale: Sale) => {
+    const v = String(dateEdit[sale.id] ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
+    updateSale({ ...sale, delivery_date: v });
+    setDateEdit(prev => { const next = { ...prev }; delete next[sale.id]; return next; });
+  };
 
   const [month, setMonth] = useState<string>("");
   const activeMonth = month || months[0] || "";
@@ -402,8 +414,19 @@ function CommissionPageInner() {
                   <span className="text-slate-500">{d.s.forklift_brand} {d.s.forklift_model}</span>
                   {d.s.forklift_unit_no && <span className="text-slate-400">{d.s.forklift_unit_no}</span>}
                   <span className="text-slate-500">เซลล์ {d.s.sales_staff || "—"}</span>
-                  <span className="ml-auto text-red-700 font-semibold">
+                  <span className={`ml-auto font-semibold ${d.odd ? "text-red-700" : "text-amber-700"}`}>
                     ส่งมอบ {d.s.delivery_date || "—"} · รับเงิน {d.s.payment_received_date || "—"}
+                  </span>
+                  {/* แก้วันส่งมอบได้ตรงนี้เลย — ไม่ต้องไปเปิดดีลในหน้าฝ่ายขาย */}
+                  <span className="flex items-center gap-1 w-full sm:w-auto">
+                    <input type="date" value={dateEdit[d.s.id] ?? String(d.s.delivery_date ?? "").slice(0, 10)}
+                      onChange={e => setDateEdit({ ...dateEdit, [d.s.id]: e.target.value })}
+                      className="border border-slate-300 rounded-lg px-2 py-1 text-[11px] text-slate-800 bg-white" />
+                    <button onClick={() => saveDeliveryDate(d.s)}
+                      disabled={!dateEdit[d.s.id] || dateEdit[d.s.id] === String(d.s.delivery_date ?? "").slice(0, 10)}
+                      className="text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg px-2.5 py-1">
+                      บันทึกวันที่
+                    </button>
                   </span>
                 </div>
               ))}
