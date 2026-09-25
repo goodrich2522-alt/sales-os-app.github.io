@@ -118,14 +118,24 @@ function CommissionPageInner() {
   }, [closedSales, fieldConfig.commissionLocks]);
   // ดีลที่ตกอยู่ในเดือนที่เป็นไปไม่ได้ — ชี้เป้าให้ไปแก้วันที่ที่ต้นทาง (ไม่ซ่อนข้อมูล)
   // รวม "เดือนล่วงหน้าที่ยังมาไม่ถึง" เข้ามาด้วย (เช่น ปิด ธ.ค. 69 ทั้งที่ยังไม่ถึง = พิมพ์เดือนผิด)
+  // แยกให้ชัดว่าเพี้ยนที่ช่องไหน — วันส่งมอบ (แก้ตรงนี้ได้) หรือวันรับเงิน (มาจากไฟล์รับเงิน ไม่แก้มือ)
   const oddDeals = useMemo(
     () => closedSales
-      .filter(s => isOddMonth(periodOf(s)) || isFutureMonth(periodOf(s)))
-      .map(s => ({ s, period: periodOf(s), odd: isOddMonth(periodOf(s)) })),
+      .map(s => {
+        const cm = closeMonth(s), pm = commissionMonth(s);
+        return {
+          s, period: periodOf(s), odd: isOddMonth(periodOf(s)),
+          badDelivery: !!cm && (isOddMonth(cm) || isFutureMonth(cm)),
+          badPaid: !!pm && (isOddMonth(pm) || isFutureMonth(pm)),
+        };
+      })
+      .filter(d => d.badDelivery || d.badPaid),
     [closedSales]);
 
-  // แก้วันส่งมอบได้จากกล่องนี้เลย — ไม่ต้องไปเปิดดีลในหน้าฝ่ายขาย
+  // แก้วันส่งมอบได้จากหน้าค่าคอมเลย — คนดูค่าคอมแก้เองเร็วกว่าให้ฝ่ายขายไล่แก้ทีละคน
   const [dateEdit, setDateEdit] = useState<Record<string, string>>({});
+  const [editDateFor, setEditDateFor] = useState<string | null>(null);   // ดีลที่กำลังเปิดช่องแก้วันส่งมอบ
+  const saleById = useMemo(() => new Map(closedSales.map(s => [s.id, s])), [closedSales]);
   const saveDeliveryDate = (sale: Sale) => {
     const v = String(dateEdit[sale.id] ?? "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
@@ -406,7 +416,7 @@ function CommissionPageInner() {
         {oddDeals.length > 0 && (
           <div className="bg-red-50 border border-red-200 rounded-2xl p-4">
             <p className="text-sm font-bold text-red-700 mb-1">⚠️ พบ {oddDeals.length} ดีลที่วันที่ผิดปกติ — ทำให้มีแท็บเดือนแปลกๆ ({[...new Set(oddDeals.map(d => tabLabel(d.period)))].join(" · ")})</p>
-            <p className="text-[11px] text-red-600 mb-2">แก้ที่หน้าฝ่ายขาย → เปิดดีลนั้น → แก้ <b>วันส่งมอบ</b> หรือ <b>วันที่รับเงิน</b> ให้เป็นปีที่ถูก แล้วแท็บเดือนจะหายไปเอง</p>
+            <p className="text-[11px] text-red-600 mb-2"><b>แก้เฉพาะวันส่งมอบตรงนี้ได้เลย</b> — ดีลจะย้ายไปเดือนที่ถูกทันที · ส่วน<b>วันรับเงิน</b>มาจากไฟล์รับเงินที่อัปโหลด ไม่ต้องแก้มือ ระบบจะทับให้ตอนอัปโหลดรอบถัดไป</p>
             <div className="flex flex-col gap-1.5">
               {oddDeals.slice(0, 10).map(d => (
                 <div key={d.s.id} className="text-xs bg-white border border-red-100 rounded-lg px-2.5 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -414,20 +424,28 @@ function CommissionPageInner() {
                   <span className="text-slate-500">{d.s.forklift_brand} {d.s.forklift_model}</span>
                   {d.s.forklift_unit_no && <span className="text-slate-400">{d.s.forklift_unit_no}</span>}
                   <span className="text-slate-500">เซลล์ {d.s.sales_staff || "—"}</span>
-                  <span className={`ml-auto font-semibold ${d.odd ? "text-red-700" : "text-amber-700"}`}>
-                    ส่งมอบ {d.s.delivery_date || "—"} · รับเงิน {d.s.payment_received_date || "—"}
+                  <span className="ml-auto flex items-center gap-2 flex-wrap">
+                    <span className={d.badDelivery ? "font-semibold text-red-700" : "text-slate-500"}>ส่งมอบ {d.s.delivery_date || "—"}</span>
+                    {d.badPaid && (
+                      <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5"
+                        title="วันรับเงินมาจากไฟล์รับเงินที่อัปโหลด — ไม่ต้องแก้มือ ระบบจะทับให้ตอนอัปโหลดรอบถัดไป">
+                        วันรับเงิน {d.s.payment_received_date} · รอไฟล์รับเงินทับ
+                      </span>
+                    )}
                   </span>
-                  {/* แก้วันส่งมอบได้ตรงนี้เลย — ไม่ต้องไปเปิดดีลในหน้าฝ่ายขาย */}
-                  <span className="flex items-center gap-1 w-full sm:w-auto">
-                    <input type="date" value={dateEdit[d.s.id] ?? String(d.s.delivery_date ?? "").slice(0, 10)}
-                      onChange={e => setDateEdit({ ...dateEdit, [d.s.id]: e.target.value })}
-                      className="border border-slate-300 rounded-lg px-2 py-1 text-[11px] text-slate-800 bg-white" />
-                    <button onClick={() => saveDeliveryDate(d.s)}
-                      disabled={!dateEdit[d.s.id] || dateEdit[d.s.id] === String(d.s.delivery_date ?? "").slice(0, 10)}
-                      className="text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg px-2.5 py-1">
-                      บันทึกวันที่
-                    </button>
-                  </span>
+                  {/* แก้ได้เฉพาะวันส่งมอบ — วันรับเงินมาจากไฟล์ ไม่แตะ */}
+                  {d.badDelivery && (
+                    <span className="flex items-center gap-1 w-full sm:w-auto">
+                      <input type="date" value={dateEdit[d.s.id] ?? String(d.s.delivery_date ?? "").slice(0, 10)}
+                        onChange={e => setDateEdit({ ...dateEdit, [d.s.id]: e.target.value })}
+                        className="border border-slate-300 rounded-lg px-2 py-1 text-[11px] text-slate-800 bg-white" />
+                      <button onClick={() => saveDeliveryDate(d.s)}
+                        disabled={!dateEdit[d.s.id] || dateEdit[d.s.id] === String(d.s.delivery_date ?? "").slice(0, 10)}
+                        className="text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg px-2.5 py-1">
+                        บันทึกวันที่
+                      </button>
+                    </span>
+                  )}
                 </div>
               ))}
               {oddDeals.length > 10 && <span className="text-[11px] text-red-600">…และอีก {oddDeals.length - 10} ดีล</span>}
@@ -658,8 +676,27 @@ function CommissionPageInner() {
                                 className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-200 hover:bg-red-600 hover:text-white transition-colors">⚠️ ยังไม่ลงรับประกัน · แตะลงข้อมูล</button>)}
                         </div>
                         <p className="text-[11px] text-slate-500 mt-0.5">
-                          {d.customer || "—"} · {d.basis} ฿{fmt(Math.round(d.basisValue))} · ปิด {d.closeDate}
+                          {d.customer || "—"} · {d.basis} ฿{fmt(Math.round(d.basisValue))} ·{" "}
+                          {/* แก้วันส่งมอบได้จากหน้านี้เลย — คนดูค่าคอมแก้เองเร็วกว่าให้ฝ่ายขายไล่แก้ (25 ก.ย. 2569) */}
+                          {locked ? <>ปิด {d.closeDate}</> : (
+                            <button onClick={e => { e.stopPropagation(); setEditDateFor(editDateFor === d.saleId ? null : d.saleId); }}
+                              title="แก้วันส่งมอบ (= วันที่ปิดการขาย)"
+                              className="underline decoration-dotted hover:text-amber-700 font-semibold">ปิด {d.closeDate} ✎</button>
+                          )}
                         </p>
+                        {editDateFor === d.saleId && !locked && (
+                          <div onClick={e => e.stopPropagation()} className="mt-1.5 flex items-center gap-1.5 flex-wrap bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                            <span className="text-[11px] font-semibold text-amber-800">วันส่งมอบ (วันปิดการขาย):</span>
+                            <input type="date" value={dateEdit[d.saleId] ?? d.closeDate}
+                              onChange={e => setDateEdit({ ...dateEdit, [d.saleId]: e.target.value })}
+                              className="border border-amber-300 rounded-lg px-2 py-1 text-[11px] text-slate-800 bg-white" />
+                            <button onClick={() => { const sale = saleById.get(d.saleId); if (sale) { saveDeliveryDate(sale); setEditDateFor(null); } }}
+                              disabled={!dateEdit[d.saleId] || dateEdit[d.saleId] === d.closeDate}
+                              className="text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg px-2.5 py-1">บันทึก</button>
+                            <button onClick={() => setEditDateFor(null)} className="text-[11px] font-semibold text-slate-500 hover:bg-white rounded-lg px-2 py-1">ยกเลิก</button>
+                            <span className="text-[10px] text-amber-700 w-full">เปลี่ยนแล้วดีลจะย้ายไปเดือนที่ถูกทันที · วันรับเงินไม่ถูกแตะ (มาจากไฟล์รับเงิน)</span>
+                          </div>
+                        )}
                         {d.carried && (
                           <span className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-bold text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-2 py-1">
                             🔄 ยกยอดมาจาก {d.carryFrom} (ยังไม่จ่ายก่อนใช้แอป → จ่ายในงวดนี้ตามวันรับเงิน)
