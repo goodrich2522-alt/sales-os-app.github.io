@@ -6,7 +6,7 @@ import { ArrowLeft, ShieldCheck, RefreshCw, Search, Package, ShoppingCart, Trash
 import { fetchAuditApi, AuditEntry } from "@/lib/api";
 import { DashboardGuard } from "@/components/DashboardGuard";
 import { useApp } from "@/lib/AppContext";
-import { runHealthChecks, saleModelMismatch, orphanSales, HealthCheck } from "@/lib/dataHealth";
+import { runHealthChecks, saleModelMismatch, orphanSales, HealthCheck, HealthItem, dismissField } from "@/lib/dataHealth";
 import { toIsoDate } from "@/lib/format";
 import { SalesBackfillImport } from "@/components/SalesBackfillImport";
 
@@ -79,12 +79,42 @@ function AuditPageInner() {
   const [dateFixConfirm, setDateFixConfirm] = useState(false);
   const [dateFixDone, setDateFixDone] = useState(0);
   const fixableDates = useMemo(
-    () => forklifts.filter(f => { const d = String(f.received_date ?? "").trim(); return d && !/^d{4}-d{2}-d{2}$/.test(d) && !!toIsoDate(d); }),
+    () => forklifts.filter(f => { const d = String(f.received_date ?? "").trim(); return d && !/^\d{4}-\d{2}-\d{2}$/.test(d) && !!toIsoDate(d); }),
     [forklifts]);
   const fixDates = () => {
     fixableDates.forEach(f => updateForklift({ ...f, received_date: toIsoDate(f.received_date) }));
     setDateFixDone(fixableDates.length);
     setDateFixConfirm(false);
+  };
+
+  // ── ทำเครื่องหมาย "ตรวจแล้ว" ──
+  // (25 ก.ย. 2569 · ผู้ใช้ขอ) รายการที่ดูแล้วว่าไม่ใช่ปัญหา/แก้นอกระบบไปแล้ว ให้ออกจากรายการ
+  // แต่ยังดูย้อนหลังได้  เก็บเครื่องหมายไว้ที่ตัวข้อมูลเอง → การกดถูกบันทึกลง audit log ในตัว
+  const [openDismissed, setOpenDismissed] = useState<Record<string, boolean>>({});
+  // ชื่อผู้ใช้จากที่ล็อกอินไว้ (ใช้ประทับบนเครื่องหมาย "ตรวจแล้ว") — audit log บันทึกผู้ทำให้อีกชั้น
+  const [whoami, setWhoami] = useState("");
+  useEffect(() => {
+    for (const k of ["stock_user", "sales_user", "dash_user"]) {
+      try { const v = localStorage.getItem(k); if (v) { const nm = JSON.parse(v)?.name; if (nm) { setWhoami(String(nm)); return; } } } catch { /* ข้ามคีย์ที่อ่านไม่ได้ */ }
+    }
+  }, []);
+  const markChecked = (c: HealthCheck, it: HealthItem, undo = false) => {
+    const stamp = undo ? "" : `${new Date().toISOString().slice(0, 10)} · ${whoami || "ผู้ดูแล"}`;
+    const field = dismissField(c.key);
+    if (it.kind === "sale") {
+      const sale = sales.find(x => String(x.id) === String(it.id));
+      if (!sale) return;
+      const cf = { ...(sale.custom_fields ?? {}) };
+      if (stamp) cf[field] = stamp; else delete cf[field];
+      updateSale({ ...sale, custom_fields: cf });
+      return;
+    }
+    const fk = forklifts.find(x => String(x.id) === String(it.id))
+      ?? forklifts.find(x => String(x.SN ?? "").trim().toUpperCase() === String(it.id).trim().toUpperCase());
+    if (!fk) return;
+    const cf = { ...(fk.custom_fields ?? {}) };
+    if (stamp) cf[field] = stamp; else delete cf[field];
+    updateForklift({ ...fk, custom_fields: cf });
   };
 
   const exportCheck = async (c: HealthCheck) => {
@@ -168,7 +198,7 @@ function AuditPageInner() {
                     <div key={c.key} className={`rounded-xl border ${hi ? "border-red-200 bg-red-50/60" : "border-amber-200 bg-amber-50/50"}`}>
                       <button onClick={() => setOpenCheck(open ? null : c.key)}
                         className="w-full flex items-center gap-2 px-3 py-2.5 text-left">
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${hi ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>{c.items.length}</span>
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${c.items.length === 0 ? "bg-emerald-100 text-emerald-700" : hi ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>{c.items.length === 0 ? "✓" : c.items.length}</span>
                         <span className="text-sm font-semibold text-slate-800">{c.title}</span>
                         <span className="ml-auto text-slate-400 text-xs">{open ? "ซ่อน" : "ดู"}</span>
                       </button>
@@ -218,12 +248,42 @@ function AuditPageInner() {
                             <Download className="w-3 h-3" />ส่งออก Excel ({c.items.length} รายการ)
                           </button>
                           {shown.map(it => (
-                            <div key={it.id} className="text-xs bg-white border border-slate-100 rounded-lg px-2.5 py-1.5">
-                              <span className="font-semibold text-slate-800">{it.label}</span>
-                              {it.status && <span className="text-slate-400"> · {it.status}</span>}
-                              <span className="text-slate-600"> — {it.detail}</span>
+                            <div key={it.id} className="text-xs bg-white border border-slate-100 rounded-lg px-2.5 py-1.5 flex items-start gap-2">
+                              <div className="flex-1 min-w-0">
+                                <span className="font-semibold text-slate-800">{it.label}</span>
+                                {it.status && <span className="text-slate-400"> · {it.status}</span>}
+                                <span className="text-slate-600"> — {it.detail}</span>
+                              </div>
+                              <button onClick={() => markChecked(c, it)} title="ไม่ใช่ปัญหา / แก้ไปแล้ว — ย้ายไปรายการที่ตรวจแล้ว"
+                                className="flex-shrink-0 text-[11px] font-bold text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 border border-slate-200 rounded-lg px-2 py-0.5">
+                                ✓ ตรวจแล้ว
+                              </button>
                             </div>
                           ))}
+                          {(c.dismissed?.length ?? 0) > 0 && (
+                            <div className="border-t border-slate-200 pt-1.5 mt-0.5">
+                              <button onClick={() => setOpenDismissed(v => ({ ...v, [c.key]: !v[c.key] }))}
+                                className="text-[11px] font-semibold text-slate-500 hover:text-slate-800">
+                                {openDismissed[c.key] ? "▾" : "▸"} ตรวจแล้ว {c.dismissed!.length} รายการ (ไม่นับเป็นปัญหา)
+                              </button>
+                              {openDismissed[c.key] && (
+                                <div className="flex flex-col gap-1 mt-1">
+                                  {c.dismissed!.map(it => (
+                                    <div key={it.id} className="text-[11px] bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-1.5 flex items-start gap-2">
+                                      <div className="flex-1 min-w-0 text-slate-500">
+                                        <span className="font-semibold text-slate-600">{it.label}</span> — {it.detail}
+                                        <span className="block text-slate-400">ทำเครื่องหมายเมื่อ {it.dismissed}</span>
+                                      </div>
+                                      <button onClick={() => markChecked(c, it, true)}
+                                        className="flex-shrink-0 text-[11px] font-bold text-slate-400 hover:text-amber-700 underline">
+                                        เอากลับ
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
                           {c.items.length > PAGE && (
                             <button onClick={() => setShowAll(v => ({ ...v, [c.key]: !all }))}
                               className="self-start text-[11px] font-semibold text-slate-600 hover:text-slate-900 underline">
