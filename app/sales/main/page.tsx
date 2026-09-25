@@ -14,7 +14,7 @@ import { PROVINCES, CONTACT_SOURCES } from "@/lib/mockData";
 import { Forklift, PaymentType, CustomerType, Sale, SaleStatus, VehicleType, ContactSource, SaleType, InspectionRecord, SLOT_LABELS, STOCK_APPROVAL_FIELD } from "@/lib/types";
 import { useApp } from "@/lib/AppContext";
 import { driveImg } from "@/lib/img";
-import { isPendingId, displayCode } from "@/lib/productId";
+import { isPendingId, displayCode, piLabel } from "@/lib/productId";
 import { STATUS_BADGE, SALE_STATUS_BADGE, CONTACT_SOURCE_COLORS, VEHICLE_CATS, paymentBadgeClass, sameStaff, canonicalStaff } from "@/lib/constants";
 import { MoneyInput } from "@/components/ui/MoneyInput";
 import { WarrantyBlock } from "@/components/WarrantyBlock";
@@ -2100,7 +2100,7 @@ export default function SalesMain() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap mb-0.5">
                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md text-slate-600 bg-white border border-slate-200">#{displayCode(f)}</span>
-                        {f.pi_no && displayCode(f) !== f.pi_no && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md text-violet-700 bg-violet-50 border border-violet-200">PI {f.pi_no}</span>}
+                        {f.pi_no && displayCode(f) !== f.pi_no && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md text-violet-700 bg-violet-50 border border-violet-200">{piLabel(f.pi_no)}</span>}
                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md text-amber-700 bg-amber-100 border border-amber-200">{f.status}</span>
                       </div>
                       <p className="font-semibold text-slate-800 text-sm">{f.brand} {f.model}</p>
@@ -2161,7 +2161,7 @@ export default function SalesMain() {
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap mb-1">
                   <span className="text-[11px] font-bold px-2 py-0.5 rounded-md text-slate-600 bg-white border border-slate-200">#{displayCode({ id: detailSale.forklift_id, SN: detailSale.forklift_unit_no, pi_no: detailSale.custom_fields?.["PI"] as string })}</span>
-                  {(detailSale.custom_fields?.["PI"] as string) && <span className="text-[11px] font-bold px-2 py-0.5 rounded-md text-violet-700 bg-violet-50 border border-violet-200">PI {detailSale.custom_fields?.["PI"] as string}</span>}
+                  {(detailSale.custom_fields?.["PI"] as string) && <span className="text-[11px] font-bold px-2 py-0.5 rounded-md text-violet-700 bg-violet-50 border border-violet-200">{piLabel(detailSale.custom_fields?.["PI"] as string)}</span>}
                 </div>
                 <h3 className="text-base font-bold text-slate-800 truncate">{detailSale.forklift_brand} {detailSale.forklift_model}</h3>
                 <p className="text-xs text-slate-500">รายละเอียดการขาย</p>

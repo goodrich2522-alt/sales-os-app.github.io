@@ -56,3 +56,14 @@ export function buildForkliftId(
   const pi = String(piNo ?? "").trim().toUpperCase() || "NOPI";
   for (let i = 1; ; i++) if (!taken.has(`${pi}#${i}`)) return `${pi}#${i}`;
 }
+
+/**
+ * ป้ายเลข PI สำหรับแสดงผล — กันคำว่า "PI" ซ้ำ (25 ก.ย. 2569)
+ * เลข PI ของ HELI ขึ้นต้นด้วย PI อยู่แล้ว (PI110KD) ป้ายเดิมเติม "PI " ให้อีกชั้น
+ * เลยกลายเป็น "PI PI110KD" — อ่านสับสนและก๊อปไปค้นหาต่อไม่เจอ
+ */
+export function piLabel(piNo?: string | null): string {
+  const s = String(piNo ?? "").trim();
+  if (!s) return "";
+  return /^pi\b|^pi[-_ ]?\d/i.test(s) ? s : `PI ${s}`;
+}
