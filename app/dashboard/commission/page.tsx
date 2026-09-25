@@ -477,6 +477,22 @@ function CommissionPageInner() {
             </button>
             {showWarrantyMissing && (
               <div className="mt-2 overflow-x-auto">
+                {/* สรุปว่าเป็นของเซลล์คนไหนบ้าง — ไล่ตามได้เร็วกว่าดูทีละแถว */}
+                <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                  <span className="text-[11px] font-semibold text-red-700/70">ของเซลล์:</span>
+                  {(() => {
+                    const m = new Map<string, number>();
+                    rows.filter(r => !r.warranty).forEach(r => {
+                      const k = canonicalStaff(r.sale.sales_staff, fieldConfig.staffAliases) || "(ไม่ระบุเซลล์)";
+                      m.set(k, (m.get(k) ?? 0) + 1);
+                    });
+                    return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([staff, n]) => (
+                      <span key={staff} className="text-[11px] font-bold bg-white border border-red-200 text-red-700 rounded-full px-2 py-0.5">
+                        {staffLabel(staff, fieldConfig.resignedStaff ?? [])} · {n} ดีล
+                      </span>
+                    ));
+                  })()}
+                </div>
                 <table className="w-full text-[11px] min-w-[560px]">
                   <thead>
                     <tr className="text-red-700/70 border-b border-red-200">
