@@ -14,7 +14,8 @@ export const HYDRAULIC_WARRANTY = "รับประกันระบบไฮ
  */
 export const defaultWarrantyTerms = (isForklift: boolean, category?: string): string => {
   if (isForklift) return DEFAULT_WARRANTY;
-  return category === "Handlift" || category === "Stacker" ? HYDRAULIC_WARRANTY : "";
+  // รถลากไฟฟ้า ใช้เงื่อนไขเดียวกับแฮนด์ลิฟท์ (25 ก.ย. 2569 · ผู้ใช้ยืนยัน)
+  return ["Handlift", "Stacker", "Electric Pallet Truck"].includes(String(category ?? "")) ? HYDRAULIC_WARRANTY : "";
 };
 
 export const SVC_ROUNDS = 4;               // จำนวนรอบเช็คฟรี
