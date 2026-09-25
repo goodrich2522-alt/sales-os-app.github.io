@@ -14,7 +14,7 @@ import { buildStaffMonthly, buildStaffWeekly, buildAllMonthlyWeekly } from "@/co
 import { CONTACT_SOURCE_COLORS, paymentBadgeClass, staffLabel } from "@/lib/constants";
 import { parseSvc, nextDue, daysUntil, SVC_SOON_DAYS } from "@/lib/warranty";
 import { isForkliftVehicle, closeDate } from "@/lib/commission";
-import { thaiDateShort } from "@/lib/format";
+import { thaiDateShort, toIsoDate } from "@/lib/format";
 import { Sale, Forklift, isVoidSale } from "@/lib/types";
 import { normBrand } from "@/lib/brands";
 import GoogleLoginButton, { type GoogleUser } from "@/components/GoogleLoginButton";
@@ -245,8 +245,9 @@ export default function Dashboard() {
   const agingMetrics = useMemo(() => {
     const ready = forklifts.filter((f) => String(f.status).trim() === "พร้อมขาย");
     const rows = ready.map((f) => {
-      const d = String(f.received_date || "").slice(0, 10);
-      const days = /^\d{4}-\d{2}-\d{2}$/.test(d) ? Math.max(0, Math.floor((Date.now() - new Date(d + "T00:00:00").getTime()) / 86400000)) : null;
+      // วันรับรถบางคันเก็บเป็นข้อความไทย ("5 ก.ย. 2569") — toIsoDate อ่านได้ทุกแบบ (เดิมตกหล่น 31 คัน)
+      const d = toIsoDate(f.received_date);
+      const days = d ? Math.max(0, Math.floor((Date.now() - new Date(d + "T00:00:00").getTime()) / 86400000)) : null;
       return { f, cost: Number(f.cost_price) || 0, days };
     });
     const dated = rows.filter((r) => r.days != null);
