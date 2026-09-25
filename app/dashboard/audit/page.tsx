@@ -8,6 +8,7 @@ import { DashboardGuard } from "@/components/DashboardGuard";
 import { useApp } from "@/lib/AppContext";
 import { runHealthChecks, saleModelMismatch, orphanSales, HealthCheck } from "@/lib/dataHealth";
 import { toIsoDate } from "@/lib/format";
+import { SalesBackfillImport } from "@/components/SalesBackfillImport";
 
 const fmtTime = (s?: string) => { if (!s) return ""; try { return new Date(s).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" }); } catch { return s; } };
 
@@ -74,6 +75,7 @@ function AuditPageInner() {
   // ── แก้รูปแบบวันรับรถให้เป็นมาตรฐานทั้งหมด ──
   // ปลอดภัย: เปลี่ยนแค่ "รูปแบบ" ของวันเดิม (5 ก.ย. 2569 → 2026-09-05) ไม่ได้เปลี่ยนวัน
   // คันที่ toIsoDate อ่านไม่ออกจะข้ามไว้ ให้คนกรอกเอง
+  const [showBackfill, setShowBackfill] = useState(false);   // หน้าต่างนำเข้าใบขายย้อนหลัง
   const [dateFixConfirm, setDateFixConfirm] = useState(false);
   const [dateFixDone, setDateFixDone] = useState(0);
   const fixableDates = useMemo(
@@ -184,6 +186,12 @@ function AuditPageInner() {
                               ))}
                             </div>
                           )}
+                          {c.key === "soldNoSale" && (
+                            <button onClick={() => setShowBackfill(true)}
+                              className="self-start text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-2.5 py-1">
+                              🧾 นำเข้าใบขายย้อนหลังจากไฟล์บัญชี
+                            </button>
+                          )}
                           {c.key === "recvDate" && fixableDates.length > 0 && (
                             dateFixConfirm ? (
                               <div className="bg-white border border-amber-300 rounded-lg px-2.5 py-2 flex flex-wrap items-center gap-2">
@@ -226,6 +234,8 @@ function AuditPageInner() {
                 })}
               </div>}
         </div>
+
+        {showBackfill && <SalesBackfillImport onClose={() => setShowBackfill(false)} />}
 
         {/* ── ใบขายที่ผูกรถไม่เจอ (รหัสรถเปลี่ยนหลังได้ SN หรือรถถูกลบ) ── */}
         {orphans.length > 0 && (

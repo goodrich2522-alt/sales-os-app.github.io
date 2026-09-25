@@ -106,6 +106,7 @@ interface AppContextType {
   updateForklift: (f: Forklift) => void;
   deleteForklift: (id: string) => void;
   addSale: (s: Sale) => void;
+  addSalesBulk: (list: Sale[]) => void;   // นำเข้าใบขายย้อนหลังทีละหลายใบ
   updateSale: (s: Sale) => void;
   deleteSale: (saleId: string) => void;
   returnSale: (saleId: string, opts: { forkStatus: string; reason?: string; date?: string }) => void; // ลูกค้าคืนสินค้า — เก็บประวัติดีลไว้ ตัดยอด/ค่าคอมออก
@@ -509,6 +510,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     logAudit("บันทึกการขาย/จอง", "sale", s.id, { forklift: s.forklift_id, model: `${s.forklift_brand} ${s.forklift_model}`, status: s.sale_status, customer: s.customer_name, amount: s.actual_sale });
   }, []);
+  // ── เพิ่มใบขายทีละหลายใบ (นำเข้าใบขายย้อนหลังจากไฟล์บัญชี) ──
+  // (25 ก.ย. 2569) รถหลายร้อยคันมีสถานะ "ขายแล้ว" แต่ไม่มีใบขาย → ไม่มีชื่อเซลล์/ลูกค้า
+  // เรียก addSale ทีละใบ = ยิง API หลายร้อยครั้ง → ใช้ bulk upsert ครั้งเดียวแทน
+  const addSalesBulk = useCallback((list: Sale[]) => {
+    if (list.length === 0) return;
+    lastLocalEditRef.current = Date.now();
+    setSales(p => {
+      const m = new Map(p.map(x => [x.id, x]));
+      list.forEach(x => m.set(x.id, x));
+      return [...m.values()];
+    });
+    // สถานะรถให้ตรงกับใบขายที่เพิ่ง เติมเข้าไป (เช่น คันที่ยังค้าง "พร้อมขาย" ทั้งที่ขายไปแล้ว)
+    const status = new Map(list.map(x => [x.forklift_id, forkStatusGated(x)]));
+    const touched: Forklift[] = [];
+    setForklifts(p => p.map(f => {
+      const st = status.get(f.id);
+      if (!st || f.status === st) return f;
+      const next = { ...f, status: st };
+      touched.push(next);
+      return next;
+    }));
+    if (api.apiEnabled) {
+      (async () => {
+        await api.bulkUpsertSalesApi(list).catch(e => console.warn("addSalesBulk", e));
+        if (touched.length) await api.bulkUpsertForkliftsApi(touched).catch(e => console.warn("addSalesBulk/forklifts", e));
+      })();
+    }
+    logAudit(`นำเข้าใบขายย้อนหลัง ${list.length} ใบ`, "sale", list[0].id,
+      { count: list.length, ids: list.slice(0, 20).map(x => x.id), forklifts: touched.length });
+  }, []);
+
   // แก้ไขดีลที่ทำไปแล้ว — อัปเดตข้อมูล + ปรับสถานะรถ (เคารพเกตอนุมัติ · ปิดการขายจริงตัดจองอัตโนมัติ)
   const updateSale = useCallback((s0: Sale) => {
     lastLocalEditRef.current = Date.now();
@@ -849,7 +881,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       forklifts, sales, inspections, deletedInspections, customers, fieldConfig,
       addCustomer, updateCustomer, deleteCustomer,
       addForklift, addForkliftsBulk, updateForklift, deleteForklift,
-      addSale, updateSale, deleteSale, returnSale, approveStockSale, rejectStockSale, setActor,
+      addSale, addSalesBulk, updateSale, deleteSale, returnSale, approveStockSale, rejectStockSale, setActor,
       exportData, importData,
       addInspection, deleteInspection, restoreInspection, purgeInspection,
       refresh,
