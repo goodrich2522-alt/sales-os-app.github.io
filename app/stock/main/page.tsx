@@ -578,6 +578,8 @@ export default function StockMain() {
   // ฐานรุ่น = ตัด MAST ท้าย (M###/ZSM###/WS#) ออก → ค้น "CBS15J-M350" ให้เจอ CBS15J ทุก MAST
   const baseModel = (s: string) => s.replace(/[-\s]*(m\d+|zsm\d+|ws\d\w*)$/i, "").trim();
   const isAvailable = (s: unknown) => String(s ?? "") === "พร้อมขาย"; // "ยังเหลือในสต็อก"
+  // สถานะที่แปลว่า "ขายไปแล้ว" — ใช้ตัดสินว่าควรมีชื่อเซลล์เจ้าของงานหรือยัง
+  const SOLD_STATUS = ["ปิดการขายแล้ว", "ส่งมอบแล้ว", "ขายแล้ว"];
   const mastOf = (f: Forklift) => String((f.custom_fields as Record<string, unknown> | undefined)?.["MAST"] ?? "").trim();
   // จำนวนรถที่ยังไม่ได้กรอกราคาทุน — โชว์บนปุ่มกรอง เพื่อรู้ว่าเหลือต้องกรอกอีกกี่คัน
   const noCostCount = useMemo(() => forklifts.filter(f => (Number(f.cost_price) || 0) <= 0).length, [forklifts]);
@@ -1575,8 +1577,16 @@ export default function StockMain() {
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md flex-shrink-0 ${isPendingId(item.id) ? "text-amber-700 bg-amber-50 border border-amber-200" : "text-slate-600 bg-slate-100 border border-slate-200"}`}>#{displayCode(item)}</span>
                       {item.pi_no && displayCode(item) !== item.pi_no && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md text-violet-700 bg-violet-50 border border-violet-200 flex-shrink-0">PI {item.pi_no}</span>}
                       <p className="font-semibold text-slate-800 text-sm">{item.SN ? `${item.SN} — ` : ""}{item.brand} {item.model}</p>
-                      {ownerOf(item) && (
+                      {ownerOf(item) ? (
                         <span className="text-[10px] font-bold text-violet-700 bg-violet-50 border border-violet-200 px-1.5 py-0.5 rounded-md flex-shrink-0 flex items-center gap-0.5" title="เซลล์เจ้าของงาน"><User className="w-2.5 h-2.5" />#{ownerOf(item)}</span>
+                      ) : SOLD_STATUS.includes(String(item.status ?? "").trim()) && (
+                        // ขายไปแล้วแต่ไม่มีชื่อเซลล์ — บอกสาเหตุให้เห็นตรงนี้เลย จะได้ไม่ต้องเดาว่าทำไมแท็กหาย
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md flex-shrink-0 border ${dealOf(item) ? "text-amber-700 bg-amber-50 border-amber-200" : "text-red-700 bg-red-50 border-red-200"}`}
+                          title={dealOf(item)
+                            ? "มีดีลผูกอยู่ แต่ในดีลไม่ได้กรอกชื่อเซลล์ (มักเป็นดีลที่นำเข้าจากบิลภาษี)"
+                            : "ไม่มีดีลผูกกับรถคันนี้ — สถานะถูกตั้งเป็นขายแล้วโดยไม่ได้เปิดดีล หรือดีลผูกอยู่กับรถคันอื่น"}>
+                          {dealOf(item) ? "⚠️ ดีลไม่มีชื่อเซลล์" : "⚠️ ไม่มีดีลผูก"}
+                        </span>
                       )}
                       {idx === 0 && <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 border border-emerald-200 px-1.5 py-0.5 rounded-full flex-shrink-0">ล่าสุด</span>}
                     </div>
