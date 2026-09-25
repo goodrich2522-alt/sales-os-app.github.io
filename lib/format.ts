@@ -53,3 +53,25 @@ export function addDays(iso: string | null | undefined, n: number): string {
   dt.setDate(dt.getDate() + n);
   return dt.toISOString().slice(0, 10);
 }
+
+/**
+ * แปลงวันที่ที่คนกรอกหลายรูปแบบ → ISO (YYYY-MM-DD) · อ่านไม่ออกคืน ""
+ * รองรับ: "2026-09-11" · "2569-09-11" (พ.ศ.) · "11 ก.ย. 2569" (ไทยย่อ) · "11/09/2569"
+ * ที่มา: received_date ในฐานข้อมูลมีทั้งแบบ ISO และข้อความไทย (เจอจริง 25 ก.ย. 2569)
+ */
+export function toIsoDate(v: unknown): string {
+  const s = String(v ?? "").trim();
+  if (!s) return "";
+  const be = (y: number) => (y >= 2400 ? y - 543 : y);            // ปี พ.ศ. → ค.ศ.
+  const pad = (n: number) => String(n).padStart(2, "0");
+  let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);                      // ISO (อาจเป็น พ.ศ.)
+  if (m) return `${be(+m[1])}-${m[2]}-${m[3]}`;
+  m = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/.exec(s);               // 11/09/2569
+  if (m) return `${be(+m[3])}-${pad(+m[2])}-${pad(+m[1])}`;
+  m = /^(\d{1,2})\s+([^\s]+)\s+(\d{4})$/.exec(s);                  // 11 ก.ย. 2569
+  if (m) {
+    const i = TH_MONTHS_1BASED.findIndex((x: string) => !!x && m![2].startsWith(x));
+    if (i >= 1) return `${be(+m[3])}-${pad(i)}-${pad(+m[1])}`;
+  }
+  return "";
+}

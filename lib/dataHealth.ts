@@ -6,6 +6,7 @@
 
 import type { Forklift, Sale } from "./types";
 import { modelWarning } from "./constants";
+import { toIsoDate } from "./format";
 
 /** 1 รายการที่ต้องตรวจ */
 export interface HealthItem {
@@ -170,6 +171,42 @@ export function orphanSales(sales: Sale[], forklifts: Forklift[]): { s: Sale; ma
     .map(s => ({ s, match: bySn.get(t(s.forklift_unit_no).toUpperCase()) }));
 }
 
+/** สถานะรถที่แปลว่า "จอง/มัดจำ/รอไฟแนนซ์" — ขายแล้วแต่ยังไม่ปิดการขาย */
+const BOOKED_RE = /จอง|มัดจำ|ไฟแนนซ์|รอจัดส่ง/;
+/** รับรถเข้าคลังแล้วเกินกี่วันถึงจะเตือนให้ปิดการขาย */
+export const CLOSE_SALE_ALERT_DAYS = 7;
+
+/**
+ * ── รับรถเข้าคลังแล้วแต่ยังไม่ปิดการขาย ──
+ * (25 ก.ย. 2569 · ผู้ใช้สั่ง) รถถึงมือลูกค้าแล้วแต่ดีลยังค้างสถานะจอง/มัดจำ
+ * → ยอดขายและค่าคอมยังไม่เข้าเดือนไหนเลย · ฝ่ายขายต้องกดปิดการขายให้จบ
+ */
+function receivedNotClosed(forklifts: Forklift[], sales: Sale[]): HealthItem[] {
+  const byKey = new Map<string, Sale>();
+  sales.forEach(s => {
+    [s.forklift_id, s.forklift_unit_no].forEach(k => { const key = t(k).toUpperCase(); if (key) byKey.set(key, s); });
+  });
+  const now = Date.now();
+  return forklifts
+    .filter(f => BOOKED_RE.test(t(f.status)))
+    .map(f => {
+      const iso = toIsoDate(f.received_date);
+      const days = iso ? Math.floor((now - new Date(iso + "T00:00:00").getTime()) / 86400000) : null;
+      const deal = byKey.get(t(f.id).toUpperCase()) ?? byKey.get(snOf(f).toUpperCase());
+      return { f, iso, days, deal };
+    })
+    .filter(x => x.days != null && x.days >= CLOSE_SALE_ALERT_DAYS)
+    .sort((a, b) => (b.days ?? 0) - (a.days ?? 0))
+    .map(({ f, iso, days, deal }) => ({
+      id: f.id,
+      label: `${snOf(f) || f.id} · ${label(f)}`,
+      detail: `รับรถเข้าคลังแล้ว ${days} วัน (${iso}) แต่ดีลยังเป็น "${t(f.status)}"`
+        + (deal ? ` — ลูกค้า ${t(deal.customer_name) || "(ไม่มีชื่อ)"} · เซลล์ ${t(deal.sales_staff) || "—"}` : " — ไม่พบดีลผูกอยู่")
+        + " · ให้ฝ่ายขายกดปิดการขายให้จบ",
+      status: t(f.status),
+    }));
+}
+
 /** ── ใบขายที่ไม่ได้กรอกชื่อลูกค้า (มักเป็นดีลที่นำเข้าจากบิลภาษี) ── */
 function saleNoCustomer(sales: Sale[]): HealthItem[] {
   return sales
@@ -211,6 +248,9 @@ export function runHealthChecks(forklifts: Forklift[], sales: Sale[]): HealthChe
     { key: "soldNoSale", title: "ขายไปแล้วแต่ไม่มีใบขายผูกอยู่", severity: "high",
       hint: "หน้ารับประกัน/เช็กระยะจะขึ้นชื่อลูกค้าและเซลล์เป็น \"—\" · มักเกิดจากเปลี่ยนสถานะที่หน้าสต็อกโดยไม่ได้เปิดดีล หรือดีลผูกไว้กับรถคันเก่าที่ถูกแทนที่ไปแล้ว — เปิดดีลย้อนหลังให้ตรงคัน หรือเช็กว่าดีลเดิมผูกรถผิดคัน",
       items: soldNoSale(forklifts, sales) },
+    { key: "recvNotClosed", title: "รับรถเข้าคลังแล้วแต่ยังไม่ปิดการขาย", severity: "high",
+      hint: `รถถึงลูกค้าแล้วแต่ดีลยังค้างจอง/มัดจำเกิน ${CLOSE_SALE_ALERT_DAYS} วัน — ยอดขายและค่าคอมยังไม่เข้าเดือนไหนเลย · ให้ฝ่ายขายเปิดดีลแล้วกด "ปิดการขาย / จัดส่งแล้ว"`,
+      items: receivedNotClosed(forklifts, sales) },
     { key: "saleNoCust", title: "ใบขายไม่ได้กรอกชื่อลูกค้า", severity: "medium",
       hint: "เปิดดีลนั้นในหน้าฝ่ายขายแล้วเติมชื่อลูกค้า — หน้ารับประกัน/เช็กระยะจะได้รู้ว่าเป็นของใคร (ดีลที่นำเข้าจากบิลภาษีมักไม่มีชื่อมาให้)",
       items: saleNoCustomer(sales) },
