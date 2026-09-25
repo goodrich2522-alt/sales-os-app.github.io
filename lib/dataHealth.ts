@@ -173,6 +173,29 @@ function soldNoSale(forklifts: Forklift[], sales: Sale[]): HealthItem[] {
 }
 
 /**
+ * ── วันรับรถไม่ได้เก็บเป็นรูปแบบมาตรฐาน ──
+ * เจอจริง 66 คัน เก็บเป็นข้อความไทย "5 ก.ย. 2569" (มาจากการกรอกมือ/นำเข้าไฟล์)
+ * อาการ: รายงานรถค้างสต็อก (aging/FIFO) คำนวณวันค้างไม่ได้ → รถหายจากรายงานเงียบๆ
+ * แก้ได้ปลอดภัย เพราะเป็นการเปลี่ยน "รูปแบบ" ไม่ใช่เปลี่ยนวัน (toIsoDate แปลง พ.ศ. → ค.ศ. ให้ด้วย)
+ */
+export function oddReceivedDate(forklifts: Forklift[]): HealthItem[] {
+  return forklifts
+    .filter(f => { const d = t(f.received_date); return d && !/^d{4}-d{2}-d{2}$/.test(d); })
+    .map(f => {
+      const iso = toIsoDate(f.received_date);
+      return {
+        id: f.id,
+        label: `${snOf(f) || f.id} · ${label(f)}`,
+        detail: iso
+          ? `วันรับรถเก็บเป็น "${t(f.received_date)}" → ที่ถูกคือ ${iso} · ตอนนี้รายงานรถค้างสต็อกนับคันนี้ไม่ได้`
+          : `วันรับรถ "${t(f.received_date)}" อ่านไม่ออก — ต้องกรอกใหม่เอง`,
+        status: t(f.status),
+        extra: { SN: snOf(f), "ยี่ห้อ": t(f.brand), "รุ่น": t(f.model), PI: t(f.pi_no), "ค่าที่เก็บอยู่": t(f.received_date), "ที่ถูกต้อง": iso },
+      };
+    });
+}
+
+/**
  * ── ใบขายที่ผูกรถไม่เจอ (รถถูกลบ หรือรหัสรถเปลี่ยนหลังได้ SN) ──
  * ถ้า SN ในใบขายตรงกับรถที่มีอยู่ → ผูกใหม่ได้ทันที (หน้า Audit มีปุ่มให้)
  */
@@ -270,6 +293,9 @@ export function runHealthChecks(forklifts: Forklift[], sales: Sale[]): HealthChe
     { key: "snChars", title: "SN มีช่องว่างเกิน", severity: "medium",
       hint: "ช่องว่างใน SN ทำให้ค้นหาไม่เจอและจับคู่เอกสารพลาด",
       items: oddSnChars(forklifts) },
+    { key: "recvDate", title: "วันรับรถไม่ใช่รูปแบบมาตรฐาน", severity: "medium",
+      hint: "เก็บเป็นข้อความไทย (เช่น \"5 ก.ย. 2569\") แทนรูปแบบวันที่ → รายงานรถค้างสต็อก/FIFO นับคันนั้นไม่ได้ · เป็นการแก้ \"รูปแบบ\" ไม่ใช่เปลี่ยนวัน กดปุ่มแก้ทั้งหมดได้เลย",
+      items: oddReceivedDate(forklifts) },
     { key: "snLen", title: "SN จำนวนหลักไม่เท่าพวกเดียวกัน", severity: "medium",
       hint: "มักเกิดจากพิมพ์ตก 0 นำหน้า หรือเกินมา 1 หลัก — เทียบกับ SN บนตัวรถ/ใบกำกับภาษีก่อนแก้",
       items: snLength(forklifts) },

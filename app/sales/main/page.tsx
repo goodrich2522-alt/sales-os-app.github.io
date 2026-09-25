@@ -428,8 +428,11 @@ export default function SalesMain() {
 
   // จำนวนวันที่รถค้างสต็อก (นับจากวันรับรถถึงวันนี้) — null ถ้าไม่มีวันรับรถ
   const daysInStock = (f: Forklift): number | null => {
-    const d = String(f.received_date || "").slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+    // ⭐ (25 ก.ย. 2569) วันรับรถบางคันเก็บเป็นข้อความไทย "5 ก.ย. 2569" ไม่ใช่ ISO (เจอจริง 66 คัน)
+    //    เดิมเช็ครูปแบบ ISO ตรงๆ → คืน null ทั้งที่มีวันรับรถ รถ 31 คันจึงหายจากรายงานค้างสต็อก
+    //    toIsoDate() อ่านได้ทั้ง ISO · 18/09/2569 · "5 ก.ย. 2569" และแปลง พ.ศ. → ค.ศ. ให้ด้วย
+    const d = toIsoDate(f.received_date);
+    if (!d) return null;
     const ms = Date.now() - new Date(d + "T00:00:00").getTime();
     return ms > 0 ? Math.floor(ms / 86400000) : 0;
   };

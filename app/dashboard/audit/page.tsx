@@ -7,6 +7,7 @@ import { fetchAuditApi, AuditEntry } from "@/lib/api";
 import { DashboardGuard } from "@/components/DashboardGuard";
 import { useApp } from "@/lib/AppContext";
 import { runHealthChecks, saleModelMismatch, orphanSales, HealthCheck } from "@/lib/dataHealth";
+import { toIsoDate } from "@/lib/format";
 
 const fmtTime = (s?: string) => { if (!s) return ""; try { return new Date(s).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" }); } catch { return s; } };
 
@@ -38,7 +39,7 @@ const actionStyle = (a?: string) => {
 };
 
 function AuditPageInner() {
-  const { sales, forklifts, updateSale } = useApp();
+  const { sales, forklifts, updateSale, updateForklift } = useApp();
   const [rows, setRows] = useState<AuditEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -70,6 +71,20 @@ function AuditPageInner() {
   //    เดิมวาดทั้งหมดทีเดียว → หน้าหนัก/ค้าง และอ่านไม่รู้เรื่อง จึงโชว์ทีละ 30 + ส่งออก Excel ไปไล่แก้
   const PAGE = 30;
   const [showAll, setShowAll] = useState<Record<string, boolean>>({});
+  // ── แก้รูปแบบวันรับรถให้เป็นมาตรฐานทั้งหมด ──
+  // ปลอดภัย: เปลี่ยนแค่ "รูปแบบ" ของวันเดิม (5 ก.ย. 2569 → 2026-09-05) ไม่ได้เปลี่ยนวัน
+  // คันที่ toIsoDate อ่านไม่ออกจะข้ามไว้ ให้คนกรอกเอง
+  const [dateFixConfirm, setDateFixConfirm] = useState(false);
+  const [dateFixDone, setDateFixDone] = useState(0);
+  const fixableDates = useMemo(
+    () => forklifts.filter(f => { const d = String(f.received_date ?? "").trim(); return d && !/^d{4}-d{2}-d{2}$/.test(d) && !!toIsoDate(d); }),
+    [forklifts]);
+  const fixDates = () => {
+    fixableDates.forEach(f => updateForklift({ ...f, received_date: toIsoDate(f.received_date) }));
+    setDateFixDone(fixableDates.length);
+    setDateFixConfirm(false);
+  };
+
   const exportCheck = async (c: HealthCheck) => {
     const XLSX = await import("xlsx");
     const rows = c.items.map(it => ({
@@ -168,6 +183,23 @@ function AuditPageInner() {
                                 </span>
                               ))}
                             </div>
+                          )}
+                          {c.key === "recvDate" && fixableDates.length > 0 && (
+                            dateFixConfirm ? (
+                              <div className="bg-white border border-amber-300 rounded-lg px-2.5 py-2 flex flex-wrap items-center gap-2">
+                                <span className="text-[11px] text-slate-700">แก้รูปแบบวันรับรถ {fixableDates.length} คัน (วันเดิมไม่เปลี่ยน) ?</span>
+                                <button onClick={fixDates} className="text-[11px] font-bold bg-amber-500 text-white rounded-lg px-2 py-1">ยืนยัน</button>
+                                <button onClick={() => setDateFixConfirm(false)} className="text-[11px] text-slate-500">ยกเลิก</button>
+                              </div>
+                            ) : (
+                              <button onClick={() => setDateFixConfirm(true)}
+                                className="self-start text-[11px] font-bold bg-amber-500 hover:bg-amber-600 text-white rounded-lg px-2.5 py-1">
+                                ⚡ แก้รูปแบบให้ทั้งหมด ({fixableDates.length} คัน)
+                              </button>
+                            )
+                          )}
+                          {c.key === "recvDate" && dateFixDone > 0 && (
+                            <p className="text-[11px] text-emerald-700">✓ แก้รูปแบบวันรับรถแล้ว {dateFixDone} คัน</p>
                           )}
                           <button onClick={() => exportCheck(c)}
                             className="self-start flex items-center gap-1 text-[11px] font-semibold bg-white border border-slate-200 hover:bg-slate-50 rounded-lg px-2 py-1 text-slate-700">
