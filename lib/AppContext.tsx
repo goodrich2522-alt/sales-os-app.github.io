@@ -14,6 +14,7 @@ import {
 import * as api from "./api";
 import { supabase } from "./supabaseClient";
 import { isPendingId } from "./productId";
+import { stockStatusForSale } from "./saleStatus";
 import type { CommissionLock } from "./commission";
 
 // ── Field configuration ───────────────────────────────────────────────────────
@@ -474,16 +475,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } catch (e) { console.warn("upload payment_proof", e); return out; } // อัปไม่ได้ → เก็บ base64 ไปก่อน
   };
   // สถานะรถตามดีล → ชุดสถานะรวมใหม่ (5 ส.ค. 2026): ติดจอง(รอโอนมัดจำ)/มัดจำแล้ว-เงินสด/มัดจำแล้ว-ไฟแนนซ์/ปิดการขายแล้ว
-  const forkliftStatusForSale = (s: Sale): string => {
-    const st = String(s.sale_status ?? "").trim();
-    const pay = String(s.payment_type ?? "");
-    const isFin = pay.includes("ไฟแนนซ์") || st.includes("ไฟแนนซ์");
-    if (!st || st === "ขายแล้ว" || st.includes("ปิดการขาย") || st.includes("จัดส่งแล้ว") || st.includes("ส่งมอบ")) return "ปิดการขายแล้ว";
-    if (st === "จอง" || st === "จอง/รอโอน" || st === "จองมัดจำ") return "ติดจอง (รอโอนมัดจำ)"; // จองไว้ ยังไม่โอนมัดจำ
-    // มัดจำแล้ว / รอไฟแนนซ์ / รอจัดส่ง → มัดจำแล้ว แยกตามการชำระ
-    if (st.includes("มัดจำ") || st.includes("ไฟแนนซ์") || st === "รอจัดส่ง") return isFin ? "มัดจำแล้ว/ไฟแนนซ์" : "มัดจำแล้ว/เงินสด";
-    return st; // ค่าใหม่ผ่านตรงๆ
-  };
+  // สถานะรถตามใบขาย — ตัวแปลงกลางอยู่ที่ lib/saleStatus.ts (หน้าสต็อกใช้ตัวเดียวกัน)
+  const forkliftStatusForSale = (s: Sale): string => stockStatusForSale(s);
   // ── ยกเลิกเกตอนุมัติจอง (5 ส.ค. 2026): เซลล์จอง → ตั้งสถานะรถทันที ไม่ต้องรอสต็อกอนุมัติ ──
   const approvalOf = (s: Sale) => String(s.custom_fields?.[STOCK_APPROVAL_FIELD] ?? "");
   const forkStatusGated = (s: Sale): string => {
