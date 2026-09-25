@@ -9,7 +9,7 @@ import {
   Download, Upload, FileText, ShoppingCart, User, QrCode, PackageCheck, ClipboardList, RotateCcw, RefreshCw
 } from "lucide-react";
 import { Forklift, Sale, STOCK_APPROVAL_FIELD, isVoidSale } from "@/lib/types";
-import { COMMISSION_FIELD, COMMISSION_CATEGORIES, isClosedSale, isForkliftVehicle } from "@/lib/commission";
+import { COMMISSION_FIELD, COMMISSION_CATEGORIES, isClosedSale, isForkliftVehicle, closeMonth, closeDate } from "@/lib/commission";
 import { useApp, FieldConfig } from "@/lib/AppContext";
 import { isPendingId, displayCode } from "@/lib/productId";
 import { thaiMonthShort, today } from "@/lib/format";
@@ -23,7 +23,7 @@ import { parseForkliftCsv, assignIdsAndStamp, buildCsvTemplate } from "@/lib/for
 import { hasActiveSession, signOutSupabase } from "@/lib/auth";
 import { apiEnabled, uploadImageApi } from "@/lib/api";
 import { driveImg, resizeImageFile } from "@/lib/img";
-import { parseSvc, nextDue, SVC_SOON_DAYS } from "@/lib/warranty";
+import { parseSvc, nextDue, SVC_SOON_DAYS, warrantyFilled, defaultWarrantyTerms, emptySvcRounds } from "@/lib/warranty";
 import { WarrantyBlock } from "@/components/WarrantyBlock";
 import { normBrand } from "@/lib/brands";
 
@@ -99,13 +99,14 @@ export default function StockMain() {
   const [listFuel, setListFuel]     = useState("all");                                       // กรองพลังงาน
   const [listNoCost, setListNoCost] = useState(false);                                       // เฉพาะคันที่ยังไม่มีราคาทุน
   const [listBadModel, setListBadModel] = useState(false);                                   // เฉพาะคันที่ชื่อรุ่นน่าสงสัย
+  const [listNoWarranty, setListNoWarranty] = useState(false);                               // เฉพาะคันที่ขายแล้วแต่ยังไม่ลงรับประกัน
   const [listSort, setListSort]     = useState<"recent" | "model" | "remain" | "sn" | "pi">("recent"); // การเรียง
   const [listView, setListView]     = useState<"list" | "table" | "byModel" | "aging">("list");  // มุมมอง: รายคัน / ตาราง / รวมตามรุ่น / ค้างนาน
   const [collapsedBrands, setCollapsedBrands] = useState<Set<string>>(new Set()); // แบรนด์ที่ยุบไว้ในมุมมองตามรุ่น
   const toggleBrand = (b: string) => setCollapsedBrands(prev => { const n = new Set(prev); n.has(b) ? n.delete(b) : n.add(b); return n; });
   const [showCount, setShowCount] = useState(100); // แสดงทีละกี่คัน (มุมมองรายคัน/ตาราง) · Infinity = ทั้งหมด
   // เปลี่ยนตัวกรอง/ค้นหา/มุมมอง → รีเซ็ตจำนวนที่แสดงกลับค่าเริ่ม (กันค้างที่ "ทั้งหมด" แล้วช้า)
-  useEffect(() => { setShowCount(c => (c === Infinity ? Infinity : 100)); }, [listSearch, listCat, listStatus, listBrand, listModel, listMast, listView, listNoCost]);
+  useEffect(() => { setShowCount(c => (c === Infinity ? Infinity : 100)); }, [listSearch, listCat, listStatus, listBrand, listModel, listMast, listView, listNoCost, listNoWarranty]);
   const [bulkMode, setBulkMode]     = useState(false);              // โหมดเลือกหลายคัน
   const [selIds, setSelIds]         = useState<Set<string>>(new Set()); // รถที่เลือกไว้
   const [bulkDelConfirm, setBulkDelConfirm] = useState(false);
@@ -605,6 +606,40 @@ export default function StockMain() {
   const noCostCount = useMemo(() => forklifts.filter(f => (Number(f.cost_price) || 0) <= 0).length, [forklifts]);
   // จำนวนคันที่ชื่อรุ่นน่าสงสัย (ดู modelWarning ใน constants.ts)
   const badModelCount = useMemo(() => forklifts.filter(f => !!modelWarning(f.model)).length, [forklifts]);
+
+  // ── รถที่ขายแล้วแต่ยังไม่ลงข้อมูลรับประกัน → ค่าคอมของเซลล์เป็น 0 ──
+  // (25 ก.ย. 2569 · ผู้ใช้สั่ง) ให้ฝ่ายสต็อกช่วยเติมแทนเซลล์ได้ ไม่ต้องรอฝ่ายขายคนเดียว
+  const WARRANTY_GATE_FROM = "2026-08";   // บังคับเฉพาะดีลที่ปิดตั้งแต่ ส.ค. 69 (ตรงกับหน้าค่าคอม)
+  const needWarrantyList = useMemo(() => {
+    return forklifts
+      .map(f => ({ f, deal: dealOf(f) }))
+      .filter(({ f, deal }) => !!deal && isClosedSale(deal!) && closeMonth(deal!) >= WARRANTY_GATE_FROM && !warrantyFilled(f));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forklifts, sales]);
+
+  const needWarrantySet = useMemo(() => new Set(needWarrantyList.map(x => x.f.id)), [needWarrantyList]);
+
+  /** เติมวันเริ่มประกัน (= วันส่งมอบของดีล) + เงื่อนไขมาตรฐานตามชนิดรถ ให้ทุกคันที่ค้าง */
+  const fillWarrantyAll = () => {
+    let done = 0, needTerms = 0;
+    needWarrantyList.forEach(({ f, deal }) => {
+      const start = closeDate(deal!);
+      if (!start) return;
+      const cur = parseSvc(f);
+      const terms = String(cur?.terms ?? "").trim() || defaultWarrantyTerms(isForkliftVehicle(f.brand, f.model), f.vehicle_category);
+      const svc = {
+        start: String(cur?.start ?? "").trim() || start,
+        terms,
+        rounds: cur?.rounds?.length ? cur.rounds : emptySvcRounds(),
+        history: [{ by: `${username || "สต็อก"} (เติมวันส่งมอบ)`, at: new Date().toLocaleString("th-TH") }, ...(cur?.history ?? [])].slice(0, 10),
+      };
+      updateForklift({ ...f, custom_fields: { ...(f.custom_fields ?? {}), "บริการหลังการขาย": JSON.stringify(svc) } });
+      if (terms) done++; else needTerms++;
+    });
+    showToast(needTerms
+      ? `เติมให้ ${done + needTerms} คัน · ${needTerms} คันยังต้องพิมพ์เงื่อนไขรับประกันเอง (ชนิดรถนี้ยังไม่มีข้อความมาตรฐาน)`
+      : `เติมวันเริ่มประกัน + เงื่อนไขให้ ${done} คันแล้ว ✓`);
+  };
   const listFiltered = useMemo(() => {
     const q = listSearch.trim().toLowerCase();
     const qBase = baseModel(q); // ฐานรุ่นของคำค้น (ตัด MAST) → เจอทุก MAST ของรุ่นเดียวกัน
@@ -621,7 +656,9 @@ export default function StockMain() {
       const okCost = !listNoCost || (Number(f.cost_price) || 0) <= 0;
       // ชื่อรุ่นขัดกับความจริง (เช่น CDD + LI ซึ่งไม่มีรุ่นนี้) — ไล่แก้ให้หมด
       const okModelName = !listBadModel || !!modelWarning(f.model);
-      return okQ && okCat && okBrand && okModel && okMast && okFuel && okStatus && okCost && okModelName;
+      // ขายแล้วแต่ยังไม่ลงรับประกัน (ค่าคอมเซลล์เป็น 0) — ฝ่ายสต็อกช่วยเติมได้
+      const okWarranty = !listNoWarranty || needWarrantySet.has(f.id);
+      return okQ && okCat && okBrand && okModel && okMast && okFuel && okStatus && okCost && okModelName && okWarranty;
     });
     const recent = (a: Forklift, b: Forklift) => String(b.created_at || "").localeCompare(String(a.created_at || ""));
     if (listSort === "model") rows.sort((a, b) => String(a.model || "").localeCompare(String(b.model || "")) || recent(a, b));
@@ -637,7 +674,7 @@ export default function StockMain() {
     }
     else rows.sort(recent); // recent / remain (remain ใช้ในมุมมอง byModel)
     return rows;
-  }, [forklifts, listSearch, listCat, listBrand, listModel, listMast, listFuel, listStatus, listSort, listNoCost, listBadModel]);
+  }, [forklifts, listSearch, listCat, listBrand, listModel, listMast, listFuel, listStatus, listSort, listNoCost, listBadModel, listNoWarranty, needWarrantySet]);
 
   // รายการที่แสดงจริง (มุมมองรายคัน/ตาราง) — จำกัดตาม showCount กันโหลดพันแถวรวดเดียว
   const pagedList = showCount === Infinity ? listFiltered : listFiltered.slice(0, showCount);
@@ -1382,6 +1419,14 @@ export default function StockMain() {
                   className={`rounded-lg px-2.5 py-1.5 text-xs font-bold border transition-all ${listNoCost ? "bg-amber-500 text-white border-amber-500" : "bg-white text-slate-600 border-slate-200 hover:border-amber-300 hover:text-amber-700"}`}>
                   💰 ยังไม่มีทุน{noCostCount > 0 ? ` (${noCostCount})` : ""}
                 </button>
+                {/* ขายแล้วแต่ยังไม่ลงรับประกัน — ฝ่ายสต็อกช่วยเติมแทนเซลล์ได้ (ค่าคอมเซลล์ติดอยู่) */}
+                {needWarrantyList.length > 0 && (
+                  <button onClick={() => setListNoWarranty(v => !v)}
+                    title="รถที่ขายแล้วแต่ยังไม่ลงข้อมูลรับประกัน — ค่าคอมของเซลล์เป็น 0 จนกว่าจะลงข้อมูล"
+                    className={`rounded-lg px-2.5 py-1.5 text-xs font-bold border transition-all ${listNoWarranty ? "bg-teal-600 text-white border-teal-600" : "bg-white text-slate-600 border-slate-200 hover:border-teal-300 hover:text-teal-700"}`}>
+                    🛡️ ยังไม่ลงรับประกัน ({needWarrantyList.length})
+                  </button>
+                )}
                 {badModelCount > 0 && (
                   <button onClick={() => setListBadModel(v => !v)}
                     title="ชื่อรุ่นขัดกับความจริง เช่น CDD ที่มีคำว่า LI (ไม่มีรุ่นนี้)"
@@ -1445,6 +1490,22 @@ export default function StockMain() {
               </div>
             </div>
             <div id="stock-list-panel" className="overflow-auto max-h-[72vh] p-4 flex flex-col gap-2">
+              {/* ── ฝ่ายสต็อกช่วยเติมข้อมูลรับประกันแทนเซลล์ได้ (ค่าคอมเซลล์ติดอยู่) ── */}
+              {listNoWarranty && needWarrantyList.length > 0 && (
+                <div className="bg-teal-50 border border-teal-200 rounded-2xl p-3 flex items-center gap-3 flex-wrap">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-teal-800">🛡️ รถที่ขายแล้วแต่ยังไม่ลงข้อมูลรับประกัน {needWarrantyList.length} คัน</p>
+                    <p className="text-[11px] text-teal-700 mt-0.5">
+                      ค่าคอมของเซลล์เป็น 0 จนกว่าจะลงข้อมูล · กดปุ่มนี้เติม <b>วันเริ่มประกัน = วันส่งมอบของดีล</b> + เงื่อนไขมาตรฐานตามชนิดรถให้ทุกคัน
+                      หรือกดเข้าไปในการ์ดรถเพื่อแก้ทีละคันก็ได้ (กล่อง &ldquo;บริการหลังการขาย / รับประกัน&rdquo;)
+                    </p>
+                  </div>
+                  <button onClick={fillWarrantyAll}
+                    className="flex-shrink-0 text-sm font-bold bg-teal-600 hover:bg-teal-700 text-white px-4 py-2.5 rounded-xl transition-all active:scale-95">
+                    ⚡ เติมให้ทั้งหมด ({needWarrantyList.length})
+                  </button>
+                </div>
+              )}
               {listFiltered.length === 0 && (
                 <div className="text-center py-12 text-slate-400 text-sm">ไม่พบรถตามเงื่อนไข</div>
               )}
