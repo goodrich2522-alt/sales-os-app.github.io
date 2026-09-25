@@ -11,10 +11,10 @@ import { MoneyInput } from "@/components/ui/MoneyInput";
 import {
   calcCommission, isClosedSale, closeMonth, closeDate,
   commissionMonth, isCommPending, dealProfit,
-  COMMISSION_FIELD, COMMISSION_CATEGORIES, CommissionLock, warrantyFilled,
+  COMMISSION_FIELD, COMMISSION_CATEGORIES, CommissionLock, warrantyFilled, isForkliftVehicle,
   COMMISSION_MANUAL_FIELD,
 } from "@/lib/commission";
-import { DEFAULT_WARRANTY, emptySvcRounds } from "@/lib/warranty";
+import { DEFAULT_WARRANTY, emptySvcRounds, parseSvc, defaultWarrantyTerms } from "@/lib/warranty";
 import { DashboardGuard } from "@/components/DashboardGuard";
 import { PaymentImport } from "@/components/PaymentImport";
 import { staffLabel, canonicalStaff } from "@/lib/constants";
@@ -240,6 +240,36 @@ function CommissionPageInner() {
     const cf = { ...(sale.custom_fields || {}) };
     if (cat) cf[COMMISSION_FIELD] = cat; else delete cf[COMMISSION_FIELD];
     updateSale({ ...sale, custom_fields: cf });
+  };
+
+  /**
+   * เติม "วันเริ่มรับประกัน = วันส่งมอบ" ให้ดีลที่ค้าง (25 ก.ย. 2569 · ผู้ใช้ยืนยันกติกา)
+   * ระบบรู้วันส่งมอบอยู่แล้ว ไม่ควรให้คนพิมพ์ซ้ำ — เติมพร้อมเงื่อนไขรับประกันมาตรฐานของชนิดรถนั้น
+   * ชนิดรถที่ยังไม่มีข้อความมาตรฐาน (เช่น รถลากไฟฟ้า) จะเติมแค่วันเริ่ม แล้วรายงานให้ไปกรอกเงื่อนไขเอง
+   */
+  const [backfillDone, setBackfillDone] = useState<string>("");
+  const backfillWarranty = () => {
+    const miss = rows.filter(r => !r.warranty && r.forklift);
+    let filled = 0, needTerms = 0;
+    miss.forEach(r => {
+      const f = r.forklift!;
+      const start = closeDate(r.sale);                       // วันส่งมอบของดีลนั้น
+      if (!start) return;
+      const cur = parseSvc(f);
+      const isFork = isForkliftVehicle(f.brand, f.model);
+      const terms = String(cur?.terms ?? "").trim() || defaultWarrantyTerms(isFork, f.vehicle_category);
+      const svc = {
+        start: String(cur?.start ?? "").trim() || start,
+        terms,
+        rounds: cur?.rounds?.length ? cur.rounds : emptySvcRounds(),
+        history: [{ by: "ระบบ (เติมวันส่งมอบ)", at: new Date().toLocaleString("th-TH") }, ...(cur?.history ?? [])].slice(0, 10),
+      };
+      updateForklift({ ...f, custom_fields: { ...(f.custom_fields ?? {}), "บริการหลังการขาย": JSON.stringify(svc) } });
+      if (terms) filled++; else needTerms++;
+    });
+    setBackfillDone(needTerms > 0
+      ? `เติมวันเริ่มประกันให้ ${filled + needTerms} ดีลแล้ว · ${needTerms} ดีลยังต้องกรอก "เงื่อนไขรับประกัน" เอง (ชนิดรถนี้ยังไม่มีข้อความมาตรฐานในระบบ)`
+      : `เติมวันเริ่มประกัน + เงื่อนไขให้ ${filled} ดีลแล้ว ✓`);
   };
 
   /** ส่งออกรายการดีลที่ยังไม่ลงรับประกัน (ค่าคอม 0) — ส่งให้เซลล์แต่ละคนไปไล่เติม */
@@ -545,6 +575,11 @@ function CommissionPageInner() {
                   </tbody>
                 </table>
                 <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  <button onClick={backfillWarranty}
+                    title="ใช้วันส่งมอบของแต่ละดีลเป็นวันเริ่มรับประกัน + เติมเงื่อนไขมาตรฐานตามชนิดรถ"
+                    className="text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white rounded-lg px-3 py-2 flex items-center gap-1.5">
+                    ⚡ เติมวันเริ่มประกัน = วันส่งมอบ ({rows.filter(r => !r.warranty).length} ดีล)
+                  </button>
                   <button onClick={exportWarrantyMissing}
                     className="text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-2 flex items-center gap-1.5">
                     <Download className="w-3.5 h-3.5" />ส่งออก Excel ({rows.filter(r => !r.warranty).length} ดีล)

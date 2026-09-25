@@ -7,15 +7,11 @@ import { useState, useEffect } from "react";
 import { Wrench, History } from "lucide-react";
 import { useApp } from "@/lib/AppContext";
 import { Forklift } from "@/lib/types";
-import { parseSvc, roundDue, emptySvcRounds, DEFAULT_WARRANTY, warrantyFilled, SvcData } from "@/lib/warranty";
+import { parseSvc, roundDue, emptySvcRounds, defaultWarrantyTerms, warrantyFilled, SvcData } from "@/lib/warranty";
 import { isForkliftVehicle } from "@/lib/commission";
 
-// รับประกันเริ่มต้นตามหมวดรถ — แฮนด์ลิฟท์/สแตกเกอร์ = ระบบไฮดรอลิค 1 ปี (เติมให้อัตโนมัติเมื่อเลือกหมวด)
-const HYDRAULIC_WARRANTY = "รับประกันระบบไฮดรอลิค 1 ปี";
-const defaultTerms = (f: Forklift, isFork: boolean): string => {
-  if (isFork) return DEFAULT_WARRANTY;
-  return (f.vehicle_category === "Handlift" || f.vehicle_category === "Stacker") ? HYDRAULIC_WARRANTY : "";
-};
+// รับประกันเริ่มต้นตามหมวดรถ — ใช้ตัวเดียวกับปุ่มเติมย้อนหลัง (lib/warranty.ts)
+const defaultTerms = (f: Forklift, isFork: boolean): string => defaultWarrantyTerms(isFork, f.vehicle_category);
 // defaultStart = วันส่งมอบที่กรอกในฟอร์มขาย (ยังไม่เคยบันทึก → ใช้เป็นวันเริ่มประกันให้เลย ไม่ต้องพิมพ์ซ้ำ)
 const initSvc = (f: Forklift, isFork: boolean, defaultStart = ""): SvcData =>
   parseSvc(f) ?? { start: defaultStart || f.received_date || "", terms: defaultTerms(f, isFork), rounds: emptySvcRounds(), history: [] };
@@ -40,7 +36,11 @@ export function WarrantyBlock({ forklift, actor, onSaved, canEdit = true, defaul
   const hist = svc.history ?? [];
 
   const doSave = () => {
-    const newSvc: SvcData = { ...svc, history: [{ by: actor || "-", at: new Date().toLocaleString("th-TH") }, ...hist].slice(0, 10) };
+    // กติกา (25 ก.ย. 2569 · ผู้ใช้ยืนยัน): **วันส่งมอบ = วันเริ่มรับประกัน**
+    // ไม่ได้กรอกวันเริ่มเอง → ใช้วันส่งมอบของดีลคันนั้นให้เลย (ไม่ต้องพิมพ์ซ้ำ)
+    const start = svc.start.trim() || defaultStart || forklift.received_date || "";
+    const svcWithStart = { ...svc, start };
+    const newSvc: SvcData = { ...svcWithStart, history: [{ by: actor || "-", at: new Date().toLocaleString("th-TH") }, ...hist].slice(0, 10) };
     const cf = { ...(forklift.custom_fields || {}), "บริการหลังการขาย": JSON.stringify(newSvc) } as Record<string, string>;
     const u = { ...forklift, custom_fields: cf };
     updateForklift(u); setSvc(newSvc); setSaved(true); onSaved?.(u);
