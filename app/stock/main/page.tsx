@@ -315,7 +315,27 @@ export default function StockMain() {
   const toggleSel = (id: string) => setSelIds(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const clearSel = () => { setSelIds(new Set()); setBulkDelConfirm(false); };
   const selForklifts = () => forklifts.filter(f => selIds.has(f.id));
-  const bulkSetStatus = (status: string) => { if (!status) return; selForklifts().forEach(f => updateForklift({ ...f, status })); clearSel(); };
+  /**
+   * กันตั้งสถานะ "ขายแล้ว" ให้รถที่ยังไม่มีดีลผูก (25 ก.ย. 2569 · ผู้ใช้สั่ง)
+   * เดิมกดเปลี่ยนสถานะที่หน้าสต็อกได้เลย → ได้รถที่ "ปิดการขายแล้ว" แต่ไม่รู้ว่าเซลล์คนไหนขาย
+   * ไม่มีลูกค้า ไม่มีราคาขาย ไม่เข้าค่าคอม และหน้ารับประกันก็ไม่รู้ว่าเป็นของใคร
+   */
+  const blockSoldWithoutDeal = (f: Forklift, next: string) => {
+    if (!SOLD_STATUS.includes(String(next).trim()) || dealOf(f)) return false;
+    showToast(`ตั้ง "${next}" ไม่ได้ — ${f.SN || f.id} ยังไม่มีดีลผูก · ให้ฝ่ายขายเปิดดีลในหน้าขายก่อน (จะได้รู้ว่าเซลล์คนไหนปิดการขาย)`);
+    return true;
+  };
+  const bulkSetStatus = (status: string) => {
+    if (!status) return;
+    const list = selForklifts();
+    const blocked = SOLD_STATUS.includes(String(status).trim()) ? list.filter(f => !dealOf(f)) : [];
+    if (blocked.length) {
+      showToast(`ตั้ง "${status}" ไม่ได้ ${blocked.length} คัน — ยังไม่มีดีลผูก (${blocked.slice(0, 3).map(f => f.SN || f.id).join(", ")}${blocked.length > 3 ? "…" : ""}) · ให้ฝ่ายขายเปิดดีลก่อน`);
+      return;
+    }
+    list.forEach(f => updateForklift({ ...f, status }));
+    clearSel();
+  };
   const bulkSetLocation = (loc: string) => { if (!loc) return; selForklifts().forEach(f => updateForklift({ ...f, location: loc })); clearSel(); };
   const bulkDelete = () => { selForklifts().forEach(f => deleteForklift(f.id)); clearSel(); };
   // แก้สเปก/ราคาให้ทุกคันที่เลือก — ใส่เฉพาะช่องที่กรอก (เว้นว่าง = คงค่าเดิมของคันนั้น)
@@ -2362,7 +2382,11 @@ export default function StockMain() {
                 <div>
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-1.5"><Boxes className="w-3.5 h-3.5" />สถานะรถ</p>
                   <select value={it.status}
-                    onChange={e => { const u = { ...it, status: e.target.value }; updateForklift(u); setDetailItem(u); showToast(`เปลี่ยนสถานะเป็น “${e.target.value}” ✓`); }}
+                    onChange={e => {
+                      const next = e.target.value;
+                      if (blockSoldWithoutDeal(it, next)) { e.target.value = it.status; return; }   // ไม่มีดีลผูก → ไม่ให้ตั้งเป็นขายแล้ว
+                      const u = { ...it, status: next }; updateForklift(u); setDetailItem(u); showToast(`เปลี่ยนสถานะเป็น “${next}” ✓`);
+                    }}
                     className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400">
                     {statusOpts.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
