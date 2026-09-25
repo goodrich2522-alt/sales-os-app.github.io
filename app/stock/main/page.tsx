@@ -928,7 +928,7 @@ export default function StockMain() {
       "ประเภทลูกค้า": (s.customer_type as string) ?? "", "การชำระ": s.payment_type ?? "",
       "ราคาขาย": Number(s.actual_sale) || 0, "มัดจำ": Number(s.deposit) || 0,
       "ค่าขนส่ง": Number(s.shipping_cost) || 0, "วันส่งมอบ": s.delivery_date ?? "",
-      "รถสั่งผลิต": isPendingId(s.forklift_id) ? "ใช่" : "", "วันคาดรับ": (s.custom_fields?.["วันคาดรับรถสั่งผลิต"] as string) ?? "",
+      "รถสั่งผลิต": awaitingProduction(s) ? "ใช่" : "", "วันคาดรับ": (s.custom_fields?.["วันคาดรับรถสั่งผลิต"] as string) ?? "",
       "เลขที่ใบกำกับ": (s.custom_fields?.["เลขที่ใบกำกับภาษี"] as string) ?? "", "หมายเหตุ": s.remark ?? "",
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -1008,10 +1008,24 @@ export default function StockMain() {
     return Math.round((new Date(d + "T00:00:00").getTime() - Date.now()) / 86400000);
   };
 
+  /**
+   * ดีลนี้ยัง "รอรถผลิตเสร็จ" อยู่ไหม
+   * ⚠️ ห้ามดูแค่ isPendingId(forklift_id) — รหัสรถยังเป็น PI#4 ได้ทั้งที่รถมาถึงแล้ว
+   *    เพราะตอน SN มาเราเติมลงแถวเดิม (ไม่สร้างแถวใหม่ ดีล/ใบตรวจจะได้ไม่ขาด)
+   *    เจอจริง 34 คันที่รหัสยังเป็นรหัสชั่วคราวแต่มี SN จริงแล้ว — เคยเตือนซ้ำทั้งที่รับรถแล้ว
+   * (25 ก.ย. 2569 · ผู้ใช้แจ้งจากดีล PI#4 SN 050309FP382)
+   */
+  const fkOfSale = (s: Sale) => forklifts.find(f => f.id === s.forklift_id)
+    ?? (String(s.forklift_unit_no ?? "").trim()
+        ? forklifts.find(f => String(f.SN ?? "").trim().toUpperCase() === String(s.forklift_unit_no).trim().toUpperCase())
+        : undefined);
+  const awaitingProduction = (s: Sale) =>
+    isPendingId(s.forklift_id) && !String(fkOfSale(s)?.SN ?? "").trim();
+
   // ── เฟส 3: รถสั่งผลิตที่ต้องติดตาม (ใกล้ครบ ≤14 วัน หรือเกินกำหนด) ที่ยังไม่ส่งมอบ ──
   const madeToOrderAlerts = useMemo(() => {
     return sales
-      .filter(s => isPendingId(s.forklift_id) && (s.sale_status ?? "") !== "ปิดการขาย/จัดส่งแล้ว")
+      .filter(s => awaitingProduction(s) && (s.sale_status ?? "") !== "ปิดการขาย/จัดส่งแล้ว")
       .map(s => {
         const order = String(s.created_at || "").slice(0, 10);
         const custom = (s.custom_fields?.["วันคาดรับรถสั่งผลิต"] as string) || "";
@@ -1950,7 +1964,7 @@ export default function StockMain() {
                   <div className="flex items-center justify-between gap-2 mb-1">
                     <span className="text-xs text-slate-400">{fmtAdded(s.created_at) || "—"}</span>
                     <div className="flex items-center gap-1.5">
-                      {isPendingId(s.forklift_id) && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">🏭 สั่งผลิต</span>}
+                      {awaitingProduction(s) && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">🏭 สั่งผลิต</span>}
                       <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${SALE_STATUS_BADGE[s.sale_status ?? "ขายแล้ว"] ?? "bg-slate-100 text-slate-600 border-slate-200"}`}>{s.sale_status ?? "ขายแล้ว"}</span>
                     </div>
                   </div>
@@ -1998,7 +2012,22 @@ export default function StockMain() {
                     </div>
                   ) : null}
                   {/* รถสั่งผลิต (เฟส 2): ETA นับจากวันสั่งผลิต (วันทำรายการ) 60-90 วัน + กรอกวันคาดจริง */}
-                  {isPendingId(histDetail.forklift_id) && (() => {
+                  {isPendingId(histDetail.forklift_id) && !awaitingProduction(histDetail) && (() => {
+                    // รถมาถึงแล้ว (มี SN จริง) — ขึ้นยืนยันแทนการเตือนให้ติดตามการผลิต
+                    const fk = fkOfSale(histDetail);
+                    return (
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                        <p className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">✓ รับรถเข้าระบบแล้ว</p>
+                        <p className="text-[11px] text-emerald-700 mt-0.5">
+                          SN <b>{fk?.SN}</b>
+                          {toIsoDate(fk?.received_date) ? <> · รับรถ <b>{toIsoDate(fk?.received_date)}</b></> : null}
+                          {fk?.status ? <> · สถานะรถ <b>{fk.status}</b></> : null}
+                        </p>
+                        <p className="text-[10px] text-emerald-600 mt-1">รหัสในระบบยังเป็น {histDetail.forklift_id} เพราะเติม SN ลงแถวเดิม (ดีล/ใบตรวจที่ผูกไว้จะได้ไม่ขาด) — ไม่ต้องแก้อะไร</p>
+                      </div>
+                    );
+                  })()}
+                  {awaitingProduction(histDetail) && (() => {
                     const orderDate = String(histDetail.created_at || "").slice(0, 10);
                     const eta = histEdit.eta.trim();
                     const left = eta ? daysUntil(eta) : null;
