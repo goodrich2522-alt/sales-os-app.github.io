@@ -2569,7 +2569,8 @@ export default function StockMain() {
                 })()}
                 {/* บริการหลังการขาย / รับประกัน — โชว์เมื่อรถขายแล้ว (คอมโพเนนต์ร่วมกับหน้าขาย) */}
                 {(saleForItem || String(it.status).includes("ปิดการขาย")) && (
-                  <WarrantyBlock forklift={it} actor={`${username} (สต็อก)`} onSaved={setDetailItem} />
+                  <WarrantyBlock forklift={it} actor={`${username} (สต็อก)`} onSaved={setDetailItem}
+                    defaultStart={String(dealOf(it)?.delivery_date ?? "").slice(0, 10)} />
                 )}
                 {/* วันสั่งรถ (สำหรับรถสั่งผลิต) — โชว์บนการ์ดหน้าขายด้วย */}
                 <div>

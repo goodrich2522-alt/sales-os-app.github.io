@@ -5,6 +5,18 @@ export interface SvcEdit { by: string; at: string; }
 export interface SvcData { start: string; terms: string; rounds: SvcRound[]; history?: SvcEdit[]; }
 
 export const DEFAULT_WARRANTY = "เครื่องยนต์ + ชุดเกียร์ 3 ปี · ระบบไฮดรอลิก/เบรก/กล่องคุมไฟฟ้า 6 เดือน · ฟรีค่าตรวจเช็ค 4 รอบ · แนะนำเข้าเช็ค/เปลี่ยนถ่ายทุก 3 เดือน";
+// รับประกันมาตรฐานของรถที่ไม่ใช่โฟล์คลิฟท์ (ไม่มีรอบเช็คฟรี)
+export const HYDRAULIC_WARRANTY = "รับประกันระบบไฮดรอลิค 1 ปี";
+
+/**
+ * เงื่อนไขรับประกันมาตรฐานตามชนิดรถ — คืน "" ถ้ายังไม่มีข้อความมาตรฐานของชนิดนั้น (ต้องพิมพ์เอง)
+ * ใช้ที่เดียวกันทั้งกล่องกรอกและปุ่มเติมย้อนหลัง จะได้ไม่หลุดกัน
+ */
+export const defaultWarrantyTerms = (isForklift: boolean, category?: string): string => {
+  if (isForklift) return DEFAULT_WARRANTY;
+  return category === "Handlift" || category === "Stacker" ? HYDRAULIC_WARRANTY : "";
+};
+
 export const SVC_ROUNDS = 4;               // จำนวนรอบเช็คฟรี
 export const SVC_INTERVAL_MONTHS = 3;      // ระยะห่างต่อรอบ (เดือน)
 export const SVC_SOON_DAYS = 30;           // ถือว่า "ใกล้ถึงกำหนด" เมื่อเหลือ ≤ กี่วัน
