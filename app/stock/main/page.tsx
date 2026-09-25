@@ -933,7 +933,8 @@ export default function StockMain() {
     setHistEdit({
       sale_status: s.sale_status ?? "ขายแล้ว", delivery_date: s.delivery_date ?? "", remark: s.remark ?? "",
       eta: (s.custom_fields?.["วันคาดรับรถสั่งผลิต"] as string) ?? "",
-      sn: s.forklift_unit_no ?? "",
+      // SN: เอาจากทะเบียนรถก่อน (ใบขายอาจยังเก็บรหัสชั่วคราว PI#n ไว้ตั้งแต่ตอนสั่งผลิต)
+      sn: String(forklifts.find(f => f.id === s.forklift_id)?.SN ?? "").trim() || (isPendingId(s.forklift_unit_no) ? "" : (s.forklift_unit_no ?? "")),
       commCat: (s.custom_fields?.[COMMISSION_FIELD] as string) ?? "",
       staff: s.sales_staff ?? "",
       payment_received_date: s.payment_received_date ?? "",
