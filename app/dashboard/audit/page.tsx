@@ -150,6 +150,10 @@ function AuditPageInner() {
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4">
           <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
             <p className="text-sm font-bold text-slate-800">🩺 ตรวจสุขภาพข้อมูลสต็อก</p>
+            <button onClick={() => setShowBackfill(true)}
+              className="flex items-center gap-1.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-1.5">
+              🧾 นำเข้าใบขายย้อนหลัง
+            </button>
             <span className="text-[11px] text-slate-400">ตรวจจากข้อมูลปัจจุบัน {forklifts.length} คัน · อ่านอย่างเดียว ระบบไม่แก้ให้เอง</span>
           </div>
           {forklifts.length === 0

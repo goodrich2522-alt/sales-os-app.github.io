@@ -13,6 +13,7 @@ import { COMMISSION_FIELD, COMMISSION_CATEGORIES, isClosedSale, isForkliftVehicl
 import { useApp, FieldConfig } from "@/lib/AppContext";
 import { isPendingId, displayCode, piLabel } from "@/lib/productId";
 import { thaiMonthShort, today, toIsoDate } from "@/lib/format";
+import { stockStatusForSale } from "@/lib/saleStatus";
 import { Lightbox } from "@/components/ui/Lightbox";
 import { Chip } from "@/components/ui/Chip";
 import { StatusBadge } from "@/components/ui/Badge";
@@ -141,7 +142,7 @@ export default function StockMain() {
   const [piEdit, setPiEdit]               = useState(""); // เติม/แก้เลขที่ PI (ฝ่ายสต็อกทุกคนกรอกได้)
   const [piSaved, setPiSaved]             = useState(false);
   // แก้ไขสเปกรถ (ฝ่ายสต็อกทุกคน) — ลงข้อมูลย้อนหลัง รถเก่าที่สเปกว่าง · แก้ได้ทุกสถานะ
-  const [specEdit, setSpecEdit]           = useState({ category: "", capacity: "", height: "", mast: "", valve: "", fork: "", fuel: "" });
+  const [specEdit, setSpecEdit]           = useState({ brand: "", model: "", category: "", capacity: "", height: "", mast: "", valve: "", fork: "", fuel: "" });
   const [specSaved, setSpecSaved]         = useState(false);
   const [photoBusy, setPhotoBusy]         = useState(false); // กำลังอัปโหลดรูปจากฝ่ายสต็อก
   const [docBusy, setDocBusy]             = useState(false); // กำลังอัปโหลดเอกสาร PDF
@@ -227,6 +228,8 @@ export default function StockMain() {
     setPiEdit(detailItem?.pi_no ?? ""); setPiSaved(false);
     // สเปกรถ — เติมค่าเดิม (custom_fields MAST/Valve · คอลัมน์หลัก category/capacity/height/fork/fuel)
     setSpecEdit({
+      brand:    detailItem?.brand ?? "",
+      model:    detailItem?.model ?? "",
       category: detailItem?.vehicle_category ?? "",
       capacity: detailItem?.capacity ?? "",
       height:   detailItem?.height ?? "",
@@ -566,8 +569,8 @@ export default function StockMain() {
     [forklifts]
   );
   // แปลง sale_status → สถานะรถ (กันสต็อก) — ให้ตรงกับ forkliftStatusForSale ใน AppContext
-  const saleStatusToStock = (st?: string) =>
-    st === "ขายแล้ว" ? "ปิดการขายแล้ว" : st === "จอง" ? "จอง" : st === "รอผ่านไฟแนนซ์" ? "รอผ่านไฟแนนซ์" : (st || "จอง");
+  // สถานะรถที่ควรเป็นตามใบขาย — ใช้ตัวแปลงกลาง (lib/saleStatus.ts) ให้ตรงกับที่ AppContext ตั้งจริง
+  const saleStatusToStock = (st?: string, pay?: string) => stockStatusForSale({ sale_status: st as never, payment_type: pay as never });
   // ยืนยันนำเข้าสต็อก: มีเซลล์เจ้าของงาน/ดีลแล้ว → ไม่ขึ้น "พร้อมขาย" (คงสถานะตามดีล หรือ "จอง") · ไม่มี → "พร้อมขาย"
   const confirmImportOne = (f: Forklift) => {
     // ⚠️ ต้องหาดีลด้วย **ทั้งรหัสรถและ SN** — ดีลที่ผูกกับ SN (เปิดตอนรถมี SN แล้ว)
@@ -576,7 +579,7 @@ export default function StockMain() {
     const sale = [...sales].filter(s => key(s.forklift_id) === key(f.id) || (f.SN && key(s.forklift_unit_no) === key(f.SN)))
       .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
     const owner = ownerOf(f);
-    const nextStatus = sale ? saleStatusToStock(sale.sale_status) : (owner ? "จอง" : "พร้อมขาย");
+    const nextStatus = sale ? saleStatusToStock(sale.sale_status, sale.payment_type) : (owner ? "จอง" : "พร้อมขาย");
     const stamp = new Date().toLocaleDateString("th-TH");
     const cf = { ...(f.custom_fields || {}), "ยืนยันนำเข้าสต็อก": `${stamp} · ${username || "สต็อก"}` };
     updateForklift({ ...f, status: nextStatus, custom_fields: cf });
@@ -2296,7 +2299,7 @@ export default function StockMain() {
                 {/* (24 ก.ย. 2569) เจอจริง PI027: ดีลผูกกับ SN แต่ตัวรถใช้รหัสชั่วคราว พอกดยืนยันนำเข้าสต็อก
                     ระบบหาดีลไม่เจอ เลยตั้งเป็น "พร้อมขาย" ทั้งที่ขาย/จองไปแล้ว */}
                 {saleForItem && (() => {
-                  const want = saleStatusToStock(saleForItem.sale_status);
+                  const want = saleStatusToStock(saleForItem.sale_status, saleForItem.payment_type);
                   if (String(it.status ?? "").trim() === want) return null;
                   return (
                     <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 flex items-center gap-3 flex-wrap">
@@ -2386,6 +2389,8 @@ export default function StockMain() {
                 {/* แก้ไขสเปกรถ (ฝ่ายสต็อกทุกคน) — ลงข้อมูลย้อนหลังรถเก่าที่สเปกว่าง · แก้ได้ทุกสถานะ รวมปิดการขายแล้ว */}
                 {(() => {
                   const specDirty =
+                    specEdit.brand    !== (it.brand ?? "") ||
+                    specEdit.model    !== (it.model ?? "") ||
                     specEdit.category !== (it.vehicle_category ?? "") ||
                     specEdit.capacity !== (it.capacity ?? "") ||
                     specEdit.height   !== (it.height ?? "") ||
@@ -2402,6 +2407,24 @@ export default function StockMain() {
                     {missingCount > 0 && <span className="text-amber-600 font-semibold normal-case">— ขาด {missingCount} ช่อง</span>}
                   </p>
                   <div className="grid grid-cols-2 gap-2">
+                    {/* ── ยี่ห้อ / รุ่น ── */}
+                    {/* (25 ก.ย. 2569 · ผู้ใช้สั่ง) เดิมแก้ชื่อรุ่นจากการ์ดรถไม่ได้ ต้องไปใช้แก้หลายคัน
+                        เจอจริง: 05025DU4873 ในระบบเป็น CPD25-M400 แต่ใบกำกับภาษีคือ CPD25-A7LIH4-S
+                        (M400 คือความสูงเสา ไม่ใช่ชื่อรุ่น) — แก้ที่นี่ใบขายที่ผูกอยู่จะถูกซิงก์ตามให้ด้วย */}
+                    <div>
+                      <label className="text-[11px] text-slate-500 font-semibold">ยี่ห้อ</label>
+                      <input list="brand-opts" value={specEdit.brand} onChange={e => { setSpecEdit(s => ({ ...s, brand: e.target.value })); setSpecSaved(false); }}
+                        placeholder="เช่น HELI" className="w-full mt-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                      <datalist id="brand-opts">{brandOpts.map(b => <option key={b} value={b} />)}</datalist>
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-slate-500 font-semibold">รุ่น</label>
+                      <input value={specEdit.model} onChange={e => { setSpecEdit(s => ({ ...s, model: e.target.value })); setSpecSaved(false); }}
+                        placeholder="เช่น CPD25-A7LIH4-S" className="w-full mt-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                      {modelWarning(specEdit.model) && (
+                        <p className="text-[10px] text-red-600 mt-0.5">⚠ {modelWarning(specEdit.model)}</p>
+                      )}
+                    </div>
                     {/* หมวดรถ + ปุ่มเดาจากรุ่น */}
                     <div className="col-span-2">
                       <label className="text-[11px] text-slate-500 font-semibold">หมวดรถ</label>
@@ -2461,6 +2484,8 @@ export default function StockMain() {
                       if (specEdit.valve.trim()) cf["Valve"] = specEdit.valve.trim(); else delete cf["Valve"];
                       const u = {
                         ...it,
+                        brand: specEdit.brand.trim() || it.brand,
+                        model: specEdit.model.trim() || it.model,
                         vehicle_category: (specEdit.category.trim() || undefined) as Forklift["vehicle_category"],
                         capacity: specEdit.capacity.trim(),
                         height:   specEdit.height.trim(),
@@ -2474,7 +2499,7 @@ export default function StockMain() {
                     className="mt-2.5 w-full px-4 py-2 rounded-xl text-sm font-bold bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed">
                     {specSaved ? "บันทึกสเปกแล้ว ✓" : "บันทึกสเปก"}
                   </button>
-                  <p className="text-[10px] text-slate-400 mt-1.5">* ฝ่ายสต็อกกรอกสเปกรถได้ทุกคัน ทุกสถานะ (รวมปิดการขายแล้ว) — อัปเดตการ์ด/แดชบอร์ด/ฝ่ายขายทันที</p>
+                  <p className="text-[10px] text-slate-400 mt-1.5">* ฝ่ายสต็อกกรอกสเปกรถได้ทุกคัน ทุกสถานะ (รวมปิดการขายแล้ว) — อัปเดตการ์ด/แดชบอร์ด/ฝ่ายขายทันที<br />* แก้ยี่ห้อ/รุ่นที่นี่ ใบขายที่ผูกกับรถคันนี้จะถูกแก้ตามให้ด้วย (รายงานรุ่นขายดีจะได้ไม่ค้างชื่อเก่า)</p>
                 </div>
                   );
                 })()}

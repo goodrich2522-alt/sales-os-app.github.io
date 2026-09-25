@@ -444,7 +444,7 @@ export default function Dashboard() {
               <Users className="w-4 h-4" /><span className="hidden sm:inline">ทะเบียนลูกค้า</span>
             </Link>
             <Link href="/dashboard/audit" className="flex items-center gap-1.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg px-3 py-1.5 transition-all">
-              <ShieldCheck className="w-4 h-4" /><span className="hidden sm:inline">ประวัติแก้ไข</span>
+              <ShieldCheck className="w-4 h-4" /><span className="hidden sm:inline">ตรวจสอบข้อมูล / ประวัติแก้ไข</span>
             </Link>
             {isDashAdmin && (
               <Link href="/admin/users" className="flex items-center gap-1.5 text-xs font-bold text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-200 rounded-lg px-3 py-1.5 transition-all">
