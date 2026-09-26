@@ -7,15 +7,22 @@ export interface SvcData { start: string; terms: string; rounds: SvcRound[]; his
 export const DEFAULT_WARRANTY = "เครื่องยนต์ + ชุดเกียร์ 3 ปี · ระบบไฮดรอลิก/เบรก/กล่องคุมไฟฟ้า 6 เดือน · ฟรีค่าตรวจเช็ค 4 รอบ · แนะนำเข้าเช็ค/เปลี่ยนถ่ายทุก 3 เดือน";
 // รับประกันมาตรฐานของรถที่ไม่ใช่โฟล์คลิฟท์ (ไม่มีรอบเช็คฟรี)
 export const HYDRAULIC_WARRANTY = "รับประกันระบบไฮดรอลิค 1 ปี";
+// รีชสแตกเกอร์ (CQDM · ยืนขับ) — ตัวขับเป็นมอเตอร์ไฟฟ้าล้วน ไม่มีเครื่องยนต์/ไฮดรอลิกแบบโฟล์คลิฟท์
+// (26 ก.ย. 2569 · ผู้ใช้ระบุ — CQD กับ CQDM ใช้เงื่อนไขคนละแบบ)
+export const MOTOR_WARRANTY = "รับประกันมอเตอร์ขับเคลื่อน · มอเตอร์ยก · กล่องควบคุม 1 ปี";
 
 /**
  * เงื่อนไขรับประกันมาตรฐานตามชนิดรถ — คืน "" ถ้ายังไม่มีข้อความมาตรฐานของชนิดนั้น (ต้องพิมพ์เอง)
  * ใช้ที่เดียวกันทั้งกล่องกรอกและปุ่มเติมย้อนหลัง จะได้ไม่หลุดกัน
  */
 export const defaultWarrantyTerms = (isForklift: boolean, category?: string): string => {
-  if (isForklift) return DEFAULT_WARRANTY;
+  const cat = String(category ?? "");
+  // รีชทรัค (CQD · นั่งขับ) ใช้เงื่อนไขเดียวกับโฟล์คลิฟท์ (26 ก.ย. 2569 · ผู้ใช้ระบุ)
+  if (isForklift || cat === "Reach Truck") return DEFAULT_WARRANTY;
+  // รีชสแตกเกอร์ (CQDM · ยืนขับ) คนละแบบกับรีชทรัค — รับประกันมอเตอร์/กล่องคุม 1 ปี
+  if (cat === "Reach Stacker") return MOTOR_WARRANTY;
   // รถลากไฟฟ้า ใช้เงื่อนไขเดียวกับแฮนด์ลิฟท์ (25 ก.ย. 2569 · ผู้ใช้ยืนยัน)
-  return ["Handlift", "Stacker", "Electric Pallet Truck"].includes(String(category ?? "")) ? HYDRAULIC_WARRANTY : "";
+  return ["Handlift", "Stacker", "Electric Pallet Truck"].includes(cat) ? HYDRAULIC_WARRANTY : "";
 };
 
 export const SVC_ROUNDS = 4;               // จำนวนรอบเช็คฟรี
