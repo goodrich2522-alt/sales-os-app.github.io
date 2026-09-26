@@ -7,6 +7,7 @@
 import type { Forklift, Sale } from "./types";
 import { modelWarning } from "./constants";
 import { toIsoDate } from "./format";
+import { stockStatusForSale } from "./saleStatus";
 
 /** 1 รายการที่ต้องตรวจ */
 export interface HealthItem {
@@ -212,6 +213,44 @@ export function oddReceivedDate(forklifts: Forklift[]): HealthItem[] {
 }
 
 /**
+ * ── สถานะรถไม่ตรงกับใบขายที่ผูกอยู่ ──
+ * อันตรายที่สุดคือรถที่ยังขึ้น "พร้อมขาย" ทั้งที่มีใบขายปิดไปแล้ว → เซลล์อีกคนขายซ้ำคันได้
+ * เกิดจากแก้สถานะที่หน้าสต็อกทับ หรือดีลถูกแก้ทีหลังแล้วสถานะรถไม่ได้ตามไปด้วย
+ * (25 ก.ย. 2569: ตอนนำเข้าใบขายย้อนหลังเจอ 39 คันเป็นแบบนี้)
+ */
+export function statusVsSale(forklifts: Forklift[], sales: Sale[]): { f: Forklift; s: Sale; want: string }[] {
+  const byId = new Map<string, Sale>(), bySn = new Map<string, Sale>();
+  [...sales]
+    .sort((a, b) => t(a.created_at).localeCompare(t(b.created_at)))   // ใบล่าสุดทับใบเก่า
+    .forEach(s => {
+      const id = t(s.forklift_id).toUpperCase(); if (id) byId.set(id, s);
+      const sn = t(s.forklift_unit_no).toUpperCase(); if (sn) bySn.set(sn, s);
+    });
+  const out: { f: Forklift; s: Sale; want: string }[] = [];
+  for (const f of forklifts) {
+    const sale = byId.get(t(f.id).toUpperCase()) ?? (snOf(f) ? bySn.get(snOf(f).toUpperCase()) : undefined);
+    if (!sale) continue;
+    if (t(sale.sale_status) === "คืนสินค้า") continue;               // คืนของแล้ว — สถานะรถแล้วแต่ฝ่ายสต็อก
+    const want = stockStatusForSale(sale);
+    if (!want || t(f.status) === want) continue;
+    out.push({ f, s: sale, want });
+  }
+  return out;
+}
+
+function statusVsSaleItems(forklifts: Forklift[], sales: Sale[]): HealthItem[] {
+  return statusVsSale(forklifts, sales).map(({ f, s, want }) => ({
+    id: f.id,
+    label: `${snOf(f) || f.id} · ${label(f)}`,
+    detail: `สถานะรถ "${t(f.status)}" แต่ใบขายเป็น "${t(s.sale_status) || "—"}" → ควรเป็น "${want}"`
+      + (t(f.status) === "พร้อมขาย" ? " ⚠️ ยังขึ้นพร้อมขาย เสี่ยงขายซ้ำคัน" : "")
+      + (s.customer_name ? ` · ลูกค้า ${t(s.customer_name)}` : ""),
+    status: t(f.status),
+    extra: { SN: snOf(f), "ยี่ห้อ": t(f.brand), "รุ่น": t(f.model), "สถานะใบขาย": t(s.sale_status), "ควรเป็น": want, "ลูกค้า": t(s.customer_name) },
+  }));
+}
+
+/**
  * ── ใบขายที่ผูกรถไม่เจอ (รถถูกลบ หรือรหัสรถเปลี่ยนหลังได้ SN) ──
  * ถ้า SN ในใบขายตรงกับรถที่มีอยู่ → ผูกใหม่ได้ทันที (หน้า Audit มีปุ่มให้)
  */
@@ -304,6 +343,9 @@ export function runHealthChecks(forklifts: Forklift[], sales: Sale[]): HealthChe
     { key: "recvNotClosed", title: "รับรถเข้าคลังแล้วแต่ยังไม่ปิดการขาย", severity: "high",
       hint: `รถถึงลูกค้าแล้วแต่ดีลยังค้างจอง/มัดจำเกิน ${CLOSE_SALE_ALERT_DAYS} วัน — ยอดขายและค่าคอมยังไม่เข้าเดือนไหนเลย · ให้ฝ่ายขายเปิดดีลแล้วกด "ปิดการขาย / จัดส่งแล้ว"`,
       items: receivedNotClosed(forklifts, sales) },
+    { key: "statusVsSale", title: "สถานะรถไม่ตรงกับใบขาย", severity: "high",
+      hint: "รถที่ยังขึ้น \"พร้อมขาย\" ทั้งที่มีใบขายปิดแล้ว = เสี่ยงขายซ้ำคัน · กดปุ่มตั้งให้ตรงทั้งหมดได้ (ยึดตามใบขายเป็นหลัก)",
+      items: statusVsSaleItems(forklifts, sales) },
     { key: "saleNoCust", title: "ใบขายไม่ได้กรอกชื่อลูกค้า", severity: "medium",
       hint: "เปิดดีลนั้นในหน้าฝ่ายขายแล้วเติมชื่อลูกค้า — หน้ารับประกัน/เช็กระยะจะได้รู้ว่าเป็นของใคร (ดีลที่นำเข้าจากบิลภาษีมักไม่มีชื่อมาให้)",
       items: saleNoCustomer(sales) },
