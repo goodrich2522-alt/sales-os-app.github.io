@@ -107,6 +107,9 @@ export default function StockMain() {
   const [collapsedBrands, setCollapsedBrands] = useState<Set<string>>(new Set()); // แบรนด์ที่ยุบไว้ในมุมมองตามรุ่น
   const toggleBrand = (b: string) => setCollapsedBrands(prev => { const n = new Set(prev); n.has(b) ? n.delete(b) : n.add(b); return n; });
   const [showCount, setShowCount] = useState(100); // แสดงทีละกี่คัน (มุมมองรายคัน/ตาราง) · Infinity = ทั้งหมด
+  // ประวัติการขายมี 700+ ดีล — วาดทีเดียวหมดทำหน้าแครช จึงโหลดทีละ 50 (26 ก.ย. 2569)
+  const HIST_PAGE = 50;
+  const [histShow, setHistShow] = useState(HIST_PAGE);
   // เปลี่ยนตัวกรอง/ค้นหา/มุมมอง → รีเซ็ตจำนวนที่แสดงกลับค่าเริ่ม (กันค้างที่ "ทั้งหมด" แล้วช้า)
   useEffect(() => { setShowCount(c => (c === Infinity ? Infinity : 100)); }, [listSearch, listCat, listStatus, listBrand, listModel, listMast, listView, listNoCost, listNoWarranty]);
   const [bulkMode, setBulkMode]     = useState(false);              // โหมดเลือกหลายคัน
@@ -881,6 +884,9 @@ export default function StockMain() {
   const agingOver90 = agingRows.filter(r => (r.days ?? 0) > 90).length;
   const agingOver180 = agingRows.filter(r => (r.days ?? 0) > 180).length;
 
+  // เปลี่ยนคำค้น/เซลล์ที่เลือก → กลับไปเริ่มนับใหม่ (ไม่งั้นค้างอยู่ที่ชุดเดิม)
+  useEffect(() => { setHistShow(HIST_PAGE); }, [histSearch, histStaff, histStatus, histView]);
+
   // ── ประวัติการขาย: รายชื่อเซลล์ + ดีลกรองแล้ว (ล่าสุดบน) ──
   const histStaffOptions = useMemo(() => [...new Set(sales.map(s => s.sales_staff).filter(Boolean))].sort(), [sales]);
   const histFiltered = useMemo(() => {
@@ -1015,10 +1021,21 @@ export default function StockMain() {
    *    เจอจริง 34 คันที่รหัสยังเป็นรหัสชั่วคราวแต่มี SN จริงแล้ว — เคยเตือนซ้ำทั้งที่รับรถแล้ว
    * (25 ก.ย. 2569 · ผู้ใช้แจ้งจากดีล PI#4 SN 050309FP382)
    */
-  const fkOfSale = (s: Sale) => forklifts.find(f => f.id === s.forklift_id)
-    ?? (String(s.forklift_unit_no ?? "").trim()
-        ? forklifts.find(f => String(f.SN ?? "").trim().toUpperCase() === String(s.forklift_unit_no).trim().toUpperCase())
-        : undefined);
+  // ⚠️ ต้องใช้ Map ไม่ใช่ forklifts.find() — ฟังก์ชันนี้ถูกเรียกต่อ "ทุกดีลที่วาด"
+  //    ดีล 700 ใบ × รถ 1,100 คัน = แปดแสนรอบต่อการวาดหนึ่งครั้ง (พิมพ์ค้นหาทีก็วาดที)
+  //    เป็นเหตุให้หน้าสต็อกแครช "This page couldn't load" (26 ก.ย. 2569)
+  const fkIndex = useMemo(() => {
+    const byId = new Map<string, Forklift>(), bySn = new Map<string, Forklift>();
+    forklifts.forEach(f => {
+      byId.set(String(f.id ?? "").trim().toUpperCase(), f);
+      const sn = String(f.SN ?? "").trim().toUpperCase();
+      if (sn) bySn.set(sn, f);
+    });
+    return { byId, bySn };
+  }, [forklifts]);
+  const fkOfSale = (s: Sale) =>
+    fkIndex.byId.get(String(s.forklift_id ?? "").trim().toUpperCase())
+    ?? fkIndex.bySn.get(String(s.forklift_unit_no ?? "").trim().toUpperCase());
   const awaitingProduction = (s: Sale) =>
     isPendingId(s.forklift_id) && !String(fkOfSale(s)?.SN ?? "").trim();
 
@@ -1958,7 +1975,7 @@ export default function StockMain() {
             <div className="overflow-y-auto flex-1 min-h-0 p-3 flex flex-col gap-2">
               {histFiltered.length === 0 ? (
                 <div className="text-center py-16 text-slate-400 text-sm">ไม่พบดีลตามเงื่อนไข</div>
-              ) : histFiltered.map(s => (
+              ) : histFiltered.slice(0, histShow).map(s => (
                 <button key={s.id} onClick={() => openHistDetail(s)}
                   className="text-left bg-slate-50 border border-slate-100 rounded-xl p-3 hover:border-indigo-200 hover:bg-white transition-all">
                   <div className="flex items-center justify-between gap-2 mb-1">
@@ -1976,6 +1993,12 @@ export default function StockMain() {
                   </div>
                 </button>
               ))}
+              {histFiltered.length > histShow && (
+                <button onClick={() => setHistShow(n => n + HIST_PAGE)}
+                  className="mx-auto my-1 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl px-4 py-2">
+                  โหลดเพิ่ม ({histFiltered.length - histShow} ดีลที่เหลือ)
+                </button>
+              )}
             </div>
             )}
           </div>
