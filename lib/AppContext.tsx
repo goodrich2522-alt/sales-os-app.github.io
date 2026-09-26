@@ -163,8 +163,19 @@ function lsLoad<T>(key: string, fallback: T): T {
   try { const v = localStorage.getItem(key); if (v) return JSON.parse(v) as T; } catch {}
   return fallback;
 }
+// ⚠️ localStorage เป็นแค่ "แคชสำรองตอนออฟไลน์" ไม่ใช่ที่เก็บหลัก
+//    ก้อนใหญ่ (รูป base64) ทำให้ต้องสร้างสตริงหลายสิบ MB ใหม่ทุกครั้งที่ข้อมูลเปลี่ยน
+//    จนแท็บกินหน่วยความจำเกินและแครช (26 ก.ย. 2569)
+//    เกิน 2 MB = ไม่เก็บ และล้างของเก่าที่ค้างอยู่ทิ้ง
+const LS_MAX_BYTES = 2_000_000;
 function lsSave(key: string, val: unknown) {
-  try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+  try {
+    const text = JSON.stringify(val);
+    if (text.length > LS_MAX_BYTES) { localStorage.removeItem(key); return; }
+    localStorage.setItem(key, text);
+  } catch {
+    try { localStorage.removeItem(key); } catch { /* เต็มจนลบไม่ได้ ก็ปล่อย */ }
+  }
 }
 
 function stripImages<T extends InspectionRecord>(arr: T[]): T[] {
@@ -359,18 +370,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!mounted) return;
     lsSave(LS_KEYS.inspMeta, stripImages(inspections));
-    const imgMap: Record<string, string[]> = {};
-    inspections.forEach(r => { if (r.images.length > 0) imgMap[r.id] = r.images; });
-    lsSave(LS_KEYS.inspImages, imgMap);
+    // รูปใบตรวจเป็น base64 ก้อนใหญ่ (เจอจริง 6.4 MB · แถวเดียว 3.3 MB) — ไม่แคชลงเครื่อง
+    // เปิดแอปครั้งหน้าโหลดจากเซิร์ฟเวอร์เหมือนเดิม · ของเก่าที่เคยเก็บไว้ให้ล้างทิ้ง
+    try { localStorage.removeItem(LS_KEYS.inspImages); } catch { /* ไม่เป็นไร */ }
   }, [inspections, mounted]);
   useEffect(() => {
     if (!mounted) return;
     lsSave(LS_KEYS.deleted, stripImages(deletedInspections as InspectionRecord[]).map(
       (r, i) => ({ ...r, deletedAt: (deletedInspections[i] as DeletedInspectionRecord).deletedAt })
     ));
-    const deletedImgMap: Record<string, string[]> = {};
-    deletedInspections.forEach(r => { if (r.images.length > 0) deletedImgMap[r.id] = r.images; });
-    lsSave(LS_KEYS.deletedImages, deletedImgMap);
+    try { localStorage.removeItem(LS_KEYS.deletedImages); } catch { /* ไม่เป็นไร */ }
   }, [deletedInspections, mounted]);
   useEffect(() => {
     if (!mounted) return;
