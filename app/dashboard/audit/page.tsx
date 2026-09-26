@@ -6,7 +6,7 @@ import { ArrowLeft, ShieldCheck, RefreshCw, Search, Package, ShoppingCart, Trash
 import { fetchAuditApi, AuditEntry } from "@/lib/api";
 import { DashboardGuard } from "@/components/DashboardGuard";
 import { useApp } from "@/lib/AppContext";
-import { runHealthChecks, saleModelMismatch, orphanSales, HealthCheck, HealthItem, dismissField } from "@/lib/dataHealth";
+import { runHealthChecks, saleModelMismatch, orphanSales, statusVsSale, HealthCheck, HealthItem, dismissField } from "@/lib/dataHealth";
 import { toIsoDate } from "@/lib/format";
 import { SalesBackfillImport } from "@/components/SalesBackfillImport";
 
@@ -117,6 +117,20 @@ function AuditPageInner() {
     updateForklift({ ...fk, custom_fields: cf });
   };
 
+  // ── ตั้งสถานะรถให้ตรงกับใบขายทั้งหมด ──
+  // ยึดใบขายเป็นหลัก (ใบขายคือเอกสารที่มีลูกค้า/ยอดเงินจริง) · รายการที่ทำเครื่องหมาย "ตรวจแล้ว" ไว้ไม่แตะ
+  const [stFixConfirm, setStFixConfirm] = useState(false);
+  const [stFixDone, setStFixDone] = useState(0);
+  const statusFixes = useMemo(() => {
+    const skip = new Set((health.find(c => c.key === "statusVsSale")?.dismissed ?? []).map(it => String(it.id)));
+    return statusVsSale(forklifts, sales).filter(x => !skip.has(String(x.f.id)));
+  }, [forklifts, sales, health]);
+  const fixStatuses = () => {
+    statusFixes.forEach(({ f, want }) => updateForklift({ ...f, status: want }));
+    setStFixDone(statusFixes.length);
+    setStFixConfirm(false);
+  };
+
   const exportCheck = async (c: HealthCheck) => {
     const XLSX = await import("xlsx");
     const rows = c.items.map(it => ({
@@ -225,6 +239,23 @@ function AuditPageInner() {
                               className="self-start text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-2.5 py-1">
                               🧾 นำเข้าใบขายย้อนหลังจากไฟล์บัญชี
                             </button>
+                          )}
+                          {c.key === "statusVsSale" && statusFixes.length > 0 && (
+                            stFixConfirm ? (
+                              <div className="bg-white border border-amber-300 rounded-lg px-2.5 py-2 flex flex-wrap items-center gap-2">
+                                <span className="text-[11px] text-slate-700">ตั้งสถานะรถ {statusFixes.length} คันให้ตรงกับใบขาย ?</span>
+                                <button onClick={fixStatuses} className="text-[11px] font-bold bg-amber-500 text-white rounded-lg px-2 py-1">ยืนยัน</button>
+                                <button onClick={() => setStFixConfirm(false)} className="text-[11px] text-slate-500">ยกเลิก</button>
+                              </div>
+                            ) : (
+                              <button onClick={() => setStFixConfirm(true)}
+                                className="self-start text-[11px] font-bold bg-amber-500 hover:bg-amber-600 text-white rounded-lg px-2.5 py-1">
+                                ⚡ ตั้งให้ตรงกับใบขายทั้งหมด ({statusFixes.length} คัน)
+                              </button>
+                            )
+                          )}
+                          {c.key === "statusVsSale" && stFixDone > 0 && (
+                            <p className="text-[11px] text-emerald-700">✓ ตั้งสถานะให้ตรงกับใบขายแล้ว {stFixDone} คัน</p>
                           )}
                           {c.key === "recvDate" && fixableDates.length > 0 && (
                             dateFixConfirm ? (
