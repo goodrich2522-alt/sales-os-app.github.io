@@ -1329,7 +1329,7 @@ export default function StockMain() {
             <button onClick={() => setShowImport(true)}
               className="flex items-center gap-2.5 rounded-xl border border-violet-200 bg-violet-50 hover:bg-violet-100 px-3.5 py-3 text-left transition-colors">
               <FileText className="w-5 h-5 text-violet-600 flex-shrink-0" />
-              <div className="min-w-0"><p className="text-sm font-bold text-violet-800">ใบเสนอราคา / PI</p><p className="text-[11px] text-violet-600">อ่าน PDF อัตโนมัติ (HELI/EP/STAXX) · กรอกเองก็ได้</p></div>
+              <div className="min-w-0"><p className="text-sm font-bold text-violet-800">ใบเสนอราคา / PI / ใบกำกับภาษี</p><p className="text-[11px] text-violet-600">อ่าน PDF อัตโนมัติ (สแกนได้) · <b>ใบกำกับภาษีเติมทุนให้รถที่ทุนยังเป็น 0</b></p></div>
             </button>
             {/* อัปโหลดหลายคันจาก Excel/CSV */}
             <button onClick={() => csvInputRef.current?.click()} disabled={dataBusy}
