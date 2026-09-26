@@ -159,7 +159,33 @@ const LS_KEYS = {
   customers:    "salesos_customers_v1",
 } as const;
 
+/**
+ * ล้างแคชในเครื่องที่บวมเกินก่อนใช้งาน (26 ก.ย. 2569)
+ * เครื่องที่ใช้แอปมานานจะมีก้อนเก่าค้างอยู่ (โดยเฉพาะรูป base64 ของใบตรวจ)
+ * แค่ "อ่าน+แปลง" ก้อนพวกนี้ตอนเปิดแอปก็กินหน่วยความจำจนแท็บแครชได้
+ * → เช็กความยาวก่อน ถ้าเกินเพดานให้ลบทิ้งไปเลย (เป็นแค่แคช ข้อมูลจริงอยู่บนเซิร์ฟเวอร์)
+ * ใส่ ?nolocal=1 ท้าย URL = ไม่ใช้แคชในเครื่องเลย (ไว้ตรวจว่าอาการมาจากแคชหรือไม่)
+ */
+const skipLocalCache = () => {
+  try { return new URLSearchParams(window.location.search).has("nolocal"); } catch { return false; }
+};
+function lsPrune() {
+  if (typeof window === "undefined") return;
+  // รูปใบตรวจไม่เก็บลงเครื่องอีกแล้ว — ลบทิ้งเสมอ
+  for (const k of [LS_KEYS.inspImages, LS_KEYS.deletedImages]) {
+    try { localStorage.removeItem(k); } catch { /* ไม่เป็นไร */ }
+  }
+  for (const k of Object.values(LS_KEYS)) {
+    try {
+      if (skipLocalCache()) { localStorage.removeItem(k); continue; }
+      const v = localStorage.getItem(k);
+      if (v && v.length > LS_MAX_BYTES) localStorage.removeItem(k);
+    } catch { /* อ่านไม่ได้ก็ข้าม */ }
+  }
+}
+
 function lsLoad<T>(key: string, fallback: T): T {
+  if (skipLocalCache()) return fallback;
   try { const v = localStorage.getItem(key); if (v) return JSON.parse(v) as T; } catch {}
   return fallback;
 }
@@ -217,6 +243,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
 
     // โหลดจาก localStorage (ใช้เป็น cache / fallback เมื่อไม่มี GAS หรือออฟไลน์)
+    lsPrune();   // ล้างแคชที่บวมเกินก่อน ไม่งั้นแค่เปิดแอปก็กินหน่วยความจำจนแครช
     const loadFromLocal = () => {
       setForklifts(lsLoad(LS_KEYS.forklifts, mockForklifts));
       setSales(lsLoad(LS_KEYS.sales, mockSales));
