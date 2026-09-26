@@ -22,6 +22,8 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
   const [skipped, setSkipped] = useState(0);         // จำนวนที่ข้ามเพราะ SN ซ้ำ
   const [savedMto, setSavedMto] = useState(0);       // จำนวนรถสั่งผลิต (KD) ที่บันทึกจริง
   const [savedFilled, setSavedFilled] = useState(0); // จำนวนที่เติม SN ลงแถวเดิม (ไม่สร้างแถวใหม่)
+  const [savedTopUp, setSavedTopUp] = useState(0);   // จำนวนคันที่ "เติมข้อมูลที่ขาด" ให้แถวเดิม
+  const [doTopUp, setDoTopUp] = useState(true);      // เติมข้อมูลที่ขาดให้รถที่มีอยู่แล้วไหม
   // ── ด่านตรวจจำนวน: เก็บ "จำนวนที่เอกสารระบุ" ของแต่ละไฟล์ ไว้เทียบกับที่อ่านได้ ──
   const [docChecks, setDocChecks] = useState<{ file: string; check: QuoteDocCheck }[]>([]);
   const [confirmDiff, setConfirmDiff] = useState(false); // ติ๊กยืนยันเมื่อจำนวนไม่ตรงกับเอกสาร
@@ -79,6 +81,48 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
     });
   };
 
+  // ── เติมข้อมูลที่ขาดให้รถที่มีอยู่แล้ว (25 ก.ย. 2569 · ผู้ใช้สั่ง) ──
+  // เดิมแถวที่ SN ซ้ำกับในสต็อกจะถูกข้ามทั้งแถว → ทุนที่เป็น 0 อยู่ก็ไม่ถูกเติม
+  // ตอนนี้: ข้ามการสร้างแถวใหม่เหมือนเดิม แต่ "เติมเฉพาะช่องที่ว่าง" ให้แถวเดิม
+  // กติกา: ไม่ทับค่าที่มีอยู่แล้วเด็ดขาด · ราคาทุนเติมจาก **ใบกำกับภาษี** เท่านั้น
+  //        (ใบเสนอราคา/PI เป็นราคาตั้ง อาจต่อรอง/แก้ทีหลัง — เดาทุนไม่ได้)
+  const blank = (v: unknown) => !String(v ?? "").trim();
+  /** ช่องที่จะถูกเติมให้รถคันนี้ — คืน [ชื่อช่อง, ค่าที่จะเติม][] (ว่าง = ไม่มีอะไรให้เติม) */
+  const fillableOf = (v: ParsedVehicle, f: Forklift): [string, string][] => {
+    const cf = (f.custom_fields ?? {}) as Record<string, unknown>;
+    const out: [string, string][] = [];
+    // ราคาทุน — เฉพาะใบกำกับภาษี และเฉพาะคันที่ทุนยังเป็น 0/ว่าง
+    if (v.doc_kind === "tax-invoice" && Number(v.cost_price) > 0 && !(Number(f.cost_price) > 0))
+      out.push(["ราคาทุน", Number(v.cost_price).toLocaleString("th-TH")]);
+    if (v.invoice_no && blank(cf["เลขที่ใบกำกับภาษี"])) out.push(["เลขที่ใบกำกับภาษี", v.invoice_no]);
+    if (v.received_date && blank(f.received_date)) out.push(["วันรับรถ", v.received_date]);
+    if (v.pi_no && blank(f.pi_no)) out.push(["เลขที่ PI", v.pi_no]);
+    if (v.import_ref && blank(cf["รหัสอ้างอิงนำเข้า"])) out.push(["รหัสอ้างอิงนำเข้า", v.import_ref]);
+    if (v.capacity && blank(f.capacity)) out.push(["พิกัดยก", v.capacity]);
+    if (v.height && blank(f.height)) out.push(["ยกสูง", v.height]);
+    if (v.fuel && blank(f.fuel)) out.push(["พลังงาน", v.fuel]);
+    if (v.mast && blank(cf["MAST"])) out.push(["เสา (MAST)", v.mast]);
+    if (v.valve && blank(cf["Valve"]) && blank(f.control_type)) out.push(["Valve", v.valve]);
+    if (v.fork_length && blank(f.fork_length)) out.push(["ความยาวงา", v.fork_length]);
+    return out;
+  };
+  /** รถในสต็อกที่ตรงกับแถวนี้ (ใช้ตอนเติมข้อมูล) */
+  const stockMatch = (v: ParsedVehicle, i: number) => {
+    const sn = String(v.SN ?? "").trim().toUpperCase();
+    const id = String(toForklift(v, i).id).trim().toUpperCase();
+    return forklifts.find(f => String(f.id ?? "").trim().toUpperCase() === id)
+      ?? (sn ? forklifts.find(f => String(f.SN ?? "").trim().toUpperCase() === sn) : undefined);
+  };
+  /** รายการเติมข้อมูลของทั้งล็อต (โชว์ก่อนบันทึก) */
+  const fillPlan = rows.map((v, i) => {
+    if (!dupKeyOf(v, i)) return null;                 // ไม่ซ้ำ = สร้างแถวใหม่ตามปกติ
+    const f = stockMatch(v, i);
+    if (!f) return null;
+    const fields = fillableOf(v, f);
+    return fields.length ? { v, f, fields } : null;
+  });
+  const fillPlanCount = fillPlan.filter(Boolean).length;
+
   /** แถวไหนจะ "เติม SN ลงแถวเดิม" (คำนวณลำดับเดียวกับตอนบันทึก) */
   const fillTargets = (() => {
     const used = new Set<string>();
@@ -135,7 +179,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
             setNotice(`ℹ️ "${f.name}" อ่าน (OCR) แล้วยังจับรายการรถอัตโนมัติไม่ได้ (ภาพเอียง/ไม่ชัด/ตารางซับซ้อน) — กด "เพิ่มรถเอง" แล้วกรอกจากรูปได้`);
             continue;
           }
-          all.push(...res.vehicles);
+          all.push(...res.vehicles.map(v => ({ ...v, doc_kind: res.doc_kind })));
           continue;
         }
         // PDF
@@ -159,7 +203,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
         if (res.vendor === "unknown") { setNotice(`⚠️ "${f.name}" เดาผู้ผลิตไม่ได้`); continue; }
         if (res.vendor === "STAXX") { setNotice(`ℹ️ "${f.name}" เป็น STAXX — ใบ PDF ได้แค่รุ่น/ราคา · ใช้ไฟล์ Excel Serial List เพื่อดึง SN`); continue; }
         if (res.vehicles.length === 0) { setNotice(`⚠️ "${f.name}" (${res.vendor}) อ่านข้อความได้แต่ไม่พบรายการรถ — มักเกิดจาก **รหัสรุ่นที่ระบบยังไม่รู้จัก** · แจ้งทีมพัฒนาพร้อมชื่อรุ่นในใบ (เพิ่มที่ lib/quoteImport/models.ts) หรือกด "เพิ่มรถเอง (กรอกมือ)" ไปก่อน`); continue; }
-        all.push(...res.vehicles);
+        all.push(...res.vehicles.map(v => ({ ...v, doc_kind: res.doc_kind })));
       } catch (e) {
         setOcr(null);
         setNotice(`อ่าน "${f.name}" ไม่ได้: ${e instanceof Error ? e.message : "ผิดพลาด"}`);
@@ -244,11 +288,39 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
     const usedPh = new Set<string>();     // แถวรอ SN ที่ถูกจองไว้แล้วในรอบนี้ (กันเติมซ้ำคันเดียว)
     let filled = 0;                        // เติม SN ลงแถวเดิม (ไม่สร้างแถวใหม่)
     let mto = 0;
+    let topUp = 0;                         // เติมข้อมูลที่ขาดให้รถที่มีอยู่แล้ว
     rows.forEach((v, i) => {
       const fk = toForklift(v, i);
       const id = String(fk.id).trim().toUpperCase();
       const sn = String(fk.SN ?? "").trim().toUpperCase();
-      if (seen.has(id) || (sn && seen.has(sn))) { skipSns.push(sn || String(fk.id)); return; }
+      if (seen.has(id) || (sn && seen.has(sn))) {
+        // ซ้ำกับของเดิม → ไม่สร้างแถวใหม่ แต่ถ้าเอกสารมีข้อมูลที่แถวเดิมยังว่าง ให้เติมให้ (ไม่ทับของเดิม)
+        const old = doTopUp ? stockMatch(v, i) : undefined;
+        if (old && fillableOf(v, old).length) {
+          const cf = { ...(old.custom_fields ?? {}) } as Record<string, unknown>;
+          if (v.invoice_no && blank(cf["เลขที่ใบกำกับภาษี"])) cf["เลขที่ใบกำกับภาษี"] = v.invoice_no;
+          if (v.import_ref && blank(cf["รหัสอ้างอิงนำเข้า"])) cf["รหัสอ้างอิงนำเข้า"] = v.import_ref;
+          if (v.mast && blank(cf["MAST"])) cf["MAST"] = v.mast;
+          if (v.valve && blank(cf["Valve"]) && blank(old.control_type)) cf["Valve"] = v.valve;
+          cf["เติมข้อมูลจากเอกสาร"] = `${today()} · ${v.invoice_no || v.pi_no || v.import_ref || "เอกสารนำเข้า"}`;
+          updateForklift({
+            ...old,
+            // ราคาทุนเติมจากใบกำกับภาษีเท่านั้น และเฉพาะคันที่ยังไม่มีทุน
+            cost_price: (v.doc_kind === "tax-invoice" && Number(v.cost_price) > 0 && !(Number(old.cost_price) > 0))
+              ? Number(v.cost_price) : old.cost_price,
+            received_date: blank(old.received_date) && v.received_date ? v.received_date : old.received_date,
+            pi_no: blank(old.pi_no) && v.pi_no ? v.pi_no : old.pi_no,
+            capacity: blank(old.capacity) && v.capacity ? v.capacity : old.capacity,
+            height: blank(old.height) && v.height ? v.height : old.height,
+            fuel: blank(old.fuel) && v.fuel ? v.fuel : old.fuel,
+            fork_length: blank(old.fork_length) && v.fork_length ? v.fork_length : old.fork_length,
+            custom_fields: cf as Forklift["custom_fields"],
+          });
+          topUp++;
+        }
+        skipSns.push(sn || String(fk.id));
+        return;
+      }
       // ⭐ (24 ก.ย. 2569) รถสั่งผลิตที่ผลิตเสร็จแล้ว → **เติม SN ลงแถวเดิม** ไม่สร้างแถวใหม่
       //    เดิมนำเข้าใบที่มี SN จะได้แถวใหม่ ส่วนแถวรอ SN เดิมค้างเป็น "รถผี" (สต็อกเกินจริง)
       //    เติมลงแถวเดิมดีกว่าลบทิ้งแล้วสร้างใหม่ เพราะดีล/ใบตรวจที่ผูกกับรหัสเดิมไม่ขาด
@@ -277,6 +349,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
       fresh.push(fk);
     });
     setSavedMto(mto);
+    setSavedTopUp(topUp);
     setSavedFilled(filled);
     if (fresh.length) addForkliftsBulk(fresh);
     setImportedIds(fresh.map((f) => String(f.id)));
@@ -350,6 +423,11 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                   ในนี้ <b>เติม SN ลงแถวเดิม {savedFilled} คัน</b> — รถที่เคยลงไว้ตอนสั่งผลิต/รอรับ ไม่ได้สร้างแถวใหม่ (สต็อกไม่บวมเกินจริง)
                 </p>
               )}
+              {savedTopUp > 0 && (
+                <p className="text-sm text-sky-700 mt-1">
+                  <b>เติมข้อมูลที่ขาดให้รถเดิม {savedTopUp} คัน</b> — เติมเฉพาะช่องที่ว่าง (ทุน/เลขใบกำกับ/วันรับรถ/สเปก) ของเดิมไม่ถูกทับ
+                </p>
+              )}
               {skipped > 0 && (
                 <p className="text-sm text-amber-600 mt-1">
                   ข้าม {skipped} คัน — <b>มีในสต็อกอยู่แล้ว</b> (เทียบทั้งรหัสรถและ SN) ไม่นำเข้าซ้ำ<br />
@@ -396,6 +474,27 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                     <p className="text-sm font-semibold text-slate-700">อ่านได้ {rows.length} คัน — ตรวจ/แก้ก่อนบันทึก</p>
                     {dupCount > 0 && <span className="text-xs text-red-600 font-semibold">⚠️ {dupCount} คัน SN ซ้ำกับที่มีในสต็อก</span>}
                   </div>
+                  {/* ── เติมข้อมูลที่ขาดให้รถที่มีอยู่แล้ว — ไม่ทับของเดิม ── */}
+                  {fillPlanCount > 0 && (
+                    <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5">
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input type="checkbox" checked={doTopUp} onChange={(e) => setDoTopUp(e.target.checked)} className="mt-0.5" />
+                        <span className="text-xs text-sky-900">
+                          <b>เติมข้อมูลที่ขาดให้รถที่มีอยู่แล้ว {fillPlanCount} คัน</b> — เฉพาะช่องที่ยังว่าง ไม่ทับของเดิม
+                          <br /><span className="text-[11px] text-sky-700">ราคาทุนเติมจาก <b>ใบกำกับภาษี</b> เท่านั้น (ใบเสนอราคา/PI เป็นราคาตั้ง อาจเปลี่ยนทีหลัง)</span>
+                        </span>
+                      </label>
+                      {doTopUp && (
+                        <div className="mt-2 flex flex-col gap-1 max-h-44 overflow-y-auto">
+                          {fillPlan.map((x, i) => x && (
+                            <p key={i} className="text-[11px] text-sky-800 bg-white border border-sky-100 rounded-lg px-2 py-1">
+                              <b>{x.f.SN || x.f.id}</b> {x.f.brand} {x.f.model} — เติม: {x.fields.map(([k, v2]) => `${k} = ${v2}`).join(" · ")}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {/* ── ด่านตรวจจำนวน: เทียบกับตัวเลขในเอกสาร ก่อนบันทึกทุกครั้ง (กติกา 12 ก.ย. 2569) ── */}
                   <div className={`rounded-xl border px-3 py-2.5 ${countMismatch ? "bg-red-50 border-red-300" : hasDocQty ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-200"}`}>
                     <p className={`text-xs font-bold flex items-center gap-1.5 ${countMismatch ? "text-red-700" : hasDocQty ? "text-emerald-700" : "text-slate-600"}`}>
