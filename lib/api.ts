@@ -41,7 +41,7 @@ async function fetchAllRpc(fn: string): Promise<Record<string, unknown>[]> {
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await c.rpc(fn).range(from, from + PAGE - 1);
     if (error) throw error;
-    const rows = (data ?? []) as Record<string, unknown>[];
+    const rows = (data ?? []) as unknown as Record<string, unknown>[];
     out.push(...rows);
     if (rows.length < PAGE) break; // ได้ไม่ครบหน้า = หมดแล้ว
   }
@@ -66,17 +66,46 @@ async function bootstrapTransporter(): Promise<BootstrapData> {
 
 // ดึงทุกแถวของตาราง — Supabase/PostgREST คืนสูงสุด 1000 แถว/ครั้ง → วนดึงทีละ 1000 จนครบ
 // (เดิมใช้ .limit(20000) แต่ถูก cap ที่ 1000 ทำให้รถเกิน 1000 คันหายไป)
-async function fetchAllRows(table: string): Promise<Record<string, unknown>[]> {
+/**
+ * ── คอลัมน์ใบขายที่โหลดตอนเปิดแอป — ตั้งใจ "ไม่เอา" payment_proof / payment_proofs ──
+ * รูปสลิปถูกเก็บเป็น base64 อยู่ในแถวใบขาย (อัปขึ้นที่เก็บไฟล์ไม่ได้ เพราะยังไม่ได้ตั้งค่า GAS_URL)
+ * รูปละ ~150 KB × ใบขายเป็นพัน = ข้อมูลร้อยกว่า MB ที่ทุกหน้าต้องแบกไว้ทั้งที่แทบไม่ได้ใช้
+ * วัดจริง (28 ก.ย. 2569): ไม่มีรูปสลิป 20 MB · มีรูปสลิป ~54 MB → 125 MB → แท็บแครช
+ * รูปสลิปจึงโหลดเฉพาะตอนเปิดดีลใบนั้นจริง ๆ (fetchSaleProofsApi)
+ *
+ * ⚠️ เพิ่มคอลัมน์ใหม่ในตาราง sales เมื่อไหร่ ต้องมาเติมที่นี่ด้วย ไม่งั้นข้อมูลจะไม่ถูกโหลด
+ */
+const SALE_COLUMNS = [
+  "id", "forklift_id", "forklift_unit_no", "forklift_brand", "forklift_model",
+  "sales_staff", "customer_name", "customer_tel", "customer_type", "province",
+  "payment_type", "finance_company", "actual_sale", "deposit", "delivery_date",
+  "payment_received_date", "remark", "custom_fields", "created_at",
+  "sale_status", "vehicle_type", "vehicle_spec", "warranty_expiry", "parts_schedule",
+  "custom_notifications", "contact_source", "sale_type", "add_ons", "freebie", "shipping_cost",
+].join(",");
+
+/** รูปสลิปของดีลใบเดียว — เรียกตอนเปิดดูดีลนั้น */
+export const fetchSaleProofsApi = async (saleId: string): Promise<{ payment_proof?: string; payment_proofs?: string[] }> => {
+  const { data, error } = await sb().from("sales").select("payment_proof,payment_proofs").eq("id", saleId).maybeSingle();
+  if (error) throw error;
+  return (data ?? {}) as { payment_proof?: string; payment_proofs?: string[] };
+};
+
+
+async function fetchAllRows(table: string, select = "*"): Promise<Record<string, unknown>[]> {
   const c = sb();
   const PAGE = 1000;
+  const MAX_PAGES = 100;            // กันวนไม่รู้จบถ้าเซิร์ฟเวอร์คืนหน้าเดิมซ้ำ (แท็บจะกินแรมจนตาย)
   const out: Record<string, unknown>[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await c.from(table).select("*").range(from, from + PAGE - 1);
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const from = page * PAGE;
+    const { data, error } = await c.from(table).select(select).range(from, from + PAGE - 1);
     if (error) throw error;
-    const rows = (data ?? []) as Record<string, unknown>[];
+    const rows = (data ?? []) as unknown as Record<string, unknown>[];
     out.push(...rows);
-    if (rows.length < PAGE) break; // ได้ไม่ครบหน้า = หมดแล้ว
+    if (rows.length < PAGE) return out;   // ได้ไม่ครบหน้า = หมดแล้ว
   }
+  console.warn("fetchAllRows(" + table + "): หยุดที่ " + MAX_PAGES + " หน้า — ข้อมูลอาจไม่ครบ");
   return out;
 }
 
@@ -86,7 +115,7 @@ export async function bootstrap(): Promise<BootstrapData> {
   const c = sb();
   const [fkRows, slRows, insRows, custRows, cfg] = await Promise.all([
     fetchAllRows("forklifts"),
-    fetchAllRows("sales"),
+    fetchAllRows("sales", SALE_COLUMNS),   // ไม่เอารูปสลิป — ดู SALE_COLUMNS
     fetchAllRows("inspections"),
     fetchAllRows("customers"),
     c.from("app_config").select("data").eq("id", 1).maybeSingle(),

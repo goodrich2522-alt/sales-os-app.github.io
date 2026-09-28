@@ -162,6 +162,7 @@ export default function SalesMain() {
     addSaleExtraFieldDef, removeSaleExtraFieldDef, renameSaleExtraFieldDef,
     addSaleExtraFieldOption, removeSaleExtraFieldOption, editSaleExtraFieldOption,
     addSalesFilterRequest, removeSalesFilterRequest,
+    loadSaleProofs,
   } = useApp();
 
   const [salesUser, setSalesUser] = useState<{ name: string; target_monthly: number; email?: string; role?: string } | null>(null);
@@ -186,6 +187,9 @@ export default function SalesMain() {
   const [historyView, setHistoryView]     = useState<"deals" | "customers" | "monthly">("deals"); // ดีลของฉัน / ลูกค้าของฉัน / สรุปรายเดือน
   const [histMonth, setHistMonth]         = useState(""); // เดือนที่เลือกในสรุปรายเดือน (YYYY-MM)
   const [detailSale, setDetailSale]       = useState<Sale | null>(null);
+  // รูปสลิปไม่ได้ถูกโหลดมาตอนเปิดแอป (เป็น base64 ก้อนใหญ่ ทำให้แท็บแครช)
+  // เปิดดูดีลใบไหนค่อยดึงของใบนั้น — ครอบคลุมทุกปุ่มที่เปิดหน้าต่างรายละเอียด
+  useEffect(() => { if (detailSale?.id) void loadSaleProofs(detailSale.id); }, [detailSale?.id, loadSaleProofs]);
   const [showBooked, setShowBooked]       = useState(false); // โมดัลรายการรถติดจอง (กดจาก stat banner)
   const [cancelBox, setCancelBox]         = useState(false);   // กล่องยกเลิกการจอง
   const [cancelReason, setCancelReason]   = useState("");      // เหตุผลการยกเลิก
@@ -862,6 +866,9 @@ export default function SalesMain() {
 
   // เปิดฟอร์มแก้ไขดีลที่ทำไปแล้ว — เติมข้อมูลเดิมกลับเข้าฟอร์มทั้งหมด
   const openEditSale = (sale: Sale) => {
+    // รูปสลิปไม่ได้โหลดมาตอนเปิดแอป (เป็น base64 ก้อนใหญ่) → ดึงของดีลใบนี้ก่อน
+    // ไม่งั้นกดบันทึกแล้วระบบจะฟ้องว่ายังไม่แนบสลิป ทั้งที่แนบไว้แล้ว
+    void loadSaleProofs(sale.id);
     // หารถจากสต็อก ถ้าถูกลบไปแล้วสร้างรถชั่วคราวจากข้อมูลในดีล เพื่อให้ฟอร์มทำงานต่อได้
     const fk = forklifts.find(f => f.id === sale.forklift_id) ?? {
       id: sale.forklift_id, SN: sale.forklift_unit_no, brand: sale.forklift_brand,
@@ -2293,7 +2300,9 @@ export default function SalesMain() {
               )}
               {detailSale.remark && <DetailRow label="หมายเหตุ" value={detailSale.remark} />}
               {(() => {
-                const proofs = detailSale.payment_proofs?.length ? detailSale.payment_proofs : (detailSale.payment_proof ? [detailSale.payment_proof] : []);
+                // อ่านจากรายการกลาง เพราะรูปสลิปเพิ่งถูกเติมเข้ามาหลังเปิดหน้าต่าง
+                const live = sales.find(x => x.id === detailSale.id) ?? detailSale;
+                const proofs = live.payment_proofs?.length ? live.payment_proofs : (live.payment_proof ? [live.payment_proof] : []);
                 if (!proofs.length) return null;
                 return (
                   <div className="border-t border-slate-100 pt-3 mt-1">
