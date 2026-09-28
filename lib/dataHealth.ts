@@ -4,6 +4,7 @@
 // (scripts/audit-sn.mjs · scripts/audit-pi.mjs) ย้ายมาไว้ในแอปให้ทีมกดดูเองได้
 // ทุกฟังก์ชันเป็น pure — ส่ง forklifts/sales เข้าไป คืนรายการที่ต้องตรวจ
 
+import { looksLikeFinanceBill } from "./types";
 import type { Forklift, Sale } from "./types";
 import { modelWarning } from "./constants";
 import { toIsoDate } from "./format";
@@ -195,6 +196,30 @@ function soldNoSale(forklifts: Forklift[], sales: Sale[]): HealthItem[] {
  * อาการ: รายงานรถค้างสต็อก (aging/FIFO) คำนวณวันค้างไม่ได้ → รถหายจากรายงานเงียบๆ
  * แก้ได้ปลอดภัย เพราะเป็นการเปลี่ยน "รูปแบบ" ไม่ใช่เปลี่ยนวัน (toIsoDate แปลง พ.ศ. → ค.ศ. ให้ด้วย)
  */
+/**
+ * ── บิลที่เปิดให้ไฟแนนซ์ (ไม่ใช่การขายจริง) ──
+ * (28 ก.ย. 2569 · ผู้ใช้สั่ง) บริษัทเอารถของตัวเองไปจัดไฟแนนซ์ ต้องเปิดบิลขายให้ไฟแนนซ์
+ * ชื่อลูกค้าจะเป็น "<ชื่อไฟแนนซ์> <ชื่อบริษัทเรา>" ซึ่งขายให้ตัวเองไม่ได้
+ * ถ้าปล่อยไว้จะถูกนับเป็นยอดขายและค่าคอมทั้งที่ไม่มีการขายจริง
+ * ระบบแค่ "ชี้เป้า" ให้คนกดยืนยัน ไม่ตัดออกเอง (เผื่อไฟแนนซ์ซื้อไปใช้เองจริง)
+ */
+function financeBills(sales: Sale[]): HealthItem[] {
+  return sales.filter(looksLikeFinanceBill).map(s => ({
+    id: s.id,
+    kind: "sale" as const,
+    label: `${t(s.forklift_unit_no) || t(s.forklift_id)} · ${t(s.forklift_brand)} ${t(s.forklift_model)}`.trim(),
+    detail: `ลูกค้า "${t(s.customer_name)}" — มีชื่อบริษัทเราอยู่ในชื่อลูกค้า แปลว่าเป็นบิลจัดไฟแนนซ์ ไม่ใช่การขาย`
+      + ` · ยอด ${Number(s.actual_sale || 0).toLocaleString("th-TH")} บาท${t(s.sales_staff) ? ` · เซลล์ ${t(s.sales_staff)}` : ""}`,
+    status: t(s.sale_status),
+    group: t(s.delivery_date).slice(0, 7) || "ไม่ระบุวันที่",
+    extra: {
+      SN: t(s.forklift_unit_no), "รุ่น": t(s.forklift_model), "ลูกค้า": t(s.customer_name),
+      "เซลล์": t(s.sales_staff), "ยอด": String(s.actual_sale ?? ""), "วันส่งมอบ": t(s.delivery_date),
+    },
+  }));
+}
+
+
 export function oddReceivedDate(forklifts: Forklift[]): HealthItem[] {
   return forklifts
     .filter(f => { const d = t(f.received_date); return d && !/^\d{4}-\d{2}-\d{2}$/.test(d); })
@@ -343,6 +368,9 @@ export function runHealthChecks(forklifts: Forklift[], sales: Sale[]): HealthChe
     { key: "recvNotClosed", title: "รับรถเข้าคลังแล้วแต่ยังไม่ปิดการขาย", severity: "high",
       hint: `รถถึงลูกค้าแล้วแต่ดีลยังค้างจอง/มัดจำเกิน ${CLOSE_SALE_ALERT_DAYS} วัน — ยอดขายและค่าคอมยังไม่เข้าเดือนไหนเลย · ให้ฝ่ายขายเปิดดีลแล้วกด "ปิดการขาย / จัดส่งแล้ว"`,
       items: receivedNotClosed(forklifts, sales) },
+    { key: "financeBill", title: "บิลเปิดให้ไฟแนนซ์ (ไม่ใช่การขายจริง)", severity: "high",
+      hint: "บริษัทเอารถไปจัดไฟแนนซ์ ต้องเปิดบิลขายให้ไฟแนนซ์ — ไม่ใช่ยอดขายจริง · กดปุ่มทำเครื่องหมายแล้วจะถูกตัดออกจากยอดขาย ค่าคอม และประวัติการขายทั้งหมด",
+      items: financeBills(sales) },
     { key: "statusVsSale", title: "สถานะรถไม่ตรงกับใบขาย", severity: "high",
       hint: "รถที่ยังขึ้น \"พร้อมขาย\" ทั้งที่มีใบขายปิดแล้ว = เสี่ยงขายซ้ำคัน · กดปุ่มตั้งให้ตรงทั้งหมดได้ (ยึดตามใบขายเป็นหลัก)",
       items: statusVsSaleItems(forklifts, sales) },

@@ -7,6 +7,7 @@ import { useApp } from "@/lib/AppContext";
 import { DashboardGuard } from "@/components/DashboardGuard";
 import { PROVINCES } from "@/lib/mockData";
 import { purchaseKey } from "@/lib/commission";
+import { isVoidSale } from "@/lib/types";
 import type { Customer, Sale } from "@/lib/types";
 
 const fmt = (n: number) => Math.round(Number(n) || 0).toLocaleString("th-TH");
@@ -33,7 +34,7 @@ function CustomersPageInner() {
   // สถิติต่อลูกค้า (จับชื่อตรง) — deals=จำนวนวันที่ซื้อไม่ซ้ำ (ซื้อหลายคันวันเดียว=1ครั้ง) · units=จำนวนคัน
   const statMap = useMemo(() => {
     const m = new Map<string, { units: number; revenue: number; lastAt: string; cars: Sale[]; days: Set<string> }>();
-    sales.forEach(s => {
+    sales.filter(s => !isVoidSale(s)).forEach(s => {   // บิลไฟแนนซ์/ดีลที่ถูกปฏิเสธ ไม่ใช่ลูกค้าจริง
       const k = norm(s.customer_name || ""); if (!k) return;
       const g = m.get(k) ?? { units: 0, revenue: 0, lastAt: "", cars: [], days: new Set<string>() };
       g.units++; g.revenue += Number(s.actual_sale) || 0;
