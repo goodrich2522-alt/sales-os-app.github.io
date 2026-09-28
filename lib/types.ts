@@ -22,9 +22,41 @@ export const STOCK_APPROVAL_FIELD = "อนุมัติสต็อก";     
 export const STATUS_PENDING_APPROVAL = "รออนุมัติสต็อก";     // สถานะรถระหว่างรออนุมัติ
 // สถานะรถ (จาก sale_status) ที่กันสต็อก + ต้องอนุมัติก่อน (ยกเว้นปิดการขายจริง)
 export const GATED_STATUSES = ["จอง", "รอจัดส่ง", "รอไฟแนนซ์", "รอผ่านไฟแนนซ์"];
-// ดีลที่ "ถูกปฏิเสธจากสต็อก" (รถคืนสู่สต็อกแล้ว) — ไม่ใช่ดีลจริง ต้องกรองออกจากยอด/รายงาน
-export const isVoidSale = (s: { custom_fields?: Record<string, string> | null }) =>
-  String(s.custom_fields?.[STOCK_APPROVAL_FIELD] ?? "") === "ปฏิเสธ";
+/**
+ * ── บิลที่ "เปิดให้ไฟแนนซ์" ไม่ใช่การขายจริง ──
+ * (28 ก.ย. 2569 · ผู้ใช้สั่ง) บริษัทเอารถของตัวเองไปจัดไฟแนนซ์ ต้องเปิดบิลขายให้ไฟแนนซ์
+ * ชื่อลูกค้าในบิลจะเป็น "<ชื่อไฟแนนซ์> <ชื่อบริษัทเรา>" — เงินที่เข้าไม่ใช่ยอดขาย
+ * ต้องไม่นับเป็นยอดขาย ไม่เข้าค่าคอม และไม่โผล่ในประวัติการขาย
+ */
+export const BILL_KIND_FIELD = "ประเภทบิล";                  // sale.custom_fields
+export const BILL_FINANCE = "เปิดบิลไฟแนนซ์";                 // ค่าเมื่อเป็นบิลจัดไฟแนนซ์ของบริษัทเอง
+/** ชื่อบริษัทเราเอง — ขายให้ตัวเองไม่ได้ ถ้าโผล่ในช่องลูกค้าแปลว่าเป็นบิลจัดไฟแนนซ์ */
+const OWN_COMPANY_RE = /(กู๊ด|กู้ด|กูีด)\s*แอนด์\s*ริช|good\s*(&|and)\s*rich/i;
+const FINANCE_RE = /ธนาคาร|ทิสโก้|ลีสซิ่ง|ลิสซิ่ง|แคปปิตอล|ไฟแนนซ์|bank|leasing|capital|finance/i;
+
+/**
+ * ชื่อลูกค้าบอกว่าเป็นบิลจัดไฟแนนซ์ไหม
+ * เงื่อนไข: มี **ชื่อบริษัทเราเอง** อยู่ในช่องลูกค้า + มีชื่อสถาบันการเงิน
+ * ไม่ใช่การเดา — ขายให้ตัวเองไม่ได้ ถ้าชื่อเราอยู่ในช่องลูกค้าก็คือบิลจัดไฟแนนซ์แน่นอน
+ * (ธนาคารซื้อรถไปใช้เองจริง ชื่อลูกค้าจะไม่มีชื่อบริษัทเรา → ยังนับเป็นการขายตามปกติ)
+ */
+const financeBillByName = (s: { customer_name?: string }) => {
+  const name = String(s.customer_name ?? "");
+  return OWN_COMPANY_RE.test(name) && FINANCE_RE.test(name);
+};
+
+/** บิลนี้เป็นบิลจัดไฟแนนซ์ — ทำเครื่องหมายไว้เอง หรือดูจากชื่อลูกค้าก็รู้ */
+export const isFinanceBill = (s: { customer_name?: string; custom_fields?: Record<string, string> | null }) =>
+  String(s.custom_fields?.[BILL_KIND_FIELD] ?? "") === BILL_FINANCE || financeBillByName(s);
+
+/** ระบบตัดออกให้เองแล้ว แต่ยังไม่ได้ทำเครื่องหมายถาวร — หน้าตรวจสอบข้อมูลเอาไปให้กดยืนยัน */
+export const looksLikeFinanceBill = (s: { customer_name?: string; custom_fields?: Record<string, string> | null }) =>
+  financeBillByName(s) && String(s.custom_fields?.[BILL_KIND_FIELD] ?? "") !== BILL_FINANCE;
+
+// ดีลที่ "ไม่นับเป็นการขายจริง" — ถูกปฏิเสธจากสต็อก หรือเป็นบิลเปิดให้ไฟแนนซ์
+// ต้องกรองออกจากยอดขาย/ค่าคอม/ประวัติการขาย/รายงานทุกที่
+export const isVoidSale = (s: { customer_name?: string; custom_fields?: Record<string, string> | null }) =>
+  String(s.custom_fields?.[STOCK_APPROVAL_FIELD] ?? "") === "ปฏิเสธ" || isFinanceBill(s);
 
 export interface Forklift {
   id: string;

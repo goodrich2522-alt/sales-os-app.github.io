@@ -7,6 +7,7 @@ import { fetchAuditApi, AuditEntry } from "@/lib/api";
 import { DashboardGuard } from "@/components/DashboardGuard";
 import { useApp } from "@/lib/AppContext";
 import { runHealthChecks, saleModelMismatch, orphanSales, statusVsSale, HealthCheck, HealthItem, dismissField } from "@/lib/dataHealth";
+import { BILL_KIND_FIELD, BILL_FINANCE, looksLikeFinanceBill } from "@/lib/types";
 import { toIsoDate } from "@/lib/format";
 import { SalesBackfillImport } from "@/components/SalesBackfillImport";
 
@@ -131,6 +132,21 @@ function AuditPageInner() {
     setStFixConfirm(false);
   };
 
+  // ── ทำเครื่องหมาย "บิลเปิดให้ไฟแนนซ์" ให้ทั้งหมดที่ระบบชี้เป้า ──
+  // (28 ก.ย. 2569 · ผู้ใช้สั่ง) ทำแล้วจะถูกตัดออกจากยอดขาย ค่าคอม และประวัติการขายทันที
+  const [finConfirm, setFinConfirm] = useState(false);
+  const [finDone, setFinDone] = useState(0);
+  const financeBillSales = useMemo(() => sales.filter(looksLikeFinanceBill), [sales]);
+  const markFinanceBills = () => {
+    financeBillSales.forEach(s => updateSale({
+      ...s,
+      custom_fields: { ...(s.custom_fields ?? {}), [BILL_KIND_FIELD]: BILL_FINANCE },
+    }));
+    setFinDone(financeBillSales.length);
+    setFinConfirm(false);
+  };
+
+
   const exportCheck = async (c: HealthCheck) => {
     const XLSX = await import("xlsx");
     const rows = c.items.map(it => ({
@@ -239,6 +255,23 @@ function AuditPageInner() {
                               className="self-start text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-2.5 py-1">
                               🧾 นำเข้าใบขายย้อนหลังจากไฟล์บัญชี
                             </button>
+                          )}
+                          {c.key === "financeBill" && financeBillSales.length > 0 && (
+                            finConfirm ? (
+                              <div className="bg-white border border-amber-300 rounded-lg px-2.5 py-2 flex flex-wrap items-center gap-2">
+                                <span className="text-[11px] text-slate-700">ทำเครื่องหมาย {financeBillSales.length} ใบว่าเป็นบิลไฟแนนซ์ (ตัดออกจากยอดขาย/ค่าคอม) ?</span>
+                                <button onClick={markFinanceBills} className="text-[11px] font-bold bg-amber-500 text-white rounded-lg px-2 py-1">ยืนยัน</button>
+                                <button onClick={() => setFinConfirm(false)} className="text-[11px] text-slate-500">ยกเลิก</button>
+                              </div>
+                            ) : (
+                              <button onClick={() => setFinConfirm(true)}
+                                className="self-start text-[11px] font-bold bg-amber-500 hover:bg-amber-600 text-white rounded-lg px-2.5 py-1">
+                                ⚡ ทำเครื่องหมายเป็นบิลไฟแนนซ์ทั้งหมด ({financeBillSales.length} ใบ)
+                              </button>
+                            )
+                          )}
+                          {c.key === "financeBill" && finDone > 0 && (
+                            <p className="text-[11px] text-emerald-700">✓ ทำเครื่องหมายแล้ว {finDone} ใบ — ตัดออกจากยอดขาย ค่าคอม และประวัติการขายแล้ว</p>
                           )}
                           {c.key === "statusVsSale" && statusFixes.length > 0 && (
                             stFixConfirm ? (

@@ -4,7 +4,7 @@
 //  · FORKLIFT — คิดตาม "กำไรสุทธิ" + หมวดลูกค้า 3 แบบ (เลือกตอนปิดการขาย)
 // กำไรสุทธิ = ราคาขาย − ทุน − อุปกรณ์เสริม − ของแถม(2,800) − ค่าขนส่ง
 // นับเฉพาะดีลที่ "ปิด/จัดส่งแล้ว" ภายในเดือนนั้น
-import { Sale, Forklift } from "./types";
+import { Sale, Forklift, isVoidSale } from "./types";
 
 // หมวดค่าคอมโฟล์คลิฟท์ — เก็บที่ sale.custom_fields["หมวดค่าคอม"]
 export const COMMISSION_FIELD = "หมวดค่าคอม";
@@ -59,6 +59,8 @@ export { warrantyFilled } from "./warranty";
 
 // ดีลปิดจริง (ปิด/จัดส่งแล้ว) — ค่าเก่า "ขายแล้ว"/"ปิดการขายแล้ว"/"ส่งมอบแล้ว" นับด้วย
 export const isClosedSale = (s: Sale) => {
+  // บิลที่เปิดให้ไฟแนนซ์ / ดีลที่ถูกปฏิเสธจากสต็อก ไม่ใช่การขายจริง — ไม่เข้ายอดและไม่เข้าค่าคอม
+  if (isVoidSale(s)) return false;
   const st = String(s.sale_status ?? "").trim();
   return st.includes("ปิดการขาย") || st.includes("จัดส่งแล้ว") || st.includes("ส่งมอบ") || st === "ขายแล้ว";
 };
