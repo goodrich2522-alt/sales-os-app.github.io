@@ -691,7 +691,7 @@ export default function StockMain() {
     }
     else rows.sort(recent); // recent / remain (remain ใช้ในมุมมอง byModel)
     return rows;
-  }, [forklifts, listSearch, listCat, listBrand, listModel, listMast, listFuel, listStatus, listSort, listNoCost, listBadModel, listNoWarranty, needWarrantySet]);
+  }, [forklifts, listSearch, listCat, listBrand, listModel, listMast, listFuel, listStatus, listSort, listNoCost, listBadModel, listNoWarranty, needWarrantySet, listNoDeal, noDealSet]);
 
   // รายการที่แสดงจริง (มุมมองรายคัน/ตาราง) — จำกัดตาม showCount กันโหลดพันแถวรวดเดียว
   const pagedList = showCount === Infinity ? listFiltered : listFiltered.slice(0, showCount);

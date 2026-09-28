@@ -170,6 +170,20 @@ try {
   console.log("หน่วยความจำ JS:", m.heap, "MB · element:", m.nodes);
   console.log("บนหน้า:", m.text);
 } catch (e) { console.log("อ่านหน้าไม่ได้:", String(e).slice(0, 200)); crashed = true; }
+// ── ทดสอบปุ่มกรอง: กดแล้วรายการต้องเปลี่ยนตามจริง (ไม่ใช่ค้างเป็น 0) ──
+if (process.env.CLICK) {
+  const shown = async () => (await page.getByText(/แสดง \d+ จาก/).first().textContent().catch(() => "?")) ?? "?";
+  console.log("--- ทดสอบปุ่มกรอง ---");
+  console.log("   ก่อนกด:", (await shown()).trim());
+  for (const label of ["ยังไม่มีทุน", "ขายแล้วไม่มีใบขาย"]) {
+    const b = page.locator("button", { hasText: label }).first();
+    if (!(await b.count())) { console.log("   ไม่เจอปุ่ม", label); continue; }
+    await b.click(); await page.waitForTimeout(400);
+    console.log("   กด " + label + " →", (await shown()).trim());
+    await b.click(); await page.waitForTimeout(400);
+    console.log("   ปิด " + label + " →", (await shown()).trim());
+  }
+}
 console.log("แครช:", crashed);
 console.log("--- ขนาดข้อมูลที่ส่งให้เบราว์เซอร์ ---");
 console.log([...bytes].map(([k, v]) => k + ": " + (v / 1048576).toFixed(1) + " MB").join(" · "));
