@@ -51,6 +51,35 @@ const sales = Array.from({ length: N_SL }, (_, i) => ({
     ? ["data:image/jpeg;base64," + "B".repeat(Number(process.env.PROOF_KB || 800) * 1024)] : [],
 }));
 
+// ── ข้อมูลที่ "รูปร่างเหมือนของจริง" เพิ่มเติม — ไว้ลองเส้นทางที่ข้อมูลปลอมธรรมดาไม่แตะ ──
+// รถสั่งผลิตที่ยังไม่มี SN (รหัสชั่วคราว PI#n) + ดีลที่ผูกกับรหัสนั้น
+for (let i = 0; i < 6; i++) {
+  forklifts.push({ id: "PI#" + i, SN: "", brand: "HELI", model: "CQD20-GB2SLI", status: i % 2 ? "สั่งผลิต" : "รอรับ",
+    capacity: "2.0 ตัน", height: "", fuel: "ไฟฟ้า", cost_price: 0, stock_price: 0, created_at: "2026-07-08",
+    received_date: "", vehicle_category: "Reach Truck", pi_no: "PI116KD", custom_fields: { "รถสั่งผลิต (KD)": "ใช่" } });
+  sales.push({ id: "sale_kd_" + i, forklift_id: "PI#" + i, forklift_unit_no: "", forklift_brand: "HELI",
+    forklift_model: "CQD20-GB2SLI", sales_staff: "เซลล์ KD", customer_name: "ลูกค้า KD " + i, customer_tel: "",
+    customer_type: "นิติบุคคล", province: "", payment_type: "เครดิต", actual_sale: 500000, deposit: 50000,
+    delivery_date: "", sale_status: "จอง/โอนมัดจำแล้ว", sale_type: "รถขายเต็มคัน", created_at: "2026-07-08T00:00:00.000Z",
+    custom_fields: {} });
+}
+// รถที่รหัสยังเป็นรหัสชั่วคราวแต่มี SN แล้ว (เจอจริง 34 คัน)
+for (let i = 0; i < 5; i++) {
+  forklifts.push({ id: "PI124#" + i, SN: "08015JWK73" + i, brand: "HELI", model: "CBD15J-LI-S", status: "พร้อมขาย",
+    capacity: "1.5 ตัน", height: "3 เมตร", fuel: "ไฟฟ้า", cost_price: 100000, stock_price: 0, created_at: "2026-09-01",
+    received_date: "5 ก.ย. 2569", vehicle_category: "Electric Pallet Truck", pi_no: "PI124", custom_fields: {} });
+}
+// ดีลที่รออนุมัติสต็อก + บิลไฟแนนซ์ + ดีลวันที่เพี้ยน
+sales.push({ id: "sale_pending", forklift_id: "SN100001", forklift_unit_no: "SN100001", forklift_brand: "HELI",
+  forklift_model: "CBD20J-LI-S", sales_staff: "เซลล์ 1", customer_name: "ลูกค้ารออนุมัติ", customer_tel: "",
+  customer_type: "นิติบุคคล", province: "", payment_type: "เครดิต", actual_sale: 300000, deposit: 0,
+  delivery_date: "2026-09-01", sale_status: "จอง", sale_type: "รถขายเต็มคัน", created_at: "2026-09-01T00:00:00.000Z",
+  custom_fields: { "อนุมัติสต็อก": "รออนุมัติ" } });
+sales.push({ id: "sale_fin", forklift_id: "SN100002", forklift_unit_no: "SN100002", forklift_brand: "HELI",
+  forklift_model: "CPCD30-Q22K2", sales_staff: "อภิชญา", customer_name: "ธนาคารทิสโก้ จำกัด (มหาชน) บจก.กู๊ด แอนด์ ริช เพาเวอร์พลัส",
+  customer_tel: "", customer_type: "นิติบุคคล", province: "", payment_type: "เครดิต", actual_sale: 305000, deposit: 0,
+  delivery_date: "2026-08-19", sale_status: "ปิดการขาย/จัดส่งแล้ว", sale_type: "รถขายเต็มคัน",
+  created_at: "2026-08-19T00:00:00.000Z", payment_received_date: "1983-08-25", custom_fields: {} });
 const browser = await chromium.launch({ channel: "msedge" });
 const ctx = await browser.newContext();
 
@@ -120,7 +149,7 @@ await page.evaluate(([fk, sl, sbUrl]) => {
 const t0 = Date.now();
 let crashed = false;
 try {
-  await page.goto("http://localhost:4321" + BASE + "/stock/main/", { waitUntil: "load", timeout: 60000 });
+  await page.goto("http://localhost:4321" + BASE + "/stock/main/" + (process.env.QS || ""), { waitUntil: "load", timeout: 60000 });
   for (const t of [2, 5, 10, 20]) {
     await page.waitForTimeout(t === 2 ? 2000 : 3000 + (t === 20 ? 7000 : 0));
     const h = await page.evaluate(() => ({
