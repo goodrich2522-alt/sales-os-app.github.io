@@ -108,6 +108,7 @@ interface AppContextType {
   deleteForklift: (id: string) => void;
   addSale: (s: Sale) => void;
   addSalesBulk: (list: Sale[]) => void;   // นำเข้าใบขายย้อนหลังทีละหลายใบ
+  loadSaleProofs: (saleId: string) => Promise<void>;  // โหลดรูปสลิปของดีลใบนั้น (ไม่ได้โหลดมาตอนเปิดแอป)
   updateSale: (s: Sale) => void;
   deleteSale: (saleId: string) => void;
   returnSale: (saleId: string, opts: { forkStatus: string; reason?: string; date?: string }) => void; // ลูกค้าคืนสินค้า — เก็บประวัติดีลไว้ ตัดยอด/ค่าคอมออก
@@ -521,6 +522,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
   const withApprovalMarker = (s: Sale): Sale => s;      // ไม่มีเกตอนุมัติแล้ว
 
+  /**
+   * โหลดรูปสลิปของดีลใบเดียว (28 ก.ย. 2569)
+   * ตอนเปิดแอปเราไม่ดึงคอลัมน์รูปสลิปมาด้วย เพราะเป็น base64 ก้อนใหญ่จนแท็บแครช
+   * → หน้าที่ต้องโชว์/แก้ดีล เรียกอันนี้ก่อน แล้วรูปจะถูกเติมเข้า state ของดีลใบนั้น
+   * เรียกซ้ำได้ ถ้าโหลดมาแล้วจะไม่ยิงซ้ำ
+   */
+  const proofsLoadedRef = useRef<Set<string>>(new Set());
+  const loadSaleProofs = useCallback(async (saleId: string) => {
+    if (!api.apiEnabled || !saleId || proofsLoadedRef.current.has(saleId)) return;
+    proofsLoadedRef.current.add(saleId);
+    try {
+      const got = await api.fetchSaleProofsApi(saleId);
+      if (!got.payment_proof && !(got.payment_proofs ?? []).length) return;
+      setSales(p => p.map(x => x.id === saleId ? { ...x, ...got } : x));
+    } catch (e) {
+      proofsLoadedRef.current.delete(saleId);      // โหลดไม่ได้ → ให้ลองใหม่ได้
+      console.warn("loadSaleProofs", e);
+    }
+  }, []);
+
+
   const addSale = useCallback((s0: Sale) => {
     lastLocalEditRef.current = Date.now();
     // จอง/กันสต็อก → ติดมาร์ก "รออนุมัติ" · ปิดการขายจริง → ตัดจองออกอัตโนมัติ (ไม่ต้องรอสต็อก)
@@ -910,7 +932,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       forklifts, sales, inspections, deletedInspections, customers, fieldConfig,
       addCustomer, updateCustomer, deleteCustomer,
       addForklift, addForkliftsBulk, updateForklift, deleteForklift,
-      addSale, addSalesBulk, updateSale, deleteSale, returnSale, approveStockSale, rejectStockSale, setActor,
+      addSale, addSalesBulk, loadSaleProofs, updateSale, deleteSale, returnSale, approveStockSale, rejectStockSale, setActor,
       exportData, importData,
       addInspection, deleteInspection, restoreInspection, purgeInspection,
       refresh,
