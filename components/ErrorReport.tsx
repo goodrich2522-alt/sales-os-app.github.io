@@ -35,6 +35,17 @@ export function ErrorReport({ error, reset, where }: { error: Error & { digest?:
     catch { /* คัดลอกไม่ได้ก็ให้ผู้ใช้ลากเลือกเอาเอง */ }
   };
 
+  // ⚠️ หน้าที่พังอยู่ = โค้ดเวอร์ชันเก่าที่เบราว์เซอร์แคชไว้ได้ (เจอจริง 28 ก.ย. 2569:
+  //    แก้บั๊กขึ้นเว็บแล้วแต่ผู้ใช้ยังเจอ error เดิม เพราะเบราว์เซอร์ใช้ไฟล์เก่าในแคช)
+  //    reload() ธรรมดาอาจหยิบของในแคชมาอีก → ต่อท้าย URL ด้วยเลขเวลา บังคับให้โหลดใหม่จริง
+  const reloadFresh = () => {
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.set("v", String(Date.now()));
+      window.location.replace(u.toString());
+    } catch { window.location.reload(); }
+  };
+
   // ล้างแคชในเครื่อง (ข้อมูลจริงอยู่บนเซิร์ฟเวอร์ ไม่หาย) — แก้อาการที่มาจากข้อมูลค้างในเบราว์เซอร์
   const clearCache = () => {
     try {
@@ -67,6 +78,10 @@ export function ErrorReport({ error, reset, where }: { error: Error & { digest?:
               className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 disabled:bg-emerald-600 text-white text-sm font-bold rounded-xl px-4 py-2.5">
               {cleared ? <><Check className="w-4 h-4" />ล้างแล้ว — กดลองใหม่</> : <><Eraser className="w-4 h-4" />ล้างข้อมูลค้างในเครื่อง</>}
             </button>
+            <button onClick={reloadFresh}
+              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl px-4 py-2.5">
+              <RefreshCw className="w-4 h-4" />โหลดเวอร์ชันล่าสุด
+            </button>
             <a href="../../" className="flex items-center gap-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-sm font-bold rounded-xl px-4 py-2.5">
               <Home className="w-4 h-4" />กลับหน้าแรก
             </a>
@@ -83,7 +98,8 @@ export function ErrorReport({ error, reset, where }: { error: Error & { digest?:
           </div>
 
           <p className="text-[11px] text-slate-500 leading-relaxed">
-            ถ้ากด &ldquo;ลองใหม่&rdquo; แล้วยังไม่ได้ ให้เปิดลิงก์เดิมแล้วเติม <b>?nolocal=1</b> ต่อท้าย —
+            <b>เจอ error เดิมซ้ำทั้งที่แจ้งไปแล้วว่าแก้แล้ว?</b> กด &ldquo;โหลดเวอร์ชันล่าสุด&rdquo; ก่อน —
+            เบราว์เซอร์อาจยังใช้โค้ดเวอร์ชันเก่าที่เก็บไว้ · ถ้ายังไม่หาย ให้เปิดลิงก์เดิมแล้วเติม <b>?nolocal=1</b> ต่อท้าย
             เป็นโหมดที่ไม่ใช้ข้อมูลค้างในเครื่องเลย ถ้าเปิดได้แปลว่าปัญหามาจากข้อมูลค้าง ไม่ใช่ตัวแอป
           </p>
         </div>
