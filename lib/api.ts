@@ -81,7 +81,9 @@ const SALE_COLUMNS = [
   "payment_type", "finance_company", "actual_sale", "deposit", "delivery_date",
   "payment_received_date", "remark", "custom_fields", "created_at",
   "sale_status", "vehicle_type", "vehicle_spec", "warranty_expiry", "parts_schedule",
-  "custom_notifications", "contact_source", "sale_type", "add_ons", "freebie", "shipping_cost",
+  // ⚠️ add_ons / freebie / shipping_cost **ไม่ใช่คอลัมน์จริง** ในตาราง sales (เก็บใน custom_fields)
+  //    ใส่ชื่อที่ไม่มีจริงลงไป PostgREST ตอบ 400 ทั้งคำขอ → ใบขายไม่โหลดเลยทั้งระบบ (เกิดจริง 28 ก.ย. 2569)
+  "custom_notifications", "contact_source", "sale_type",
 ].join(",");
 
 /** รูปสลิปของดีลใบเดียว — เรียกตอนเปิดดูดีลนั้น */
@@ -99,7 +101,12 @@ async function fetchAllRows(table: string, select = "*"): Promise<Record<string,
   const out: Record<string, unknown>[] = [];
   for (let page = 0; page < MAX_PAGES; page++) {
     const from = page * PAGE;
-    const { data, error } = await c.from(table).select(select).range(from, from + PAGE - 1);
+    let { data, error } = await c.from(table).select(select).range(from, from + PAGE - 1);
+    if (error && select !== "*") {
+      // ชื่อคอลัมน์ไม่ตรงกับตารางจริง → อย่าปล่อยให้ข้อมูลหายทั้งระบบ ถอยไปดึงทุกคอลัมน์แทน
+      console.warn("fetchAllRows(" + table + "): เลือกคอลัมน์ไม่ได้ (" + error.message + ") → ถอยไปใช้ select=*");
+      ({ data, error } = await c.from(table).select("*").range(from, from + PAGE - 1));
+    }
     if (error) throw error;
     const rows = (data ?? []) as unknown as Record<string, unknown>[];
     out.push(...rows);
