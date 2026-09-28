@@ -9,7 +9,7 @@ import {
 import { useApp } from "@/lib/AppContext";
 import { MoneyInput } from "@/components/ui/MoneyInput";
 import {
-  calcCommission, isClosedSale, closeMonth, closeDate,
+  calcCommission, isClosedSale, closeMonth, closeDate, badPaidDate,
   commissionMonth, isCommPending, dealProfit,
   COMMISSION_FIELD, COMMISSION_CATEGORIES, CommissionLock, warrantyFilled, isForkliftVehicle,
   COMMISSION_MANUAL_FIELD,
@@ -123,10 +123,13 @@ function CommissionPageInner() {
     () => closedSales
       .map(s => {
         const cm = closeMonth(s), pm = commissionMonth(s);
+        // วันรับเงินที่เป็นไปไม่ได้ ระบบไม่นับเป็นงวดแล้ว (paidDate คืนค่าว่าง) แต่ยังต้องเตือนให้แก้ที่ไฟล์
+        const paidWhy = badPaidDate(s);
         return {
           s, period: periodOf(s), odd: isOddMonth(periodOf(s)),
           badDelivery: !!cm && (isOddMonth(cm) || isFutureMonth(cm)),
-          badPaid: !!pm && (isOddMonth(pm) || isFutureMonth(pm)),
+          badPaid: !!paidWhy || (!!pm && (isOddMonth(pm) || isFutureMonth(pm))),
+          paidWhy,
         };
       })
       .filter(d => d.badDelivery || d.badPaid),
@@ -414,7 +417,7 @@ function CommissionPageInner() {
         {/* ── เตือนเดือนที่เป็นไปไม่ได้ — วันที่ในดีลพิมพ์ปีผิด ── */}
         {oddDeals.length > 0 && (
           <div className="bg-red-50 border border-red-200 rounded-2xl p-4">
-            <p className="text-sm font-bold text-red-700 mb-1">⚠️ พบ {oddDeals.length} ดีลที่วันที่ผิดปกติ — ทำให้มีแท็บเดือนแปลกๆ ({[...new Set(oddDeals.map(d => tabLabel(d.period)))].join(" · ")})</p>
+            <p className="text-sm font-bold text-red-700 mb-1">⚠️ พบ {oddDeals.length} ดีลที่วันที่ผิดปกติ{[...new Set(oddDeals.filter(d => d.odd).map(d => tabLabel(d.period)))].length > 0 ? " — ทำให้มีแท็บเดือนแปลกๆ (" + [...new Set(oddDeals.filter(d => d.odd).map(d => tabLabel(d.period)))].join(" · ") + ")" : ""}</p>
             <p className="text-[11px] text-red-600 mb-2"><b>แก้เฉพาะวันส่งมอบตรงนี้ได้เลย</b> — ดีลจะย้ายไปเดือนที่ถูกทันที · ส่วน<b>วันรับเงิน</b>มาจากไฟล์รับเงินที่อัปโหลด ไม่ต้องแก้มือ ระบบจะทับให้ตอนอัปโหลดรอบถัดไป</p>
             <div className="flex flex-col gap-1.5">
               {oddDeals.slice(0, 10).map(d => (
@@ -428,7 +431,7 @@ function CommissionPageInner() {
                     {d.badPaid && (
                       <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5"
                         title="วันรับเงินมาจากไฟล์รับเงินที่อัปโหลด — ไม่ต้องแก้มือ ระบบจะทับให้ตอนอัปโหลดรอบถัดไป">
-                        วันรับเงิน {d.s.payment_received_date} · รอไฟล์รับเงินทับ
+                        วันรับเงิน {d.s.payment_received_date}{d.paidWhy ? " · " + d.paidWhy : ""} · รอไฟล์รับเงินทับ
                       </span>
                     )}
                   </span>

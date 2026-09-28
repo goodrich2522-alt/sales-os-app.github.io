@@ -82,7 +82,31 @@ export const closeDate = (s: Sale) => toGregorian(String(s.delivery_date || s.cr
 export const closeMonth = (s: Sale) => closeDate(s).slice(0, 7); // YYYY-MM
 
 // ── งวดค่าคอม = เดือนที่รับเงินเข้าบัญชี (ผู้ใช้เคาะ 20 ส.ค.) · ยังไม่รับเงิน = รอรับเงิน ──
-export const paidDate = (s: Sale) => toGregorian(String(s.payment_received_date || "")).slice(0, 10);
+/**
+ * ── วันรับเงินที่ "เป็นไปไม่ได้" ──
+ * (28 ก.ย. 2569) วันรับเงินมาจากไฟล์บัญชีที่อัปโหลด ห้ามแก้มือ (กติกาผู้ใช้)
+ * แต่ถ้าไฟล์มีวันที่เพี้ยน ระบบจะสร้าง "งวดเดือน" ปลอมขึ้นมา เช่น แท็บ ส.ค. 2526
+ * (เจอจริง: วันรับเงิน 1983-08-25 = พิมพ์ปี 2526 แทน 2569 · และ 2026-12-09 ที่ยังมาไม่ถึง)
+ * → ไม่แก้ข้อมูล แต่ "ไม่นับเป็นวันรับเงิน" จนกว่าไฟล์รอบหน้าจะทับให้ถูก
+ *   ดีลจะไปอยู่กลุ่ม "รอรับเงิน" ตามปกติ ไม่ไปโผล่เป็นเดือนประหลาด
+ */
+export const badPaidDate = (s: Sale): string => {
+  const d = toGregorian(String(s.payment_received_date || "")).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return d ? "รูปแบบวันที่ไม่ถูกต้อง" : "";
+  const y = Number(d.slice(0, 4));
+  if (y < 2015) return "ปีเก่าเกินจริง (น่าจะพิมพ์ปีผิด)";
+  const today = new Date().toISOString().slice(0, 10);
+  if (d > today) return "วันรับเงินยังมาไม่ถึง (น่าจะสลับวัน/เดือน)";
+  const close = closeDate(s);
+  // รับเงินก่อนส่งมอบเกิน 1 ปี = เป็นไปไม่ได้ (มัดจำล่วงหน้าไม่นานขนาดนั้น)
+  if (close && d < close && new Date(close).getTime() - new Date(d).getTime() > 400 * 86400000)
+    return "รับเงินก่อนส่งมอบเกิน 1 ปี";
+  return "";
+};
+
+/** วันรับเงินที่เชื่อถือได้ — วันที่เพี้ยนถือว่ายังไม่รับเงิน (ดู badPaidDate) */
+export const paidDate = (s: Sale) =>
+  badPaidDate(s) ? "" : toGregorian(String(s.payment_received_date || "")).slice(0, 10);
 export const isCommPending = (s: Sale) => !paidDate(s).trim(); // ยังไม่รับเงิน → ไม่เข้างวด
 export const commissionMonth = (s: Sale) => paidDate(s).slice(0, 7); // YYYY-MM ของวันรับเงิน (ว่าง = รอรับเงิน)
 // วันจ่ายค่าคอมของงวด = วันที่ 25 ของเดือนถัดไป (YYYY-MM → YYYY-MM-25 ของเดือนถัดไป)
