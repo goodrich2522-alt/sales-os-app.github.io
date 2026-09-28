@@ -113,27 +113,6 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
     return forklifts.find(f => String(f.id ?? "").trim().toUpperCase() === id)
       ?? (sn ? forklifts.find(f => String(f.SN ?? "").trim().toUpperCase() === sn) : undefined);
   };
-  /** รายการเติมข้อมูลของทั้งล็อต (โชว์ก่อนบันทึก) */
-  const fillPlan = rows.map((v, i) => {
-    if (!dupKeyOf(v, i)) return null;                 // ไม่ซ้ำ = สร้างแถวใหม่ตามปกติ
-    const f = stockMatch(v, i);
-    if (!f) return null;
-    const fields = fillableOf(v, f);
-    return fields.length ? { v, f, fields } : null;
-  });
-  const fillPlanCount = fillPlan.filter(Boolean).length;
-
-  /** แถวไหนจะ "เติม SN ลงแถวเดิม" (คำนวณลำดับเดียวกับตอนบันทึก) */
-  const fillTargets = (() => {
-    const used = new Set<string>();
-    return rows.map((v, i) => {
-      if (dupKeyOf(v, i) || !String(v.SN ?? "").trim()) return undefined;
-      const ph = findPlaceholder(v, used);
-      if (ph) used.add(ph.id);
-      return ph;
-    });
-  })();
-  const fillCount = fillTargets.filter(Boolean).length;
 
   // ── รถสั่งผลิต (KD) — ใบที่เลข PI ลงท้าย KD ยังไม่มี SN ตอนนี้ · SN มาตอนผลิตเสร็จ 60-90 วัน ──
   const isMto = (v: ParsedVehicle) => !!v.made_to_order && !String(v.SN ?? "").trim();
@@ -279,6 +258,31 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
     },
   } as Forklift;
   };
+
+  // ⚠️ บล็อกนี้ "ทำงานตอนวาดหน้า" และเรียก toForklift() → ต้องอยู่หลัง toForklift เสมอ
+  //    วางไว้ก่อนหน้า จะพังทันทีที่อ่านไฟล์เข้ามา (Cannot access 'toForklift' before initialization)
+  //    เจอจริง 28 ก.ย. 2569 — หน้าฝ่ายสต็อกล้มทั้งหน้าตอนกดนำเข้าเอกสาร
+  /** รายการเติมข้อมูลของทั้งล็อต (โชว์ก่อนบันทึก) */
+  const fillPlan = rows.map((v, i) => {
+    if (!dupKeyOf(v, i)) return null;                 // ไม่ซ้ำ = สร้างแถวใหม่ตามปกติ
+    const f = stockMatch(v, i);
+    if (!f) return null;
+    const fields = fillableOf(v, f);
+    return fields.length ? { v, f, fields } : null;
+  });
+  const fillPlanCount = fillPlan.filter(Boolean).length;
+
+  /** แถวไหนจะ "เติม SN ลงแถวเดิม" (คำนวณลำดับเดียวกับตอนบันทึก) */
+  const fillTargets = (() => {
+    const used = new Set<string>();
+    return rows.map((v, i) => {
+      if (dupKeyOf(v, i) || !String(v.SN ?? "").trim()) return undefined;
+      const ph = findPlaceholder(v, used);
+      if (ph) used.add(ph.id);
+      return ph;
+    });
+  })();
+  const fillCount = fillTargets.filter(Boolean).length;
 
   const save = () => {
     // กันรถซ้ำ: ซ้ำกับในสต็อก (เทียบทั้งรหัสและ SN) หรือซ้ำกันเองในชุด → ข้าม (ไม่นำเข้าครั้งที่ 2)
