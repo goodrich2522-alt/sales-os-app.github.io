@@ -84,6 +84,23 @@ eq("วันที่กำกวมตัดสินถูก", cash[0].date,
 eq("ยอดมีจุลภาค", cash[0].net, 265000);
 eq("ไม่มีคอลัมน์สถานะ → ยังนับเป็นการขาย", SI.isLiveDoc(cash[0]), true);
 
+
+// ── 5. SN พิมพ์ผิดแบบตัวที่สับสนกันบ่อย ──
+console.log("จับ SN พิมพ์ผิด:");
+const fleet = [
+  { SN: "08015JVF795", model: "CBD15J-LI-S" },
+  { SN: "08015JVF776", model: "CBD15J-LI-S" },
+  { SN: "08015JVF777", model: "CBD15J-LI-S" },
+  { SN: "010304Z3383", model: "CPCD30-Q22K2" },
+  { SN: "54568-16", model: "PWH25-II" },
+];
+eq("E/F สลับ → เจอคันที่ถูก", SI.snNearMatch("08015JVE795", fleet)?.SN, "08015JVF795");
+eq("2/Z สลับ → เจอคันที่ถูก", SI.snNearMatch("01030423383", fleet)?.SN, "010304Z3383");
+eq("ต่างที่เลขลำดับท้าย = คนละคัน ไม่จับคู่", SI.snNearMatch("08015JVF778", fleet), undefined);
+eq("ความยาวไม่เท่ากัน ไม่จับคู่", SI.snNearMatch("08015JVF79", fleet), undefined);
+eq("ไม่มีตัวใกล้เคียง", SI.snNearMatch("ZZZZZZZZZZZ", fleet), undefined);
+eq("SN สั้นเกินไป ไม่เดา", SI.snNearMatch("5456", fleet), undefined);
+
 rmSync(out, { recursive: true, force: true });
 console.log(`\n${fail === 0 ? "ผ่านทั้งหมด" : "มีข้อผิดพลาด"} ${pass}/${pass + fail} ข้อ`);
 process.exit(fail === 0 ? 0 : 1);
