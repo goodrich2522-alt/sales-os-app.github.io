@@ -9,7 +9,7 @@ import {
 import { useApp } from "@/lib/AppContext";
 import { MoneyInput } from "@/components/ui/MoneyInput";
 import {
-  calcCommission, isClosedSale, closeMonth, closeDate, badPaidDate,
+  calcCommission, isClosedSale, closeMonth, closeDate, badPaidDate, paidDate,
   commissionMonth, isCommPending, dealProfit,
   COMMISSION_FIELD, COMMISSION_CATEGORIES, CommissionLock, warrantyFilled, isForkliftVehicle,
   COMMISSION_MANUAL_FIELD,
@@ -211,6 +211,8 @@ function CommissionPageInner() {
           group: d.group, basis: d.basis, basisValue: d.basisValue, category: d.category,
           returning: d.returning, amount: d.amount, closeDate: d.closeDate, note: "", warranty: true,
           carried: false, carryFrom: "",
+          // งวดที่ล็อกแล้วเป็นภาพนิ่ง ไม่ได้เก็บวันเงินเข้าไว้ → ไม่ต้องโชว์
+          paidOn: "", paidMonth: "", closeM: "",
         })),
       }));
     }
@@ -221,6 +223,9 @@ function CommissionPageInner() {
         category: r.comm.category, returning: !!r.comm.returning, amount: r.comm.amount, closeDate: closeDate(r.sale), note: r.comm.note || "", warranty: r.warranty,
         // ยกยอดมาจากเดือนอื่น (ดีลก่อนแอปที่ยกมาจ่ายในงวดนี้ตามวันรับเงิน) — โชว์ป้ายบ่งชี้
         carried: isCarryOver(r.sale), carryFrom: monthLabel(closeMonth(r.sale)),
+        // งวดค่าคอมยึด "เดือนที่เงินเข้าบัญชี" ไม่ใช่เดือนที่ปิดการขาย — ดีลปิด ก.ค. จึงมาโผล่งวด ก.ย. ได้
+        // เดิมแถวโชว์แต่ "ปิด <วันที่>" คนดูเลยงงว่าทำไมดีลเดือน 7 มาอยู่เดือนนี้ → โชว์วันเงินเข้าด้วย
+        paidOn: paidDate(r.sale), paidMonth: commissionMonth(r.sale), closeM: closeMonth(r.sale),
       }));
       return {
         staff: g.staff, total: g.total, dealCount: g.deals.length, missing: g.missing,
@@ -684,6 +689,11 @@ function CommissionPageInner() {
                             <button onClick={e => { e.stopPropagation(); setEditDateFor(editDateFor === d.saleId ? null : d.saleId); }}
                               title="แก้วันส่งมอบ (= วันที่ปิดการขาย)"
                               className="underline decoration-dotted hover:text-amber-700 font-semibold">ปิด {d.closeDate} ✎</button>
+                          )}
+                          {d.paidOn && d.paidMonth !== d.closeM && (
+                            <span className="text-sky-700" title="งวดค่าคอมยึดเดือนที่เงินเข้าบัญชี ไม่ใช่เดือนที่ปิดการขาย">
+                              {" · เงินเข้า "}{d.paidOn}
+                            </span>
                           )}
                         </p>
                         {editDateFor === d.saleId && !locked && (
