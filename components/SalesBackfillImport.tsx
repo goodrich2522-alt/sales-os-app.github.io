@@ -15,7 +15,7 @@
 import { useState } from "react";
 import { X, Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, Download } from "lucide-react";
 import { useApp } from "@/lib/AppContext";
-import { readInvoiceFile, InvoiceDoc, SALE_KINDS, isLiveDoc } from "@/lib/salesImport";
+import { readInvoiceFile, InvoiceDoc, SALE_KINDS, isLiveDoc, snNearMatch } from "@/lib/salesImport";
 import type { Forklift, Sale } from "@/lib/types";
 
 const key = (v: unknown) => String(v ?? "").trim().toUpperCase().replace(/\s+/g, "");
@@ -26,6 +26,7 @@ interface Row {
   fk?: Forklift;
   existing?: Sale;
   amount: number;
+  near?: Forklift;      // รถที่ SN ใกล้เคียง (น่าจะพิมพ์ผิดในบิล) — ใช้ต่อเมื่อผู้ใช้ยืนยัน
   flags: string[];
 }
 
@@ -37,6 +38,8 @@ export function SalesBackfillImport({ onClose }: { onClose: () => void }) {
   const [countCommission, setCountCommission] = useState(false);
   const [saved, setSaved] = useState(0);
   const [showAll, setShowAll] = useState(false);
+  // SN ในบิลที่ผู้ใช้ยืนยันแล้วว่าพิมพ์ผิด → ให้ใช้รถคันที่ระบบชี้แทน (ค่าตั้งต้น = ไม่ใช้)
+  const [useFix, setUseFix] = useState<Record<string, boolean>>({});
 
   const read = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -70,20 +73,24 @@ export function SalesBackfillImport({ onClose }: { onClose: () => void }) {
     const share = d.sns.length;                       // ใบเดียวขายหลายคัน → เฉลี่ยยอดเท่ากัน
     const base = d.net || d.total;
     return d.sns.map(sn => {
-      const fk = fkBySn.get(key(sn)) ?? fkById.get(key(sn));
+      const exact = fkBySn.get(key(sn)) ?? fkById.get(key(sn));
+      // ไม่เจอตรง ๆ → ลองหาคันที่ SN ต่างกันแค่ตัวที่สับสนกันบ่อย (E/F · 2/Z · 8/B)
+      const near = exact ? undefined : snNearMatch(sn, forklifts);
+      const fk = exact ?? (useFix[sn] ? near : undefined);
       const existing = fk ? (saleByFk.get(key(fk.id)) ?? saleByFk.get(key(fk.SN))) : saleByFk.get(key(sn));
       const flags: string[] = [];
       if (!d.date) flags.push("เอกสารไม่มีวันที่ — วันเริ่มประกันจะว่าง ต้องกรอกเอง");
       if (!base) flags.push("เอกสารยอดเป็น 0");
       if (share > 1) flags.push(`ใบนี้ขาย ${share} คัน — เฉลี่ยยอดเท่ากัน`);
       if (fk && String(fk.status ?? "").trim() === "พร้อมขาย") flags.push("สต็อกยังขึ้นพร้อมขาย ทั้งที่มีบิลขายแล้ว — จะปรับเป็นปิดการขาย");
-      return { doc: d, sn, fk, existing, amount: Math.round((base / share) * 100) / 100, flags };
+      return { doc: d, sn, fk, near, existing, amount: Math.round((base / share) * 100) / 100, flags };
     });
   });
 
   const toAdd = rows.filter(r => r.fk && !r.existing);
   const already = rows.filter(r => r.existing);
   const noFk = rows.filter(r => !r.fk);
+  const fixable = rows.filter(r => !r.fk && r.near);          // ชี้เป้าว่าพิมพ์ผิด รอผู้ใช้ยืนยัน
 
   const save = () => {
     const list: Sale[] = toAdd.map(r => ({
@@ -172,6 +179,28 @@ export function SalesBackfillImport({ onClose }: { onClose: () => void }) {
                 </span>
               </label>
 
+              {fixable.length > 0 && (
+                <div className="bg-sky-50 border border-sky-200 rounded-xl px-3 py-2.5">
+                  <p className="text-xs font-bold text-sky-900">SN ในบิลน่าจะพิมพ์ผิด {fixable.length} รายการ</p>
+                  <p className="text-[11px] text-sky-700 mb-1.5">
+                    ต่างจาก SN ในระบบแค่ตัวที่สับสนกันบ่อย (E/F · 2/Z · 8/B) — <b>ติ๊กเพื่อใช้รถคันที่ระบบชี้</b> ·
+                    ไม่ติ๊ก = ไม่นำเข้า  <span className="text-sky-600">เช็ก SN ที่ตัวรถก่อนติ๊กทุกครั้ง</span>
+                  </p>
+                  <div className="flex flex-col gap-1">
+                    {fixable.map(r => (
+                      <label key={r.doc.doc + "_" + r.sn} className="flex items-start gap-2 text-[11px] bg-white border border-sky-100 rounded-lg px-2 py-1.5 cursor-pointer">
+                        <input type="checkbox" checked={!!useFix[r.sn]} className="mt-0.5"
+                          onChange={e => setUseFix(v => ({ ...v, [r.sn]: e.target.checked }))} />
+                        <span className="text-slate-700">
+                          บิลเขียน <b className="font-mono">{r.sn}</b> → ในระบบคือ <b className="font-mono">{r.near!.SN}</b>
+                          <span className="text-slate-500"> · {r.near!.brand} {r.near!.model} · {r.near!.status}</span>
+                          <br /><span className="text-slate-400">{r.doc.doc} · {r.doc.date} · {r.doc.customer}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
               {noFk.length > 0 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex flex-wrap items-center gap-2">
                   <AlertTriangle className="w-4 h-4 text-amber-600" />

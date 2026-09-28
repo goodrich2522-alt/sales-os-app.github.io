@@ -159,3 +159,46 @@ export async function readInvoiceFile(file: File): Promise<InvoiceDoc[]> {
   }
   return out;
 }
+
+// ── SN ในบิลพิมพ์ผิดแบบ "ตัวที่สับสนกันบ่อย" ────────────────────────────────
+//
+// (28 ก.ย. 2569) เจอจริง: บิล IV-690822001 เขียน 08015JVE795 แต่ SN จริงคือ 08015JVF795
+// ต่างกันแค่ E กับ F — รถคันนั้นเลยค้างเป็น "พร้อมขาย" ทั้งที่ขายและเก็บเงินไปแล้ว
+//
+// ⚠️ ห้ามจับคู่ด้วย "ต่างกัน 1 ตัว" เฉย ๆ — SN ในล็อตเดียวกันเรียงเลขติดกันอยู่แล้ว
+//    (08015JVF776 กับ 08015JVF777 คือคนละคันจริง) เดาแล้วผูกผิดคันแก้ยากกว่าปล่อยไว้
+//    จึงยอมรับเฉพาะตัวอักษรที่สับสนกันบ่อย และต้องไม่ใช่ตำแหน่งเลขลำดับท้าย
+
+/** คู่ตัวอักษร/ตัวเลขที่อ่านสลับกันบ่อย (พิมพ์มือหรือ OCR) */
+const CONFUSABLE: string[][] = [["0", "O"], ["1", "I"], ["5", "S"], ["8", "B"], ["2", "Z"], ["6", "G"], ["E", "F"], ["U", "V"]];
+const confusablePair = (a: string, b: string) => CONFUSABLE.some(p => p.includes(a) && p.includes(b));
+/** ตำแหน่งท้าย ๆ ที่เป็นตัวเลขล้วน = "เลขลำดับในล็อต" (08015JVF776 กับ 777 คือคนละคัน)
+ *  ต่างกันตรงนั้นห้ามถือว่าพิมพ์ผิด แม้จะเป็นคู่ที่สับสนกันบ่อยก็ตาม */
+const SEQ_TAIL = 2;
+
+/**
+ * หารถที่ SN "น่าจะเป็นคันเดียวกัน" กับที่เขียนในบิล
+ * เงื่อนไขครบทุกข้อเท่านั้น: ความยาวเท่ากัน · ต่างกันไม่เกิน 1 ตำแหน่ง ·
+ * ตำแหน่งที่ต่างต้องเป็นคู่ที่สับสนกันบ่อย · และต้องอยู่ใน "หัว" ไม่ใช่เลขลำดับท้าย
+ */
+export function snNearMatch<T extends { SN?: string; model?: string }>(
+  billSn: string, fleet: T[],
+): T | undefined {
+  const a = String(billSn ?? "").trim().toUpperCase();
+  if (a.length < 6) return undefined;
+  const hits = fleet.filter(f => {
+    const b = String(f.SN ?? "").trim().toUpperCase();
+    if (b.length !== a.length) return false;
+    let at = -1;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] === b[i]) continue;
+      if (at >= 0) return false;                 // ต่างกันเกิน 1 ตำแหน่ง
+      at = i;
+    }
+    if (at < 0) return false;                    // เหมือนกันเป๊ะ (จับคู่ปกติไปแล้ว)
+    // ต่างกันที่ตัวเลข 2 ตัวท้าย = เลขลำดับในล็อต → คนละคัน ไม่ใช่พิมพ์ผิด
+    if (at >= a.length - SEQ_TAIL && /\d/.test(a[at]) && /\d/.test(b[at])) return false;
+    return confusablePair(a[at], b[at]);
+  });
+  return hits.length === 1 ? hits[0] : undefined; // เจอหลายคัน = ไม่ชัด ไม่เดา
+}
