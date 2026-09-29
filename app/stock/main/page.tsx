@@ -2276,7 +2276,14 @@ export default function StockMain() {
           ["ราคาขาย", saleForItem.actual_sale ? `฿${Number(saleForItem.actual_sale).toLocaleString()}` : ""],
           ["การชำระ", (saleForItem.payment_type as string) ?? ""],
           ["สถานะดีล", (saleForItem.sale_status as string) ?? ""],
-          ["วันที่ปิดการขาย", saleForItem.created_at ?? ""],
+          // วันปิดการขายจริง = วันส่งมอบ (กติกาข้อ 8) · created_at เป็นแค่วันที่สร้างดีล
+          // เดิมโชว์ created_at ดิบ ๆ เป็น 2026-08-24T00:00:00.000Z อ่านไม่รู้เรื่องและไม่ใช่วันที่ใช้จริง
+          ["วันส่งมอบ / ปิดการขาย", toIsoDate(saleForItem.delivery_date) || "— ยังไม่กรอก (ค่าคอมใช้วันนี้คิดงวด)"],
+          // ⭐ (29 ก.ย. 2569) ผู้ใช้ถาม "ปิดการขายแล้วทำไมไม่มีในประวัติค่าคอม"
+          //    คำตอบคือดีลยังไม่มีวันรับเงิน → อยู่กลุ่ม "รอรับเงิน" ยังไม่เข้างวดไหน
+          //    เดิมการ์ดไม่ได้บอกเรื่องนี้เลย ต้องไปเปิดหน้าค่าคอมเองถึงจะรู้
+          ["วันที่รับเงิน (งวดค่าคอม)", toIsoDate(saleForItem.payment_received_date) || "— ยังไม่รับเงิน · ยังไม่เข้างวดค่าคอม"],
+          ["วันที่สร้างดีล", toIsoDate(saleForItem.created_at)],
           ["เลขที่ใบกำกับ", (saleForItem.custom_fields?.["เลขที่ใบกำกับภาษี"] as string) ?? ""],
         ] : [];
         // custom_fields ที่โชว์ในสเปก/ข้อมูลแล้ว + คีย์ internal (JSON/มี block เฉพาะ) → ไม่ต้องโชว์ซ้ำใน "ข้อมูลเพิ่มเติม"
