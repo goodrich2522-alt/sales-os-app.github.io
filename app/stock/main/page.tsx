@@ -80,7 +80,7 @@ function fmtAdded(iso?: string) {
 export default function StockMain() {
   const router = useRouter();
   const {
-    forklifts, addForkliftsBulk, updateForklift, deleteForklift, inspections, addInspection, sales, updateSale, refresh,
+    forklifts, addForkliftsBulk, updateForklift, deleteForklift, inspections, addInspection, sales, addSale, updateSale, refresh,
     returnSale, approveStockSale, rejectStockSale, setActor,
     exportData, importData,
     fieldConfig, updateFieldOptions,
@@ -145,6 +145,15 @@ export default function StockMain() {
   const [piEdit, setPiEdit]               = useState(""); // เติม/แก้เลขที่ PI (ฝ่ายสต็อกทุกคนกรอกได้)
   const [piSaved, setPiSaved]             = useState(false);
   // แก้ไขสเปกรถ (ฝ่ายสต็อกทุกคน) — ลงข้อมูลย้อนหลัง รถเก่าที่สเปกว่าง · แก้ได้ทุกสถานะ
+  // ── ฝ่ายสต็อกปิดการขายแทนฝ่ายขายได้ (29 ก.ย. 2569 · ผู้ใช้สั่ง) ──
+  // เดิมสต็อกตั้งสถานะ "ขายแล้ว" ไม่ได้ถ้ายังไม่มีดีล (กันรถที่ขายแล้วแต่ไม่รู้ว่าใครขาย)
+  // แต่บางทีเซลล์ไม่ว่าง/อยู่หน้างาน สต็อกต้องปิดให้ → เปิดให้ปิดได้ "แต่ต้องระบุชื่อเซลล์เจ้าของงาน"
+  // ดีลที่สร้างจากตรงนี้จะบันทึกไว้ด้วยว่าใครเป็นคนกรอกแทน (ตรวจย้อนหลังได้)
+  const [closeForm, setCloseForm] = useState<{ staff: string; customer: string; tel: string; price: string; date: string; pay: string } | null>(null);
+  const [closeErr, setCloseErr] = useState("");
+  const [staffEditFor, setStaffEditFor] = useState<string | null>(null);  // แก้ชื่อเซลล์ของดีลไหนอยู่
+  const [staffEditVal, setStaffEditVal] = useState("");
+
   const [specEdit, setSpecEdit]           = useState({ brand: "", model: "", category: "", capacity: "", height: "", mast: "", valve: "", fork: "", fuel: "" });
   const [specSaved, setSpecSaved]         = useState(false);
   const [photoBusy, setPhotoBusy]         = useState(false); // กำลังอัปโหลดรูปจากฝ่ายสต็อก
@@ -333,6 +342,38 @@ export default function StockMain() {
     showToast(`ตั้ง "${next}" ไม่ได้ — ${f.SN || f.id} ยังไม่มีดีลผูก · ให้ฝ่ายขายเปิดดีลในหน้าขายก่อน (จะได้รู้ว่าเซลล์คนไหนปิดการขาย)`);
     return true;
   };
+  /** ฝ่ายสต็อกปิดการขายแทนฝ่ายขาย — บังคับระบุชื่อเซลล์เจ้าของงาน ไม่งั้นค่าคอมไม่รู้ว่าของใคร */
+  const saveCloseForStaff = (f: Forklift) => {
+    if (!closeForm) return;
+    const staff = closeForm.staff.trim();
+    const customer = closeForm.customer.trim();
+    const date = toIsoDate(closeForm.date);
+    if (!staff) { setCloseErr("ต้องระบุชื่อเซลล์เจ้าของงาน — ไม่งั้นค่าคอมจะไม่รู้ว่าเป็นของใคร"); return; }
+    if (!customer) { setCloseErr("ต้องกรอกชื่อลูกค้า"); return; }
+    if (!date) { setCloseErr("ต้องกรอกวันส่งมอบ (= วันเริ่มประกัน)"); return; }
+    const price = Number(String(closeForm.price).replace(/[^\d.-]/g, "")) || 0;
+    addSale({
+      id: `sale_stock_${f.id}_${Date.now()}`,
+      forklift_id: f.id, forklift_unit_no: f.SN || f.id,
+      forklift_brand: f.brand ?? "", forklift_model: f.model ?? "",
+      sales_staff: staff, customer_name: customer, customer_tel: closeForm.tel.trim(),
+      customer_type: "นิติบุคคล", province: "",
+      payment_type: (closeForm.pay || "เงินสด") as Sale["payment_type"],
+      actual_sale: price, deposit: 0,
+      delivery_date: date,                       // = วันเริ่มประกัน (กติกาข้อ 8)
+      sale_status: "ปิดการขาย/จัดส่งแล้ว",
+      sale_type: "รถขายเต็มคัน",
+      created_at: new Date().toISOString(),
+      custom_fields: {
+        // เก็บร่องรอยว่าใครกรอกแทน — ตรวจย้อนหลังได้ว่าไม่ใช่เซลล์กรอกเอง
+        "ปิดการขายโดยฝ่ายสต็อก": `${today()} · ${username || "สต็อก"}`,
+      },
+    });
+    setCloseForm(null); setCloseErr("");
+    showToast(`ปิดการขายให้ ${staff} แล้ว ✓ — เปิดหน้าค่าคอมเติมวันรับเงินได้เลย`);
+  };
+
+
   const bulkSetStatus = (status: string) => {
     if (!status) return;
     const list = selForklifts();
@@ -2390,8 +2431,32 @@ export default function StockMain() {
                         </div>
                       ))}
                     </div>
-                    {!String(saleForItem.sales_staff ?? "").trim() && (
-                      <p className="text-[11px] text-slate-400 mt-1.5">* ดีลนี้ไม่มีข้อมูลเซลล์ผู้ขาย (นำเข้าจากบิลภาษี)</p>
+                    {/* ── แก้ชื่อเซลล์เจ้าของงานจากการ์ดรถได้เลย (29 ก.ย. 2569 · ผู้ใช้สั่ง) ── */}
+                    {/* ดีลที่นำเข้าจากบิลภาษีมักไม่มีชื่อเซลล์ → ยอดขายไม่เข้าใคร ค่าคอมก็ไม่ขึ้น */}
+                    {staffEditFor === saleForItem.id ? (
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5 bg-indigo-50 border border-indigo-200 rounded-xl px-2.5 py-2">
+                        <span className="text-[11px] font-semibold text-indigo-800">เซลล์เจ้าของงาน:</span>
+                        <input list="card-staff-opts" value={staffEditVal} onChange={e => setStaffEditVal(e.target.value)}
+                          placeholder="พิมพ์/เลือกชื่อเซลล์"
+                          className="flex-1 min-w-[150px] border border-indigo-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 bg-white" />
+                        <datalist id="card-staff-opts">{histStaffOptions.map(n => <option key={n} value={n} />)}</datalist>
+                        <button onClick={() => {
+                            const nm = staffEditVal.trim();
+                            if (!nm) { showToast("ต้องระบุชื่อเซลล์ — ไม่งั้นค่าคอมไม่รู้ว่าของใคร"); return; }
+                            updateSale({ ...saleForItem, sales_staff: nm,
+                              custom_fields: { ...(saleForItem.custom_fields ?? {}), "แก้ชื่อเซลล์โดยฝ่ายสต็อก": `${today()} · ${username || "สต็อก"}` } });
+                            setStaffEditFor(null); showToast("บันทึกชื่อเซลล์แล้ว ✓");
+                          }}
+                          className="text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-1.5">บันทึก</button>
+                        <button onClick={() => setStaffEditFor(null)} className="text-[11px] font-semibold text-slate-500 px-2 py-1.5">ยกเลิก</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => { setStaffEditFor(saleForItem.id); setStaffEditVal(saleForItem.sales_staff ?? ""); }}
+                        className="mt-1.5 text-[11px] font-semibold text-indigo-700 hover:text-indigo-900 underline decoration-dotted">
+                        {String(saleForItem.sales_staff ?? "").trim()
+                          ? "✎ แก้ชื่อเซลล์เจ้าของงาน"
+                          : "⚠️ ดีลนี้ยังไม่มีชื่อเซลล์ — แตะเพื่อใส่ชื่อ (ค่าคอมจะได้เข้าถูกคน)"}
+                      </button>
                     )}
                   </div>
                 )}
@@ -2445,6 +2510,79 @@ export default function StockMain() {
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">* กรอกเลขที่ PI จริงจากใบสั่งซื้อ — อัปเดตทุกฝ่ายทันที</p>
                 </div>
+
+                {/* ── ปิดการขายแทนฝ่ายขาย (29 ก.ย. 2569 · ผู้ใช้สั่ง) ── */}
+                {/* บางทีเซลล์อยู่หน้างาน สต็อกต้องปิดให้ — ปิดได้ แต่ต้องระบุชื่อเซลล์เจ้าของงาน */}
+                {!saleForItem && (
+                  <div className="bg-indigo-50/60 border border-indigo-200 rounded-2xl p-3.5">
+                    {!closeForm ? (
+                      <>
+                        <p className="text-sm font-bold text-indigo-800 flex items-center gap-1.5">
+                          <ShoppingCart className="w-4 h-4" />รถคันนี้ยังไม่มีดีล
+                        </p>
+                        <p className="text-[11px] text-indigo-600 mt-0.5 mb-2">
+                          ถ้าขายไปแล้วแต่เซลล์ยังไม่ได้เปิดดีล ฝ่ายสต็อกปิดให้ได้เลย — <b>ต้องระบุชื่อเซลล์เจ้าของงาน</b>
+                          เพื่อให้ยอดขายและค่าคอมเข้าถูกคน
+                        </p>
+                        <button onClick={() => { setCloseErr(""); setCloseForm({ staff: ownerOf(it) || "", customer: (cf["รายละเอียด (ลูกค้า)"] as string) ?? "", tel: "", price: "", date: toIsoDate(it.received_date) || today(), pay: "เงินสด" }); }}
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl px-4 py-2">
+                          ปิดการขายแทนฝ่ายขาย
+                        </button>
+                      </>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        <p className="text-sm font-bold text-indigo-800">ปิดการขายแทนฝ่ายขาย</p>
+                        <label className="text-[11px] font-semibold text-indigo-700">เซลล์เจ้าของงาน *
+                          <input list="close-staff-opts" value={closeForm.staff}
+                            onChange={e => { setCloseForm({ ...closeForm, staff: e.target.value }); setCloseErr(""); }}
+                            placeholder="พิมพ์/เลือกชื่อเซลล์ที่ขายคันนี้"
+                            className="mt-1 w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm text-slate-800 bg-white" />
+                          <datalist id="close-staff-opts">{histStaffOptions.map(n => <option key={n} value={n} />)}</datalist>
+                        </label>
+                        <label className="text-[11px] font-semibold text-indigo-700">ลูกค้า *
+                          <input value={closeForm.customer}
+                            onChange={e => { setCloseForm({ ...closeForm, customer: e.target.value }); setCloseErr(""); }}
+                            placeholder="ชื่อบริษัท / ชื่อลูกค้า"
+                            className="mt-1 w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm text-slate-800 bg-white" />
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="text-[11px] font-semibold text-indigo-700">เบอร์โทร
+                            <input value={closeForm.tel} onChange={e => setCloseForm({ ...closeForm, tel: e.target.value })}
+                              className="mt-1 w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm text-slate-800 bg-white" />
+                          </label>
+                          <label className="text-[11px] font-semibold text-indigo-700">ราคาขาย (บาท)
+                            <input value={closeForm.price} onChange={e => setCloseForm({ ...closeForm, price: e.target.value })}
+                              inputMode="numeric" placeholder="เช่น 255000"
+                              className="mt-1 w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm text-slate-800 bg-white" />
+                          </label>
+                          <label className="text-[11px] font-semibold text-indigo-700">วันส่งมอบ * (= วันเริ่มประกัน)
+                            <input type="date" value={closeForm.date}
+                              onChange={e => { setCloseForm({ ...closeForm, date: e.target.value }); setCloseErr(""); }}
+                              className="mt-1 w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm text-slate-800 bg-white" />
+                          </label>
+                          <label className="text-[11px] font-semibold text-indigo-700">การชำระ
+                            <select value={closeForm.pay} onChange={e => setCloseForm({ ...closeForm, pay: e.target.value })}
+                              className="mt-1 w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm text-slate-800 bg-white">
+                              {["เงินสด", "เครดิต", "ไฟแนนซ์", "บิลเงินสด", "บิลแวท"].map(x => <option key={x} value={x}>{x}</option>)}
+                            </select>
+                          </label>
+                        </div>
+                        {closeErr && <p className="text-[11px] font-semibold text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">{closeErr}</p>}
+                        <p className="text-[10px] text-indigo-600">
+                          * ระบบจะบันทึกไว้ว่า &ldquo;ปิดโดยฝ่ายสต็อก ({username || "สต็อก"})&rdquo; ตรวจย้อนหลังได้ ·
+                          วันรับเงินไม่ต้องกรอก รอไฟล์รับเงินจากบัญชี
+                        </p>
+                        <div className="flex gap-2">
+                          <button onClick={() => saveCloseForStaff(it)}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl px-4 py-2">บันทึกปิดการขาย</button>
+                          <button onClick={() => { setCloseForm(null); setCloseErr(""); }}
+                            className="text-sm font-semibold text-slate-500 hover:bg-white rounded-xl px-3 py-2">ยกเลิก</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* แก้ไขสเปกรถ (ฝ่ายสต็อกทุกคน) — ลงข้อมูลย้อนหลังรถเก่าที่สเปกว่าง · แก้ได้ทุกสถานะ รวมปิดการขายแล้ว */}
                 {(() => {
                   const specDirty =
