@@ -2431,6 +2431,23 @@ export default function StockMain() {
                         </div>
                       ))}
                     </div>
+                    {/* ── ป้ายบอกว่าดีลนี้อยู่งวดค่าคอมไหนแล้ว (29 ก.ย. 2569) ── */}
+                    {/* ปิดการขายแล้วไม่ได้แปลว่าเข้างวดทันที — งวดยึด "เดือนที่เงินเข้าบัญชี" */}
+                    {(() => {
+                      const paid = toIsoDate(saleForItem.payment_received_date);
+                      const cm = toIsoDate(saleForItem.delivery_date).slice(0, 7);
+                      // ดีลที่ปิด ≤ ก.ค. 69 เข้างวดตามเดือนที่ปิดเลย (ยุคก่อนจ่ายผ่านแอป)
+                      const old = !!cm && cm <= "2026-07";
+                      const period = paid ? paid.slice(0, 7) : (old ? cm : "");
+                      return (
+                        <p className={`mt-1.5 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg inline-block ${period ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-amber-50 text-amber-700 border border-amber-200"}`}>
+                          {period
+                            ? `✓ เข้างวดค่าคอมเดือน ${thaiMonthShort(Number(period.slice(5, 7)))} ${Number(period.slice(0, 4)) + 543} แล้ว`
+                            : "⏳ อยู่กลุ่ม \"รอรับเงิน\" — ยังไม่เข้างวดไหน · รอวันรับเงินจากไฟล์บัญชี หรือกรอกที่หน้าค่าคอม"}
+                        </p>
+                      );
+                    })()}
+
                     {/* ── แก้ชื่อเซลล์เจ้าของงานจากการ์ดรถได้เลย (29 ก.ย. 2569 · ผู้ใช้สั่ง) ── */}
                     {/* ดีลที่นำเข้าจากบิลภาษีมักไม่มีชื่อเซลล์ → ยอดขายไม่เข้าใคร ค่าคอมก็ไม่ขึ้น */}
                     {staffEditFor === saleForItem.id ? (
