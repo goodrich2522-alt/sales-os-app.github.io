@@ -108,7 +108,9 @@ interface AppContextType {
   deleteForklift: (id: string) => void;
   addSale: (s: Sale) => void;
   addSalesBulk: (list: Sale[]) => void;   // นำเข้าใบขายย้อนหลังทีละหลายใบ
-  loadSaleProofs: (saleId: string) => Promise<void>;  // โหลดรูปสลิปของดีลใบนั้น (ไม่ได้โหลดมาตอนเปิดแอป)
+  loadSaleProofs: (saleId: string) => Promise<void>;
+  saveError: { what: string; msg: string; at: number } | null;   // บันทึกขึ้นเซิร์ฟเวอร์ไม่สำเร็จครั้งล่าสุด
+  clearSaveError: () => void;  // โหลดรูปสลิปของดีลใบนั้น (ไม่ได้โหลดมาตอนเปิดแอป)
   updateSale: (s: Sale) => void;
   deleteSale: (saleId: string) => void;
   returnSale: (saleId: string, opts: { forkStatus: string; reason?: string; date?: string }) => void; // ลูกค้าคืนสินค้า — เก็บประวัติดีลไว้ ตัดยอด/ค่าคอมออก
@@ -233,6 +235,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => { inspectionsRef.current = inspections; }, [inspections]);
 
   // ── Audit log: ใครทำอะไรเมื่อไหร่ (จุดสำคัญ) ──
+  // ⚠️ เดิมบันทึกไม่สำเร็จจะเงียบ (แค่ console.warn) — หน้าจอโชว์ว่าบันทึกแล้วทั้งที่ข้อมูลไม่เข้าเซิร์ฟเวอร์
+  //    พอรีเฟรชข้อมูลก็หาย โดยไม่มีใครรู้ว่าเกิดอะไรขึ้น (29 ก.ย. 2569)
+  //    → เก็บข้อความ error ล่าสุดไว้ ให้แถบเตือนขึ้นทุกหน้า
+  const [saveError, setSaveError] = useState<{ what: string; msg: string; at: number } | null>(null);
+  const clearSaveError = useCallback(() => setSaveError(null), []);
+  const failed = (what: string) => (e: unknown) => {
+    console.warn(what, e);
+    const msg = e instanceof Error ? e.message : (typeof e === "object" && e && "message" in e ? String((e as { message: unknown }).message) : String(e));
+    setSaveError({ what, msg: msg.slice(0, 200), at: Date.now() });
+  };
+
   const actorRef = useRef<string>("ระบบ");
   const setActor = useCallback((name: string) => { actorRef.current = (name || "").trim() || "ระบบ"; }, []);
   const logAudit = useCallback((action: string, entity: string, entityId: string, detail?: unknown) => {
@@ -419,38 +432,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const addCustomer = useCallback((c: Customer) => {
     lastLocalEditRef.current = Date.now();
     setCustomers(p => [c, ...p]);
-    if (api.apiEnabled) api.addCustomerApi(c).catch(e => console.warn("addCustomer", e));
+    if (api.apiEnabled) api.addCustomerApi(c).catch(failed("addCustomer"));
   }, []);
   const updateCustomer = useCallback((c: Customer) => {
     lastLocalEditRef.current = Date.now();
     setCustomers(p => p.map(x => x.id === c.id ? c : x));
-    if (api.apiEnabled) api.updateCustomerApi(c).catch(e => console.warn("updateCustomer", e));
+    if (api.apiEnabled) api.updateCustomerApi(c).catch(failed("updateCustomer"));
   }, []);
   const deleteCustomer = useCallback((id: string) => {
     lastLocalEditRef.current = Date.now();
     setCustomers(p => p.filter(x => x.id !== id));
-    if (api.apiEnabled) api.deleteCustomerApi(id).catch(e => console.warn("deleteCustomer", e));
+    if (api.apiEnabled) api.deleteCustomerApi(id).catch(failed("deleteCustomer"));
   }, []);
 
   // ── Forklift CRUD ─────────────────────────────────────────────────────────
   const addForklift = useCallback((f: Forklift) => {
     lastLocalEditRef.current = Date.now();
     setForklifts(p => [f, ...p]);
-    if (api.apiEnabled) api.addForkliftApi(f).catch(e => console.warn("addForklift", e));
+    if (api.apiEnabled) api.addForkliftApi(f).catch(failed("addForklift"));
   }, []);
   // เพิ่มรถหลายคันพร้อมกัน (อัปโหลดจากไฟล์) — optimistic + upsert เป็นก้อน
   const addForkliftsBulk = useCallback((fs: Forklift[]) => {
     if (fs.length === 0) return;
     lastLocalEditRef.current = Date.now();
     setForklifts(p => [...fs, ...p]);
-    if (api.apiEnabled) api.bulkUpsertForkliftsApi(fs).catch(e => console.warn("addForkliftsBulk", e));
+    if (api.apiEnabled) api.bulkUpsertForkliftsApi(fs).catch(failed("addForkliftsBulk"));
     logAudit(`นำเข้ารถเข้าสต็อก ${fs.length} คัน`, "forklift", fs[0].id, { count: fs.length, ids: fs.slice(0, 20).map(f => f.id), pi: fs[0].pi_no });
   }, []);
   const updateForklift = useCallback((f: Forklift) => {
     const before = forkliftsRef.current.find(x => x.id === f.id);
     lastLocalEditRef.current = Date.now();
     setForklifts(p => p.map(x => x.id === f.id ? f : x));
-    if (api.apiEnabled) api.updateForkliftApi(f).catch(e => console.warn("updateForklift", e));
+    if (api.apiEnabled) api.updateForkliftApi(f).catch(failed("updateForklift"));
     // ⭐ (23 ก.ย. 2569) ชื่อยี่ห้อ/รุ่นในใบขายเป็น "สำเนาข้อความ" ไม่ได้ join กับทะเบียนรถ
     //    แก้ชื่อรุ่นที่รถแล้วใบขายยังค้างชื่อเก่า → รายงาน (รุ่นขายดี/วางแผนสั่งสต็อก) ยังโชว์ชื่อผิด
     //    จึงอัปเดตใบขายของคันนั้นตามไปด้วย (เฉพาะยี่ห้อ/รุ่น — ฟิลด์อื่นของใบขายไม่แตะ)
@@ -467,7 +480,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             ? { forklift_unit_no: f.SN } : {}),
         });
         setSales(p => p.map(s => (s.forklift_id === f.id ? fix(s) : s)));
-        if (api.apiEnabled) linked.forEach(s => api.updateSaleApi(fix(s)).catch(e => console.warn("sync sale model", e)));
+        if (api.apiEnabled) linked.forEach(s => api.updateSaleApi(fix(s)).catch(failed("sync sale model")));
         logAudit("แก้ชื่อรุ่นในใบขายตามรถ", "forklift", f.id, {
           from: `${before.brand} ${before.model}`, to: `${f.brand} ${f.model}`, ใบขายที่อัปเดต: linked.length,
         });
@@ -485,7 +498,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const before = forkliftsRef.current.find(f => f.id === id);
     lastLocalEditRef.current = Date.now();
     setForklifts(p => p.filter(f => f.id !== id));
-    if (api.apiEnabled) api.deleteForkliftApi(id).catch(e => console.warn("deleteForklift", e));
+    if (api.apiEnabled) api.deleteForkliftApi(id).catch(failed("deleteForklift"));
     logAudit("ลบรถออกจากสต็อก", "forklift", id, before ? { model: `${before.brand} ${before.model}`, SN: before.SN, status: before.status } : null);
   }, []);
 
@@ -554,9 +567,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       (async () => {
         const saved = await uploadPaymentProof(s);
         if (saved !== s) setSales(p => p.map(x => x.id === s.id ? saved : x)); // เปลี่ยน base64 → URL
-        api.addSaleApi(saved).catch(e => console.warn("addSale", e));
+        api.addSaleApi(saved).catch(failed("addSale"));
         const target = forkliftsRef.current.find(f => f.id === s.forklift_id);
-        if (target) api.updateForkliftApi({ ...target, status: nextStatus }).catch(e => console.warn("updateForklift", e));
+        if (target) api.updateForkliftApi({ ...target, status: nextStatus }).catch(failed("updateForklift"));
       })();
     }
     logAudit("บันทึกการขาย/จอง", "sale", s.id, { forklift: s.forklift_id, model: `${s.forklift_brand} ${s.forklift_model}`, status: s.sale_status, customer: s.customer_name, amount: s.actual_sale });
@@ -584,8 +597,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }));
     if (api.apiEnabled) {
       (async () => {
-        await api.bulkUpsertSalesApi(list).catch(e => console.warn("addSalesBulk", e));
-        if (touched.length) await api.bulkUpsertForkliftsApi(touched).catch(e => console.warn("addSalesBulk/forklifts", e));
+        await api.bulkUpsertSalesApi(list).catch(failed("addSalesBulk"));
+        if (touched.length) await api.bulkUpsertForkliftsApi(touched).catch(failed("addSalesBulk/forklifts"));
       })();
     }
     logAudit(`นำเข้าใบขายย้อนหลัง ${list.length} ใบ`, "sale", list[0].id,
@@ -603,9 +616,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       (async () => {
         const saved = await uploadPaymentProof(s);
         if (saved !== s) setSales(p => p.map(x => x.id === s.id ? saved : x));
-        api.updateSaleApi(saved).catch(e => console.warn("updateSale", e));
+        api.updateSaleApi(saved).catch(failed("updateSale"));
         const target = forkliftsRef.current.find(f => f.id === s.forklift_id);
-        if (target) api.updateForkliftApi({ ...target, status: nextStatus }).catch(e => console.warn("updateForklift", e));
+        if (target) api.updateForkliftApi({ ...target, status: nextStatus }).catch(failed("updateForklift"));
       })();
     }
   }, []);
@@ -620,9 +633,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSales(p => p.map(x => x.id === saleId ? ns : x));
     setForklifts(p => p.map(f => f.id === sale.forklift_id ? { ...f, status: finalStatus } : f));
     if (api.apiEnabled) {
-      api.updateSaleApi(ns).catch(e => console.warn("approveSale", e));
+      api.updateSaleApi(ns).catch(failed("approveSale"));
       const target = forkliftsRef.current.find(f => f.id === sale.forklift_id);
-      if (target) api.updateForkliftApi({ ...target, status: finalStatus }).catch(e => console.warn("updateForklift", e));
+      if (target) api.updateForkliftApi({ ...target, status: finalStatus }).catch(failed("updateForklift"));
     }
     logAudit("อนุมัติจอง", "sale", saleId, { forklift: sale.forklift_id, model: `${sale.forklift_brand} ${sale.forklift_model}`, customer: sale.customer_name, by: by || "สต็อก" });
   }, []);
@@ -635,9 +648,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSales(p => p.map(x => x.id === saleId ? ns : x));
     setForklifts(p => p.map(f => f.id === sale.forklift_id ? { ...f, status: "พร้อมขาย" } : f)); // คืนรถสู่สต็อก
     if (api.apiEnabled) {
-      api.updateSaleApi(ns).catch(e => console.warn("rejectSale", e));
+      api.updateSaleApi(ns).catch(failed("rejectSale"));
       const target = forkliftsRef.current.find(f => f.id === sale.forklift_id);
-      if (target) api.updateForkliftApi({ ...target, status: "พร้อมขาย" }).catch(e => console.warn("updateForklift", e));
+      if (target) api.updateForkliftApi({ ...target, status: "พร้อมขาย" }).catch(failed("updateForklift"));
     }
     logAudit("ปฏิเสธจอง", "sale", saleId, { forklift: sale.forklift_id, model: `${sale.forklift_brand} ${sale.forklift_model}`, customer: sale.customer_name, reason: reason || "", by: by || "สต็อก" });
   }, []);
@@ -650,10 +663,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return prev.filter(s => s.id !== saleId);
     });
     if (api.apiEnabled) {
-      api.deleteSaleApi(saleId).catch(e => console.warn("deleteSale", e));
+      api.deleteSaleApi(saleId).catch(failed("deleteSale"));
       if (sale) {
         const target = forkliftsRef.current.find(f => f.id === sale.forklift_id);
-        if (target) api.updateForkliftApi({ ...target, status: "พร้อมขาย" }).catch(e => console.warn("updateForklift", e));
+        if (target) api.updateForkliftApi({ ...target, status: "พร้อมขาย" }).catch(failed("updateForklift"));
       }
     }
   }, []);
@@ -671,9 +684,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSales(p => p.map(x => x.id === saleId ? ns : x));
     setForklifts(p => p.map(f => f.id === sale.forklift_id ? { ...f, status: fStatus } : f));
     if (api.apiEnabled) {
-      api.updateSaleApi(ns).catch(e => console.warn("returnSale", e));
+      api.updateSaleApi(ns).catch(failed("returnSale"));
       const target = forkliftsRef.current.find(f => f.id === sale.forklift_id);
-      if (target) api.updateForkliftApi({ ...target, status: fStatus }).catch(e => console.warn("updateForklift", e));
+      if (target) api.updateForkliftApi({ ...target, status: fStatus }).catch(failed("updateForklift"));
     }
     logAudit("รับคืนสินค้า", "sale", saleId, { forklift: sale.forklift_id, model: `${sale.forklift_brand} ${sale.forklift_model}`, customer: sale.customer_name, amount: sale.actual_sale, reason: opts.reason || "", ปลายทางรถ: fStatus });
   }, []);
@@ -730,7 +743,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (item) setDeletedInspections(d => [{ ...item, deletedAt: new Date().toISOString() }, ...d]);
       return prev.filter(r => r.id !== id);
     });
-    if (api.apiEnabled) api.deleteInspectionApi(id).catch(e => console.warn("deleteInspection", e));
+    if (api.apiEnabled) api.deleteInspectionApi(id).catch(failed("deleteInspection"));
   }, []);
   const restoreInspection = useCallback((id: string) => {
     lastLocalEditRef.current = Date.now();
@@ -742,12 +755,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       return prev.filter(r => r.id !== id);
     });
-    if (api.apiEnabled) api.restoreInspectionApi(id).catch(e => console.warn("restoreInspection", e));
+    if (api.apiEnabled) api.restoreInspectionApi(id).catch(failed("restoreInspection"));
   }, []);
   const purgeInspection = useCallback((id: string) => {
     lastLocalEditRef.current = Date.now();
     setDeletedInspections(p => p.filter(r => r.id !== id));
-    if (api.apiEnabled) api.purgeInspectionApi(id).catch(e => console.warn("purgeInspection", e));
+    if (api.apiEnabled) api.purgeInspectionApi(id).catch(failed("purgeInspection"));
   }, []);
 
   // ── Shared field-config helper ─────────────────────────────────────────────
@@ -932,7 +945,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       forklifts, sales, inspections, deletedInspections, customers, fieldConfig,
       addCustomer, updateCustomer, deleteCustomer,
       addForklift, addForkliftsBulk, updateForklift, deleteForklift,
-      addSale, addSalesBulk, loadSaleProofs, updateSale, deleteSale, returnSale, approveStockSale, rejectStockSale, setActor,
+      addSale, addSalesBulk, loadSaleProofs, updateSale, saveError, clearSaveError, deleteSale, returnSale, approveStockSale, rejectStockSale, setActor,
       exportData, importData,
       addInspection, deleteInspection, restoreInspection, purgeInspection,
       refresh,

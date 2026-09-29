@@ -184,6 +184,15 @@ if (process.env.CLICK) {
     console.log("   ปิด " + label + " →", (await shown()).trim());
   }
 }
+// TAGCHECK — ป้ายชื่อเซลล์ในรายการสต็อกขึ้นไหม
+if (process.env.TAGCHECK) {
+  const info = await page.evaluate(() => {
+    const tags = [...document.querySelectorAll("span[title]")].filter(e => (e.getAttribute("title") || "").includes("เซลล์เจ้าของงาน"));
+    const warn = [...document.querySelectorAll("span")].filter(e => (e.textContent || "").includes("ดีลไม่มีชื่อเซลล์") || (e.textContent || "").includes("ไม่มีดีลผูก"));
+    return { tags: tags.length, sample: tags.slice(0, 3).map(e => e.textContent.trim()), warn: warn.length };
+  }).catch(e => ({ err: String(e).slice(0, 120) }));
+  console.log("ป้ายเซลล์ที่เจอ:", info.tags, info.sample || "", "· ป้ายเตือน:", info.warn, info.err || "");
+}
 console.log("แครช:", crashed);
 console.log("--- ขนาดข้อมูลที่ส่งให้เบราว์เซอร์ ---");
 console.log([...bytes].map(([k, v]) => k + ": " + (v / 1048576).toFixed(1) + " MB").join(" · "));
