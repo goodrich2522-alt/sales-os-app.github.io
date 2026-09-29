@@ -1679,7 +1679,7 @@ export default function StockMain() {
                           <td className="px-2.5 py-2 whitespace-nowrap"><StatusBadge status={item.status} /></td>
                           <td className="px-2.5 py-2 font-bold text-emerald-700 whitespace-nowrap">{item.cost_price ? `฿${item.cost_price.toLocaleString()}` : "—"}</td>
                           <td className="px-2.5 py-2 text-slate-500 whitespace-nowrap">{item.location || "—"}</td>
-                          <td className="px-2.5 py-2 text-slate-500 whitespace-nowrap">{saleOwnerByFk.get(item.id) || (item.custom_fields?.["เซลล์ผู้ดูแล"] as string) || "—"}</td>
+                          <td className="px-2.5 py-2 text-slate-500 whitespace-nowrap">{ownerOf(item) || "—"}</td>
                           <td className="px-2.5 py-2 text-slate-400 whitespace-nowrap">{fmtAdded(item.created_at) || "—"}</td>
                         </tr>
                       ))}
