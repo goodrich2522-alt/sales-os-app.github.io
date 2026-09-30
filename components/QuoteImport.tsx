@@ -3,7 +3,7 @@
 // อ่าน PDF ในเบราว์เซอร์ (ไฟล์ไม่ออกนอกเครื่อง) → parse → คนตรวจ/แก้ → บันทึกเข้าสต็อก
 // รอบแรกรองรับ HELI (text layer) · เจ้าอื่นทยอยเพิ่ม
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useApp } from "@/lib/AppContext";
 import { readPdfText, looksScanned, readScannedPdfText, parseQuoteText, parseQuoteExcel, readExcelRows, isExcelFile, isImageFile, readImageText, normalizeStaxxModel, ParsedVehicle, QuoteDocCheck, KD_LEAD_MIN_DAYS, KD_LEAD_MAX_DAYS } from "@/lib/quoteImport";
 import { categorizeModel, modelWarning } from "@/lib/constants";
@@ -212,6 +212,20 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
     setOcr(null);
     setBusy(false);
   };
+
+  // ── ตัวเลือกยี่ห้อ/รุ่น จากที่มีจริงในสต็อก (กันพิมพ์ผิด/สะกดไม่ตรงกัน) ──
+  const brandOptions = useMemo(
+    () => [...new Set(forklifts.map(f => String(f.brand ?? "").trim()).filter(Boolean))].sort(),
+    [forklifts]);
+  /** รุ่นของยี่ห้อนั้น — ไม่ระบุยี่ห้อก็ให้ทุกรุ่น */
+  const modelOptionsFor = (brand: string) => {
+    const b = String(brand ?? "").trim().toUpperCase();
+    return [...new Set(forklifts
+      .filter(f => !b || String(f.brand ?? "").trim().toUpperCase() === b)
+      .map(f => String(f.model ?? "").trim())
+      .filter(Boolean))].sort();
+  };
+
 
   const edit = (i: number, key: keyof ParsedVehicle, val: string) =>
     setRows((r) => r.map((v, j) => (j === i ? { ...v, [key]: val } : v)));
@@ -625,8 +639,8 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                               className="text-slate-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition-colors flex-shrink-0"><Trash2 className="w-4 h-4" /></button>
                           </div>
                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                            <Field label="แบรนด์" val={v.brand ?? ""} onChange={(x) => edit(i, "brand", x)} ph="เช่น HELI" />
-                            <Field label="รุ่น" val={v.model} onChange={(x) => edit(i, "model", x)} ph="เช่น CDD12J-M300" />
+                            <Field label="แบรนด์" val={v.brand ?? ""} onChange={(x) => edit(i, "brand", x)} ph="เลือกหรือพิมพ์ เช่น HELI" options={brandOptions} listId="qi-brands" />
+                            <Field label="รุ่น" val={v.model} onChange={(x) => edit(i, "model", x)} ph="เลือกหรือพิมพ์ เช่น CDD12J-M300" options={modelOptionsFor(v.brand ?? "")} listId={`qi-models-${i}`} />
                             <Field label={mto ? "SN (รอผลิต — เว้นว่างได้)" : "SN (เลขตัวถัง)"} val={v.SN ?? ""} onChange={(x) => edit(i, "SN", x)} ph={mto ? "SN มาตอนรถผลิตเสร็จ" : "SN จริงจากรถ"} />
                             <Field label="เลข PI" val={v.pi_no ?? ""} onChange={(x) => edit(i, "pi_no", x)} ph="เว้นได้ถ้ายังไม่มี" />
                             <Field label="พิกัดยก" val={v.capacity ?? ""} onChange={(x) => edit(i, "capacity", x)} ph="เช่น 2.5 ตัน" />
@@ -682,12 +696,20 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
   );
 }
 
-function Field({ label, val, onChange, ph }: { label: string; val: string; onChange: (v: string) => void; ph?: string }) {
+/**
+ * ช่องกรอกที่ "เลือกจากรายการได้ แต่ยังพิมพ์ของใหม่ได้"
+ * (30 ก.ย. 2569 · ผู้ใช้ขอ) พิมพ์ยี่ห้อ/รุ่นเองทุกครั้งทำให้สะกดไม่ตรงกัน
+ * ใช้ datalist ไม่ใช้ dropdown ตายตัว เพราะรุ่นใหม่เข้ามาเรื่อย ๆ ต้องพิมพ์เพิ่มได้
+ */
+function Field({ label, val, onChange, ph, options, listId }: {
+  label: string; val: string; onChange: (v: string) => void; ph?: string; options?: string[]; listId?: string;
+}) {
   return (
     <label className="flex flex-col gap-1 min-w-0">
       <span className="text-[11px] font-semibold text-slate-500">{label}</span>
-      <input value={val} onChange={(e) => onChange(e.target.value)} placeholder={ph}
+      <input value={val} onChange={(e) => onChange(e.target.value)} placeholder={ph} list={options?.length ? listId : undefined}
         className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 bg-white placeholder:text-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 focus:outline-none" />
+      {!!options?.length && <datalist id={listId}>{options.map(o => <option key={o} value={o} />)}</datalist>}
     </label>
   );
 }
