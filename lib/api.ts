@@ -86,6 +86,14 @@ const SALE_COLUMNS = [
   "custom_notifications", "contact_source", "sale_type",
 ].join(",");
 
+/**
+ * รูปสลิปของ "ทุกใบขาย" แบบเบา — เอาเฉพาะ 3 คอลัมน์ ไว้ไล่หาว่ายังมีรูปฝังดิบเหลืออยู่ไหม
+ * (30 ก.ย. 2569 · ใช้กับเครื่องมือเก็บกวาดรูป — ไม่ได้โหลดตอนเปิดแอป)
+ */
+export const fetchAllSaleProofsApi = async (): Promise<{ id: string; payment_proof?: string; payment_proofs?: string[] }[]> =>
+  (await fetchAllRows("sales", "id,payment_proof,payment_proofs")) as unknown as { id: string; payment_proof?: string; payment_proofs?: string[] }[];
+
+
 /** รูปสลิปของดีลใบเดียว — เรียกตอนเปิดดูดีลนั้น */
 export const fetchSaleProofsApi = async (saleId: string): Promise<{ payment_proof?: string; payment_proofs?: string[] }> => {
   const { data, error } = await sb().from("sales").select("payment_proof,payment_proofs").eq("id", saleId).maybeSingle();
