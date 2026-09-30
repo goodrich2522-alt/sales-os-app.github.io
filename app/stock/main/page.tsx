@@ -744,6 +744,13 @@ export default function StockMain() {
   const fuelOpts  = [...new Set(forklifts.map(f => f.fuel).filter(Boolean))].sort();
   // ยี่ห้อที่มีอยู่จริง + ที่ตั้งไว้ในตัวเลือกระบบ — ใช้เป็นคำแนะนำในช่อง "ยี่ห้อ" ตอนแก้หลายคัน
   const brandOpts = [...new Set([...forklifts.map(f => f.brand).filter(Boolean), ...fieldConfig.brands])].sort();
+  /** รุ่นของยี่ห้อที่กำลังแก้อยู่ — ใช้เป็นตัวเลือกในฟอร์มสเปก กันพิมพ์ชื่อรุ่นไม่ตรงกัน (30 ก.ย. 2569) */
+  const modelOptsForBrand = (brand: string) => {
+    const b = String(brand ?? "").trim().toUpperCase();
+    return [...new Set(forklifts
+      .filter(f => !b || String(f.brand ?? "").trim().toUpperCase() === b)
+      .map(f => String(f.model ?? "").trim()).filter(Boolean))].sort();
+  };
 
   // ส่งออกรายการสินค้าเป็น Excel (.xlsx) — ตามที่กรองอยู่ (ถ้าไม่กรองก็ทั้งหมด) เรียงตามที่แสดง
   //  · มุมมองค้างนาน → ส่งออกรายงาน Aging (พร้อมขาย + จำนวนวันค้าง)
@@ -2633,8 +2640,9 @@ export default function StockMain() {
                     </div>
                     <div>
                       <label className="text-[11px] text-slate-500 font-semibold">รุ่น</label>
-                      <input value={specEdit.model} onChange={e => { setSpecEdit(s => ({ ...s, model: e.target.value })); setSpecSaved(false); }}
+                      <input list="spec-model-opts" value={specEdit.model} onChange={e => { setSpecEdit(s => ({ ...s, model: e.target.value })); setSpecSaved(false); }}
                         placeholder="เช่น CPD25-A7LIH4-S" className="w-full mt-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                      <datalist id="spec-model-opts">{modelOptsForBrand(specEdit.brand).map(m => <option key={m} value={m} />)}</datalist>
                       {modelWarning(specEdit.model) && (
                         <p className="text-[10px] text-red-600 mt-0.5">⚠ {modelWarning(specEdit.model)}</p>
                       )}
