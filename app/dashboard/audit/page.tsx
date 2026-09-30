@@ -10,6 +10,7 @@ import { runHealthChecks, saleModelMismatch, orphanSales, statusVsSale, HealthCh
 import { BILL_KIND_FIELD, BILL_FINANCE, looksLikeFinanceBill } from "@/lib/types";
 import { toIsoDate } from "@/lib/format";
 import { SalesBackfillImport } from "@/components/SalesBackfillImport";
+import { InlineImageCleanup } from "@/components/InlineImageCleanup";
 
 const fmtTime = (s?: string) => { if (!s) return ""; try { return new Date(s).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" }); } catch { return s; } };
 
@@ -364,6 +365,8 @@ function AuditPageInner() {
         </div>
 
         {showBackfill && <SalesBackfillImport onClose={() => setShowBackfill(false)} />}
+
+        <InlineImageCleanup />
 
         {/* ── ใบขายที่ผูกรถไม่เจอ (รหัสรถเปลี่ยนหลังได้ SN หรือรถถูกลบ) ── */}
         {orphans.length > 0 && (

@@ -15,6 +15,7 @@ import * as api from "./api";
 import { supabase } from "./supabaseClient";
 import { isPendingId } from "./productId";
 import { stockStatusForSale } from "./saleStatus";
+import { isInlineImage, countInline, inlineBytes, liftArray, liftMap } from "./imageCleanup";
 import type { CommissionLock } from "./commission";
 
 // ── Field configuration ───────────────────────────────────────────────────────
@@ -92,6 +93,17 @@ export interface BackupData {
 }
 
 // ── Context type ──────────────────────────────────────────────────────────────
+/** ผลการค้นหารูปที่ยังฝังเป็นข้อมูลดิบ (ยังไม่ได้อัปขึ้นที่เก็บไฟล์) */
+export interface InlineScan {
+  inspections: number;   // จำนวนใบตรวจที่มีรูปฝังดิบ
+  inspImages: number;    // จำนวนรูป
+  sales: number;         // จำนวนใบขายที่มีสลิปฝังดิบ
+  saleImages: number;
+  bytes: number;         // ขนาดรวมโดยประมาณ
+}
+export interface InlineLiftResult { done: number; failed: number; records: number }
+
+
 interface AppContextType {
   forklifts: Forklift[];
   sales: Sale[];
@@ -109,6 +121,8 @@ interface AppContextType {
   addSale: (s: Sale) => void;
   addSalesBulk: (list: Sale[]) => void;   // นำเข้าใบขายย้อนหลังทีละหลายใบ
   loadSaleProofs: (saleId: string) => Promise<void>;
+  scanInlineImages: () => Promise<InlineScan>;                    // หารูปที่ยังฝังเป็นข้อมูลดิบ
+  liftInlineImages: (onStep?: (done: number, total: number) => void) => Promise<InlineLiftResult>;  // อัปขึ้นที่เก็บไฟล์แล้วแทนด้วยลิงก์
   saveError: { what: string; msg: string; at: number } | null;   // บันทึกขึ้นเซิร์ฟเวอร์ไม่สำเร็จครั้งล่าสุด
   clearSaveError: () => void;  // โหลดรูปสลิปของดีลใบนั้น (ไม่ได้โหลดมาตอนเปิดแอป)
   updateSale: (s: Sale) => void;
@@ -893,6 +907,77 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // ── สำรอง / นำเข้าข้อมูล (กันข้อมูลหายถ้าระบบมีปัญหา) ──
+  // ── เก็บกวาดรูปที่ยัง "ฝังเป็นข้อมูลดิบ" (30 ก.ย. 2569 · ผู้ใช้สั่ง) ──
+  // ระบบอัปรูปขึ้น Google Drive อยู่แล้ว (NEXT_PUBLIC_GAS_URL) แต่ถ้าตอนนั้นอัปไม่สำเร็จ
+  // โค้ดจะเก็บ base64 ไว้ก่อนแบบเงียบ ๆ → ตกค้างมาเรื่อย ๆ และทุกคนต้องโหลดก้อนนี้ทุกครั้งที่เปิดแอป
+  // ตัวนี้ไล่หาของที่ตกค้าง อัปขึ้น Drive แล้วแทนที่ด้วยลิงก์ · อัปไม่สำเร็จจะเก็บของเดิมไว้ ไม่ทำข้อมูลหาย
+  const upload = async (dataUrl: string, name: string) => {
+    const mime = /^data:(.*?);base64,/.exec(dataUrl)?.[1] || "image/jpeg";
+    return (await api.uploadImageApi(dataUrl, mime, name)).url;
+  };
+
+  const scanInlineImages = useCallback(async (): Promise<InlineScan> => {
+    let inspections = 0, inspImages = 0, bytes = 0;
+    for (const r of inspectionsRef.current) {
+      const n = countInline(r.images) + countInline(r.image_slots);
+      if (n > 0) { inspections++; inspImages += n; bytes += inlineBytes(r.images) + inlineBytes(r.image_slots); }
+    }
+    let sales = 0, saleImages = 0;
+    if (api.apiEnabled) {
+      try {
+        // รูปสลิปไม่ได้โหลดตอนเปิดแอป → ต้องดึงเฉพาะคอลัมน์รูปมาตรวจ
+        for (const s of await api.fetchAllSaleProofsApi()) {
+          const n = countInline(s.payment_proofs) + (isInlineImage(s.payment_proof) ? 1 : 0);
+          if (n > 0) { sales++; saleImages += n; bytes += inlineBytes(s.payment_proofs) + inlineBytes(s.payment_proof); }
+        }
+      } catch (e) { console.warn("scanInlineImages/sales", e); }
+    }
+    return { inspections, inspImages, sales, saleImages, bytes };
+  }, []);
+
+  const liftInlineImages = useCallback(async (onStep?: (done: number, total: number) => void): Promise<InlineLiftResult> => {
+    let done = 0, failedCount = 0, records = 0;
+    const todoIns = inspectionsRef.current.filter(r => countInline(r.images) + countInline(r.image_slots) > 0);
+    let saleRows: { id: string; payment_proof?: string; payment_proofs?: string[] }[] = [];
+    if (api.apiEnabled) {
+      try { saleRows = (await api.fetchAllSaleProofsApi()).filter(s => countInline(s.payment_proofs) + (isInlineImage(s.payment_proof) ? 1 : 0) > 0); }
+      catch (e) { console.warn("liftInlineImages/scan", e); }
+    }
+    const total = todoIns.length + saleRows.length;
+
+    for (const r of todoIns) {
+      const a = await liftArray(r.images, upload, `insp_${r.id}`);
+      const m = await liftMap(r.image_slots as Record<string, string> | undefined, upload, `insp_${r.id}_slot`);
+      done += a.done + m.done; failedCount += a.failed + m.failed;
+      if (a.done + m.done > 0) {
+        const next = { ...r, images: a.out, image_slots: m.out };
+        setInspections(p => p.map(x => (x.id === r.id ? next : x)));
+        if (api.apiEnabled) await api.addInspectionApi(next).catch(failed("อัปเดตรูปใบตรวจ"));
+        records++;
+      }
+      onStep?.(records, total);
+    }
+
+    for (const s of saleRows) {
+      const a = await liftArray(s.payment_proofs, upload, `slip_${s.id}`);
+      let proof = s.payment_proof;
+      if (isInlineImage(proof)) {
+        try { proof = await upload(String(proof), `slip_${s.id}_0`); done++; } catch { failedCount++; }
+      }
+      done += a.done; failedCount += a.failed;
+      if (a.done > 0 || proof !== s.payment_proof) {
+        const cur = salesRef.current.find(x => x.id === s.id);
+        const next = { ...(cur ?? ({ id: s.id } as Sale)), payment_proofs: a.out, payment_proof: proof };
+        if (cur) setSales(p => p.map(x => (x.id === s.id ? next : x)));
+        if (api.apiEnabled) await api.updateSaleApi(next as Sale).catch(failed("อัปเดตรูปสลิป"));
+        records++;
+      }
+      onStep?.(records, total);
+    }
+    return { done, failed: failedCount, records };
+  }, []);
+
+
   const exportData = useCallback((): BackupData => ({
     app: "SalesOS",
     version: 1,
@@ -945,7 +1030,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       forklifts, sales, inspections, deletedInspections, customers, fieldConfig,
       addCustomer, updateCustomer, deleteCustomer,
       addForklift, addForkliftsBulk, updateForklift, deleteForklift,
-      addSale, addSalesBulk, loadSaleProofs, updateSale, saveError, clearSaveError, deleteSale, returnSale, approveStockSale, rejectStockSale, setActor,
+      addSale, addSalesBulk, loadSaleProofs, updateSale, saveError, clearSaveError, scanInlineImages, liftInlineImages, deleteSale, returnSale, approveStockSale, rejectStockSale, setActor,
       exportData, importData,
       addInspection, deleteInspection, restoreInspection, purgeInspection,
       refresh,
