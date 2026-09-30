@@ -12,7 +12,7 @@ import { Forklift } from "@/lib/types";
 import { X, Upload, FileText, CheckCircle, AlertTriangle, Loader2, Trash2, Undo2, Plus, Factory, ClipboardCheck } from "lucide-react";
 
 export function QuoteImport({ onClose }: { onClose: () => void }) {
-  const { addForkliftsBulk, forklifts, deleteForklift, updateForklift } = useApp();
+  const { addForkliftsBulk, forklifts, deleteForklift, updateForklift, fieldConfig, updateFieldOptions } = useApp();
   const [rows, setRows] = useState<ParsedVehicle[]>([]);
   const [busy, setBusy] = useState(false);
   const [ocr, setOcr] = useState<{ name: string; pct: number } | null>(null); // สถานะ OCR รูป
@@ -214,16 +214,30 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
   };
 
   // ── ตัวเลือกยี่ห้อ/รุ่น จากที่มีจริงในสต็อก (กันพิมพ์ผิด/สะกดไม่ตรงกัน) ──
+  // ค่าที่ผู้ใช้ "ยืนยันแล้วว่าเป็นของใหม่จริง" ในรอบนี้ — เอาไปต่อท้ายรายการให้เลือก
+  // ยี่ห้อ/พลังงานเก็บถาวรในตัวเลือกกลาง (ทุกคนเห็น) · รุ่นกับเสาเก็บแค่รอบนี้
+  // เพราะพอบันทึกรถเข้าสต็อกแล้ว รุ่นนั้นจะขึ้นในรายการเองอัตโนมัติ
+  const [addedModels, setAddedModels] = useState<string[]>([]);
+  const [addedMasts, setAddedMasts] = useState<string[]>([]);
+  const addBrand = (b: string) => updateFieldOptions("brands", [...new Set([...(fieldConfig.brands ?? []), b.trim()])]);
+  const addFuel = (f: string) => updateFieldOptions("fuelTypes", [...new Set([...(fieldConfig.fuelTypes ?? []), f.trim()])]);
+
+
   const brandOptions = useMemo(
-    () => [...new Set(forklifts.map(f => String(f.brand ?? "").trim()).filter(Boolean))].sort(),
-    [forklifts]);
+    () => [...new Set([...(fieldConfig.brands ?? []), ...forklifts.map(f => String(f.brand ?? "").trim())].filter(Boolean))].sort(),
+    [forklifts, fieldConfig.brands]);
+  const fuelOptions = useMemo(
+    () => [...new Set([...(fieldConfig.fuelTypes ?? []), ...forklifts.map(f => String(f.fuel ?? "").trim())].filter(Boolean))].sort(),
+    [forklifts, fieldConfig.fuelTypes]);
+  const mastOptions = useMemo(
+    () => [...new Set([...forklifts.map(f => String((f.custom_fields as Record<string, unknown> | undefined)?.["MAST"] ?? "").trim()), ...addedMasts].filter(Boolean))].sort(),
+    [forklifts, addedMasts]);
   /** รุ่นของยี่ห้อนั้น — ไม่ระบุยี่ห้อก็ให้ทุกรุ่น */
   const modelOptionsFor = (brand: string) => {
     const b = String(brand ?? "").trim().toUpperCase();
-    return [...new Set(forklifts
+    return [...new Set([...forklifts
       .filter(f => !b || String(f.brand ?? "").trim().toUpperCase() === b)
-      .map(f => String(f.model ?? "").trim())
-      .filter(Boolean))].sort();
+      .map(f => String(f.model ?? "").trim()), ...addedModels].filter(Boolean))].sort();
   };
 
 
@@ -639,13 +653,13 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                               className="text-slate-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition-colors flex-shrink-0"><Trash2 className="w-4 h-4" /></button>
                           </div>
                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                            <Field label="แบรนด์" val={v.brand ?? ""} onChange={(x) => edit(i, "brand", x)} ph="เลือกหรือพิมพ์ เช่น HELI" options={brandOptions} listId="qi-brands" />
-                            <Field label="รุ่น" val={v.model} onChange={(x) => edit(i, "model", x)} ph="เลือกหรือพิมพ์ เช่น CDD12J-M300" options={modelOptionsFor(v.brand ?? "")} listId={`qi-models-${i}`} />
+                            <Field label="แบรนด์" val={v.brand ?? ""} onChange={(x) => edit(i, "brand", x)} ph="เลือกหรือพิมพ์ เช่น HELI" options={brandOptions} listId="qi-brands" onAddNew={addBrand} newWord="ยี่ห้อ" />
+                            <Field label="รุ่น" val={v.model} onChange={(x) => edit(i, "model", x)} ph="เลือกหรือพิมพ์ เช่น CDD12J-M300" options={modelOptionsFor(v.brand ?? "")} listId={`qi-models-${i}`} onAddNew={(x) => setAddedModels(p => [...p, x])} newWord="รุ่น" />
                             <Field label={mto ? "SN (รอผลิต — เว้นว่างได้)" : "SN (เลขตัวถัง)"} val={v.SN ?? ""} onChange={(x) => edit(i, "SN", x)} ph={mto ? "SN มาตอนรถผลิตเสร็จ" : "SN จริงจากรถ"} />
                             <Field label="เลข PI" val={v.pi_no ?? ""} onChange={(x) => edit(i, "pi_no", x)} ph="เว้นได้ถ้ายังไม่มี" />
                             <Field label="พิกัดยก" val={v.capacity ?? ""} onChange={(x) => edit(i, "capacity", x)} ph="เช่น 2.5 ตัน" />
-                            <Field label="พลังงาน" val={v.fuel ?? ""} onChange={(x) => edit(i, "fuel", x)} ph="ดีเซล / ไฟฟ้า" />
-                            <Field label="เสา (MAST)" val={v.mast ?? ""} onChange={(x) => edit(i, "mast", x)} ph="เช่น 3M / Triplex 4.5M" />
+                            <Field label="พลังงาน" val={v.fuel ?? ""} onChange={(x) => edit(i, "fuel", x)} ph="เลือกหรือพิมพ์" options={fuelOptions} listId="qi-fuels" onAddNew={addFuel} newWord="พลังงาน" />
+                            <Field label="เสา (MAST)" val={v.mast ?? ""} onChange={(x) => edit(i, "mast", x)} ph="เลือกหรือพิมพ์" options={mastOptions} listId="qi-masts" onAddNew={(x) => setAddedMasts(p => [...p, x])} newWord="เสา" />
                             <Field label="Valve" val={v.valve ?? ""} onChange={(x) => edit(i, "valve", x)} ph="เช่น 3 วาล์ว" />
                             <Field label="ราคาทุน" val={v.cost_price ? String(v.cost_price) : ""} onChange={(x) => edit(i, "cost_price", x)} ph="บาท" />
                           </div>
@@ -701,15 +715,39 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
  * (30 ก.ย. 2569 · ผู้ใช้ขอ) พิมพ์ยี่ห้อ/รุ่นเองทุกครั้งทำให้สะกดไม่ตรงกัน
  * ใช้ datalist ไม่ใช้ dropdown ตายตัว เพราะรุ่นใหม่เข้ามาเรื่อย ๆ ต้องพิมพ์เพิ่มได้
  */
-function Field({ label, val, onChange, ph, options, listId }: {
-  label: string; val: string; onChange: (v: string) => void; ph?: string; options?: string[]; listId?: string;
+/**
+ * ช่องกรอกที่ "เลือกจากรายการได้ และเพิ่มของใหม่ได้"
+ * (30 ก.ย. 2569 · ผู้ใช้ขอ) พิมพ์เองทุกครั้งทำให้สะกดไม่ตรงกัน แต่จะล็อกให้เลือกอย่างเดียวก็ไม่ได้
+ * เพราะรถรุ่นใหม่/ยี่ห้อใหม่เข้ามาเรื่อย ๆ
+ * → ใช้ datalist (เลือกหรือพิมพ์ก็ได้) + ถ้าพิมพ์ค่าที่ยังไม่เคยมี จะเตือนและให้กดยืนยันว่าเป็นของใหม่จริง
+ *   ไม่บังคับให้กด — กรอกต่อได้เลย แค่เตือนไว้ให้ทันเห็นว่าอาจพิมพ์ผิด
+ */
+function Field({ label, val, onChange, ph, options, listId, onAddNew, newWord }: {
+  label: string; val: string; onChange: (v: string) => void; ph?: string;
+  options?: string[]; listId?: string;
+  onAddNew?: (v: string) => void;   // มี = โชว์ปุ่มยืนยันเพิ่มของใหม่
+  newWord?: string;                 // คำเรียกสิ่งที่เพิ่ม เช่น "ยี่ห้อ" / "รุ่น"
 }) {
+  const v = String(val ?? "").trim();
+  const known = (options ?? []).some(o => o.trim().toUpperCase() === v.toUpperCase());
+  const isNew = !!v && !!options?.length && !known;
   return (
     <label className="flex flex-col gap-1 min-w-0">
       <span className="text-[11px] font-semibold text-slate-500">{label}</span>
       <input value={val} onChange={(e) => onChange(e.target.value)} placeholder={ph} list={options?.length ? listId : undefined}
-        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 bg-white placeholder:text-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 focus:outline-none" />
+        className={`w-full border rounded-lg px-3 py-2 text-sm text-slate-800 bg-white placeholder:text-slate-300 focus:ring-2 focus:outline-none ${isNew ? "border-amber-400 focus:border-amber-500 focus:ring-amber-200" : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-200"}`} />
       {!!options?.length && <datalist id={listId}>{options.map(o => <option key={o} value={o} />)}</datalist>}
+      {isNew && (
+        <span className="flex items-center gap-1.5 flex-wrap text-[10px] text-amber-700">
+          <span>ยังไม่เคยมีในระบบ — พิมพ์ถูกไหม?</span>
+          {onAddNew && (
+            <button type="button" onClick={() => onAddNew(v)}
+              className="font-bold bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded px-1.5 py-0.5">
+              ＋ ใช่ เพิ่มเป็น{newWord ?? "ค่า"}ใหม่
+            </button>
+          )}
+        </span>
+      )}
     </label>
   );
 }
