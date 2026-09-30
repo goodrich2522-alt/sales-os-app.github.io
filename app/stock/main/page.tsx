@@ -20,6 +20,7 @@ import { StatusBadge } from "@/components/ui/Badge";
 import { MoneyInput } from "@/components/ui/MoneyInput";
 import { VEHICLE_CATS, CatFilter, categorizeModel, modelWarning, staffLabel, SALE_STATUS_BADGE, saleStatusGroup, SALE_STATUS_FILTER_GROUPS, SALE_STATUS_OPTIONS } from "@/lib/constants";
 import { QuoteImport } from "@/components/QuoteImport";
+import { PickBox } from "@/components/PickBox";
 import { parseForkliftCsv, assignIdsAndStamp, buildCsvTemplate } from "@/lib/forkliftCsv";
 import { hasActiveSession, signOutSupabase } from "@/lib/auth";
 import { apiEnabled, uploadImageApi } from "@/lib/api";
@@ -2633,16 +2634,18 @@ export default function StockMain() {
                         เจอจริง: 05025DU4873 ในระบบเป็น CPD25-M400 แต่ใบกำกับภาษีคือ CPD25-A7LIH4-S
                         (M400 คือความสูงเสา ไม่ใช่ชื่อรุ่น) — แก้ที่นี่ใบขายที่ผูกอยู่จะถูกซิงก์ตามให้ด้วย */}
                     <div>
-                      <label className="text-[11px] text-slate-500 font-semibold">ยี่ห้อ</label>
-                      <input list="brand-opts" value={specEdit.brand} onChange={e => { setSpecEdit(s => ({ ...s, brand: e.target.value })); setSpecSaved(false); }}
-                        placeholder="เช่น HELI" className="w-full mt-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400" />
-                      <datalist id="brand-opts">{brandOpts.map(b => <option key={b} value={b} />)}</datalist>
+                      <PickBox label="ยี่ห้อ" value={specEdit.brand}
+                        onChange={x => { setSpecEdit(s => ({ ...s, brand: x })); setSpecSaved(false); }}
+                        options={brandOpts} placeholder="เลือกหรือพิมพ์ เช่น HELI"
+                        onAddNew={x => { updateFieldOptions("brands", [...new Set([...(fieldConfig.brands ?? []), x])]); setSpecEdit(s => ({ ...s, brand: x })); setSpecSaved(false); }}
+                        newWord="ยี่ห้อ" />
                     </div>
                     <div>
-                      <label className="text-[11px] text-slate-500 font-semibold">รุ่น</label>
-                      <input list="spec-model-opts" value={specEdit.model} onChange={e => { setSpecEdit(s => ({ ...s, model: e.target.value })); setSpecSaved(false); }}
-                        placeholder="เช่น CPD25-A7LIH4-S" className="w-full mt-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400" />
-                      <datalist id="spec-model-opts">{modelOptsForBrand(specEdit.brand).map(m => <option key={m} value={m} />)}</datalist>
+                      <PickBox label="รุ่น" value={specEdit.model}
+                        onChange={x => { setSpecEdit(s => ({ ...s, model: x })); setSpecSaved(false); }}
+                        options={modelOptsForBrand(specEdit.brand)} placeholder="เลือกหรือพิมพ์ เช่น CPD25-A7LIH4-S"
+                        onAddNew={x => { setSpecEdit(s => ({ ...s, model: x })); setSpecSaved(false); }}
+                        newWord="รุ่น" />
                       {modelWarning(specEdit.model) && (
                         <p className="text-[10px] text-red-600 mt-0.5">⚠ {modelWarning(specEdit.model)}</p>
                       )}

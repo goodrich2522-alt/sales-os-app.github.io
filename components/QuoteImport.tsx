@@ -10,6 +10,7 @@ import { categorizeModel, modelWarning } from "@/lib/constants";
 import { today, addDays, thaiDate } from "@/lib/format";
 import { Forklift } from "@/lib/types";
 import { X, Upload, FileText, CheckCircle, AlertTriangle, Loader2, Trash2, Undo2, Plus, Factory, ClipboardCheck } from "lucide-react";
+import { PickBox } from "./PickBox";
 
 export function QuoteImport({ onClose }: { onClose: () => void }) {
   const { addForkliftsBulk, forklifts, deleteForklift, updateForklift, fieldConfig, updateFieldOptions } = useApp();
@@ -219,6 +220,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
   // เพราะพอบันทึกรถเข้าสต็อกแล้ว รุ่นนั้นจะขึ้นในรายการเองอัตโนมัติ
   const [addedModels, setAddedModels] = useState<string[]>([]);
   const [addedMasts, setAddedMasts] = useState<string[]>([]);
+  const [addedCaps, setAddedCaps] = useState<string[]>([]);
   const addBrand = (b: string) => updateFieldOptions("brands", [...new Set([...(fieldConfig.brands ?? []), b.trim()])]);
   const addFuel = (f: string) => updateFieldOptions("fuelTypes", [...new Set([...(fieldConfig.fuelTypes ?? []), f.trim()])]);
 
@@ -229,6 +231,9 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
   const fuelOptions = useMemo(
     () => [...new Set([...(fieldConfig.fuelTypes ?? []), ...forklifts.map(f => String(f.fuel ?? "").trim())].filter(Boolean))].sort(),
     [forklifts, fieldConfig.fuelTypes]);
+  const capacityOptions = useMemo(
+    () => [...new Set([...(fieldConfig.capacityOptions ?? []), ...forklifts.map(f => String(f.capacity ?? "").trim()), ...addedCaps].filter(Boolean))].sort(),
+    [forklifts, fieldConfig.capacityOptions, addedCaps]);
   const mastOptions = useMemo(
     () => [...new Set([...forklifts.map(f => String((f.custom_fields as Record<string, unknown> | undefined)?.["MAST"] ?? "").trim()), ...addedMasts].filter(Boolean))].sort(),
     [forklifts, addedMasts]);
@@ -310,7 +315,6 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
       return ph;
     });
   })();
-  const fillCount = fillTargets.filter(Boolean).length;
 
   const save = () => {
     // กันรถซ้ำ: ซ้ำกับในสต็อก (เทียบทั้งรหัสและ SN) หรือซ้ำกันเองในชุด → ข้าม (ไม่นำเข้าครั้งที่ 2)
@@ -653,13 +657,13 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                               className="text-slate-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition-colors flex-shrink-0"><Trash2 className="w-4 h-4" /></button>
                           </div>
                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                            <Field label="แบรนด์" val={v.brand ?? ""} onChange={(x) => edit(i, "brand", x)} ph="เลือกหรือพิมพ์ เช่น HELI" options={brandOptions} listId="qi-brands" onAddNew={addBrand} newWord="ยี่ห้อ" />
-                            <Field label="รุ่น" val={v.model} onChange={(x) => edit(i, "model", x)} ph="เลือกหรือพิมพ์ เช่น CDD12J-M300" options={modelOptionsFor(v.brand ?? "")} listId={`qi-models-${i}`} onAddNew={(x) => setAddedModels(p => [...p, x])} newWord="รุ่น" />
+                            <PickBox label="แบรนด์" value={v.brand ?? ""} onChange={(x) => edit(i, "brand", x)} placeholder="เลือกหรือพิมพ์ เช่น HELI" options={brandOptions} onAddNew={(x) => { addBrand(x); edit(i, "brand", x); }} newWord="ยี่ห้อ" />
+                            <PickBox label="รุ่น" value={v.model} onChange={(x) => edit(i, "model", x)} placeholder="เลือกหรือพิมพ์ เช่น CDD12J-M300" options={modelOptionsFor(v.brand ?? "")} onAddNew={(x) => { setAddedModels(p => [...p, x]); edit(i, "model", x); }} newWord="รุ่น" />
                             <Field label={mto ? "SN (รอผลิต — เว้นว่างได้)" : "SN (เลขตัวถัง)"} val={v.SN ?? ""} onChange={(x) => edit(i, "SN", x)} ph={mto ? "SN มาตอนรถผลิตเสร็จ" : "SN จริงจากรถ"} />
                             <Field label="เลข PI" val={v.pi_no ?? ""} onChange={(x) => edit(i, "pi_no", x)} ph="เว้นได้ถ้ายังไม่มี" />
-                            <Field label="พิกัดยก" val={v.capacity ?? ""} onChange={(x) => edit(i, "capacity", x)} ph="เช่น 2.5 ตัน" />
-                            <Field label="พลังงาน" val={v.fuel ?? ""} onChange={(x) => edit(i, "fuel", x)} ph="เลือกหรือพิมพ์" options={fuelOptions} listId="qi-fuels" onAddNew={addFuel} newWord="พลังงาน" />
-                            <Field label="เสา (MAST)" val={v.mast ?? ""} onChange={(x) => edit(i, "mast", x)} ph="เลือกหรือพิมพ์" options={mastOptions} listId="qi-masts" onAddNew={(x) => setAddedMasts(p => [...p, x])} newWord="เสา" />
+                            <PickBox label="พิกัดยก" value={v.capacity ?? ""} onChange={(x) => edit(i, "capacity", x)} placeholder="เลือกหรือพิมพ์ เช่น 2.5 ตัน" options={capacityOptions} onAddNew={(x) => { setAddedCaps(p => [...p, x]); edit(i, "capacity", x); }} newWord="พิกัด" />
+                            <PickBox label="พลังงาน" value={v.fuel ?? ""} onChange={(x) => edit(i, "fuel", x)} placeholder="เลือกหรือพิมพ์" options={fuelOptions} onAddNew={(x) => { addFuel(x); edit(i, "fuel", x); }} newWord="พลังงาน" />
+                            <PickBox label="เสา (MAST)" value={v.mast ?? ""} onChange={(x) => edit(i, "mast", x)} placeholder="เลือกหรือพิมพ์" options={mastOptions} onAddNew={(x) => { setAddedMasts(p => [...p, x]); edit(i, "mast", x); }} newWord="เสา" />
                             <Field label="Valve" val={v.valve ?? ""} onChange={(x) => edit(i, "valve", x)} ph="เช่น 3 วาล์ว" />
                             <Field label="ราคาทุน" val={v.cost_price ? String(v.cost_price) : ""} onChange={(x) => edit(i, "cost_price", x)} ph="บาท" />
                           </div>
