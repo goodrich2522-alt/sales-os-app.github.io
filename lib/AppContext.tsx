@@ -260,6 +260,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSaveError({ what, msg: msg.slice(0, 200), at: Date.now() });
   };
 
+  /**
+   * เขียนใบขายให้สำเร็จก่อน ค่อยยอมให้เปลี่ยนสถานะรถ (3 ต.ค. 2569)
+   *
+   * ที่มา: รถ 010253T1376 ขึ้น "ปิดการขายแล้ว" แต่ไม่มีดีลผูก และหาบิลในไฟล์บัญชีไม่เจอเลย
+   * เดิมยิง 2 คำสั่งแยกกันและไม่รอกัน:
+   *     api.addSaleApi(...)         ← ใบขาย
+   *     api.updateForkliftApi(...)  ← สถานะรถ
+   * ถ้าใบขายลงไม่สำเร็จ (สิทธิ์ · คอลัมน์ไม่ตรง · รูปสลิปใหญ่เกิน · เน็ตสะดุด) แต่สถานะรถลงสำเร็จ
+   * → ได้รถ "ขายแล้วไม่มีใบขาย" ถาวร แก้คืนยากเพราะไม่เหลือร่องรอยว่าเซลล์คนไหนขาย
+   * คนที่กดก็ไม่รู้ตัว เพราะจอโชว์ว่าสำเร็จไปแล้วก่อนคำตอบจากเซิร์ฟเวอร์
+   *
+   * ใบขายไม่ลง = ไม่แตะสถานะรถในฐานข้อมูล · ถอยสถานะบนจอกลับของเดิม · ขึ้นแถบแดงให้เห็น
+   * ด่านตรวจ: scripts/e2e-sale-write-fail.mjs
+   */
+  const saleSaved = async (write: () => Promise<unknown>, what: string, before?: Forklift, undo?: () => void) => {
+    try { await write(); return true; } catch (e) {
+      failed(what)(e);
+      undo?.();
+      if (before) setForklifts(p => p.map(f => f.id === before.id ? { ...f, status: before.status } : f));
+      return false;
+    }
+  };
+
   const actorRef = useRef<string>("ระบบ");
   const setActor = useCallback((name: string) => { actorRef.current = (name || "").trim() || "ระบบ"; }, []);
   const logAudit = useCallback((action: string, entity: string, entityId: string, detail?: unknown) => {
@@ -574,6 +597,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     lastLocalEditRef.current = Date.now();
     // จอง/กันสต็อก → ติดมาร์ก "รออนุมัติ" · ปิดการขายจริง → ตัดจองออกอัตโนมัติ (ไม่ต้องรอสต็อก)
     const s = withApprovalMarker(s0);
+    const before = forkliftsRef.current.find(f => f.id === s.forklift_id); // สถานะเดิม (อ่านก่อนแก้ ไว้ถอยคืน)
     setSales(p => [s, ...p]); // optimistic (โชว์รูป base64 ทันที)
     const nextStatus = forkStatusGated(s);
     setForklifts(p => p.map(f => f.id === s.forklift_id ? { ...f, status: nextStatus } : f));
@@ -581,9 +605,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       (async () => {
         const saved = await uploadPaymentProof(s);
         if (saved !== s) setSales(p => p.map(x => x.id === s.id ? saved : x)); // เปลี่ยน base64 → URL
-        api.addSaleApi(saved).catch(failed("addSale"));
-        const target = forkliftsRef.current.find(f => f.id === s.forklift_id);
-        if (target) api.updateForkliftApi({ ...target, status: nextStatus }).catch(failed("updateForklift"));
+        if (!(await saleSaved(() => api.addSaleApi(saved), "addSale", before, () => setSales(p => p.filter(x => x.id !== s.id))))) return;
+        if (before) api.updateForkliftApi({ ...before, status: nextStatus }).catch(failed("updateForklift"));
       })();
     }
     logAudit("บันทึกการขาย/จอง", "sale", s.id, { forklift: s.forklift_id, model: `${s.forklift_brand} ${s.forklift_model}`, status: s.sale_status, customer: s.customer_name, amount: s.actual_sale });
@@ -602,16 +625,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // สถานะรถให้ตรงกับใบขายที่เพิ่ง เติมเข้าไป (เช่น คันที่ยังค้าง "พร้อมขาย" ทั้งที่ขายไปแล้ว)
     const status = new Map(list.map(x => [x.forklift_id, forkStatusGated(x)]));
     const touched: Forklift[] = [];
+    const prevStatus = new Map<string, string>();   // สถานะเดิมของคันที่แตะ ไว้ถอยคืนถ้าใบขายลงไม่สำเร็จ
     setForklifts(p => p.map(f => {
       const st = status.get(f.id);
       if (!st || f.status === st) return f;
       const next = { ...f, status: st };
+      prevStatus.set(f.id, String(f.status ?? ""));
       touched.push(next);
       return next;
     }));
     if (api.apiEnabled) {
       (async () => {
-        await api.bulkUpsertSalesApi(list).catch(failed("addSalesBulk"));
+        // ใบขายทั้งชุดต้องลงสำเร็จก่อน ถึงจะยอมแก้สถานะรถ — ไม่งั้นได้รถขายแล้วไม่มีใบขายทีเดียวหลายสิบคัน
+        if (!(await saleSaved(() => api.bulkUpsertSalesApi(list), "addSalesBulk", undefined, () => {
+          const ids = new Set(list.map(x => x.id));
+          setSales(p => p.filter(x => !ids.has(x.id)));
+          setForklifts(p => p.map(f => { const o = prevStatus.get(f.id); return o === undefined ? f : { ...f, status: o }; }));
+        }))) return;
         if (touched.length) await api.bulkUpsertForkliftsApi(touched).catch(failed("addSalesBulk/forklifts"));
       })();
     }
@@ -624,15 +654,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     lastLocalEditRef.current = Date.now();
     const s = withApprovalMarker(s0);
     const nextStatus = forkStatusGated(s);
+    const prevSale = salesRef.current.find(x => x.id === s.id);                // ไว้ถอยคืนถ้าบันทึกไม่สำเร็จ
+    const before = forkliftsRef.current.find(f => f.id === s.forklift_id);
     setSales(p => p.map(x => x.id === s.id ? s : x));
     setForklifts(p => p.map(f => f.id === s.forklift_id ? { ...f, status: nextStatus } : f));
     if (api.apiEnabled) {
       (async () => {
         const saved = await uploadPaymentProof(s);
         if (saved !== s) setSales(p => p.map(x => x.id === s.id ? saved : x));
-        api.updateSaleApi(saved).catch(failed("updateSale"));
-        const target = forkliftsRef.current.find(f => f.id === s.forklift_id);
-        if (target) api.updateForkliftApi({ ...target, status: nextStatus }).catch(failed("updateForklift"));
+        if (!(await saleSaved(() => api.updateSaleApi(saved), "updateSale", before,
+          () => { if (prevSale) setSales(p => p.map(x => x.id === s.id ? prevSale : x)); }))) return;
+        if (before) api.updateForkliftApi({ ...before, status: nextStatus }).catch(failed("updateForklift"));
       })();
     }
   }, []);
@@ -644,12 +676,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const stamp = new Date().toLocaleString("th-TH");
     const ns: Sale = { ...sale, custom_fields: { ...(sale.custom_fields || {}), [STOCK_APPROVAL_FIELD]: "อนุมัติแล้ว", "อนุมัติเมื่อ": stamp, "อนุมัติโดย": by || "สต็อก" } };
     const finalStatus = forkStatusGated(ns); // = สถานะจริงตามดีล (จอง/รอจัดส่ง/...)
+    const before = forkliftsRef.current.find(f => f.id === sale.forklift_id);
     setSales(p => p.map(x => x.id === saleId ? ns : x));
     setForklifts(p => p.map(f => f.id === sale.forklift_id ? { ...f, status: finalStatus } : f));
     if (api.apiEnabled) {
-      api.updateSaleApi(ns).catch(failed("approveSale"));
-      const target = forkliftsRef.current.find(f => f.id === sale.forklift_id);
-      if (target) api.updateForkliftApi({ ...target, status: finalStatus }).catch(failed("updateForklift"));
+      (async () => {
+        // อนุมัติจองไม่สำเร็จ → ห้ามกันสต็อกรถ ไม่งั้นรถถูกล็อกไว้โดยไม่มีดีลยืนยัน
+        if (!(await saleSaved(() => api.updateSaleApi(ns), "approveSale", before,
+          () => setSales(p => p.map(x => x.id === saleId ? sale : x))))) return;
+        if (before) api.updateForkliftApi({ ...before, status: finalStatus }).catch(failed("updateForklift"));
+      })();
     }
     logAudit("อนุมัติจอง", "sale", saleId, { forklift: sale.forklift_id, model: `${sale.forklift_brand} ${sale.forklift_model}`, customer: sale.customer_name, by: by || "สต็อก" });
   }, []);
