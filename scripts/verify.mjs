@@ -123,6 +123,13 @@ if (built) {
     const out = run("node", ["scripts/e2e-warranty-gate.mjs"], { env });
     if (!/✓ หายแล้ว/.test(out) || !/✓ ไม่ติด/.test(out)) throw new Error(out.split("\n").slice(-4).join("\n"));
   });
+  // (3 ต.ค. 2569) รถ 010253T1376 ขึ้น "ปิดการขายแล้ว" แต่ไม่มีดีล — ใบขายลงไม่สำเร็จแต่สถานะรถลงสำเร็จ
+  step("ใบขายลงไม่ได้ → ห้ามตั้งรถเป็นขายแล้ว", () => {
+    const out = run("node", ["scripts/e2e-sale-write-fail.mjs"], { env });
+    if (!/✓ ไม่หลุด/.test(out)) throw new Error("ตั้งสถานะรถเป็นขายแล้วทั้งที่ใบขายไม่ลง — จะได้รถขายแล้วไม่มีใบขาย\n" + out.split("\n").slice(-5).join("\n"));
+    if (!/2\) แถบแดงเตือนผู้ใช้: ✓/.test(out)) throw new Error("ไม่ขึ้นแถบแดง ผู้ใช้เข้าใจว่าบันทึกสำเร็จ");
+    if (!/3\).*✓/.test(out)) throw new Error("ตัวนับ “ขายไปแล้ว” บนจอขึ้นทั้งที่บันทึกไม่สำเร็จ");
+  });
 }
 
 console.log(line);
