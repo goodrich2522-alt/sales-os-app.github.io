@@ -87,3 +87,32 @@ export const daysUntil = (dueISO: string, todayISO: string): number | null => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !/^\d{4}-\d{2}-\d{2}$/.test(t)) return null;
   return Math.round((new Date(d + "T00:00:00").getTime() - new Date(t + "T00:00:00").getTime()) / 86400000);
 };
+
+/**
+ * ── สร้างข้อมูลบริการหลังการขายจากค่ามาตรฐาน ──
+ * (3 ต.ค. 2569 · ผู้ใช้บอกว่าไม่อยากเจอกล่องแดง "ยังบันทึกไม่ได้" บ่อย ๆ)
+ *
+ * กล่องรับประกันเติมค่าให้อยู่แล้ว (วันเริ่ม = วันส่งมอบ · เงื่อนไข = มาตรฐานตามชนิดรถ)
+ * เหลือแค่ "กดปุ่มบันทึกในกล่องนั้น" ซึ่งคนมักลืม แล้วไปเจอกล่องแดงตอนกดปิดการขาย
+ * → ถ้าค่ามาตรฐานครบอยู่แล้ว ให้บันทึกให้เลยตอนปิดการขาย ไม่ต้องมีกล่องแดง
+ *
+ * คืน null เมื่อ "เติมเองไม่ได้" (ไม่มีวันส่งมอบ หรือชนิดรถยังไม่มีเงื่อนไขมาตรฐาน)
+ * — กรณีนั้นยังต้องให้คนกรอกเอง เพราะเดาไม่ได้
+ */
+export const buildDefaultSvc = (
+  f: { received_date?: string; vehicle_category?: string; custom_fields?: Record<string, string> | null },
+  isForklift: boolean,
+  deliveryDate: string,
+  actor: string,
+): SvcData | null => {
+  if (warrantyFilled(f)) return null;                 // มีอยู่แล้ว ไม่ต้องทับ
+  // ⚠️ วันเริ่มประกัน = **วันส่งมอบ** เท่านั้น (กติกาข้อ 8) — ห้ามถอยไปใช้วันรับรถเข้าคลัง
+  //    วันรับรถคือวันที่รถมาถึงโกดัง ไม่ใช่วันที่ลูกค้าได้รถ ใช้แทนกันไม่ได้
+  const start = String(deliveryDate || "").trim();
+  const terms = defaultWarrantyTerms(isForklift, f.vehicle_category);
+  if (!start || !terms) return null;                  // เดาไม่ได้ → ให้คนกรอกเอง
+  return {
+    start, terms, rounds: emptySvcRounds(),
+    history: [{ by: `${actor || "-"} (ระบบเติมค่ามาตรฐานให้ตอนปิดการขาย)`, at: new Date().toLocaleString("th-TH") }],
+  };
+};

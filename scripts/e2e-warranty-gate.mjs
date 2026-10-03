@@ -69,6 +69,24 @@ await page.getByText(SN, { exact: false }).first().click();
 await page.waitForTimeout(900);
 
 const warnVisible = async () => page.getByText("ต้องกรอกและกดบันทึกกล่องนี้ก่อน").count();
+if (process.env.AUTOFILL) {
+  // กรอกวันส่งมอบอย่างเดียว ไม่แตะกล่องประกัน → ระบบต้องเติมค่ามาตรฐานให้เองตอนปิดการขาย
+  const dd = page.locator("label", { hasText: "วันส่งมอบ" }).first().locator("input[type=date]").first();
+  await dd.fill("2026-09-20").catch(() => {});
+  await page.waitForTimeout(500);
+  console.log("กรอกแค่วันส่งมอบ — คำเตือนประกัน:", await warnVisible(), "(ควรเป็น 0)");
+  const close = page.getByRole("button", { name: /ปิดการขาย \/ จัดส่งแล้ว/ }).first();
+  if (await close.count()) {
+    await close.click(); await page.waitForTimeout(800);
+    const gate = await page.getByText("บริการหลังการขาย / รับประกัน", { exact: false }).count();
+    const box = await page.locator("#sale-error-summary").textContent().catch(() => "");
+    const aboutWarranty = /บริการหลังการขาย|เงื่อนไขรับประกัน|เริ่มประกัน/.test(box || "");
+    console.log("กล่องแดงพูดถึงประกันไหม:", aboutWarranty ? "✗ ยังพูดถึง" : "✓ ไม่พูดถึงแล้ว");
+    console.log("ข้อความในกล่องแดง:", (box || "(ไม่มี)").replace(/s+/g, " ").slice(0, 300));
+    void gate;
+  }
+  await browser.close(); srv.close(); process.exit(0);
+}
 console.log("ก่อนกรอกประกัน — คำเตือนในฟอร์ม:", await warnVisible(), "(ควรเป็น 1)");
 
 // กรอกกล่องบริการหลังการขาย แล้วกดบันทึก
