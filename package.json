@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "lint": "eslint",
-    "check": "node scripts/check-render-order.mjs && node scripts/check-columns.mjs && node scripts/test-quote-parsers.mjs && node scripts/test-sales-import.mjs"
+    "check": "node scripts/check-render-order.mjs && node scripts/check-columns.mjs && node scripts/test-quote-parsers.mjs && node scripts/test-sales-import.mjs",
+    "verify": "node scripts/verify.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
