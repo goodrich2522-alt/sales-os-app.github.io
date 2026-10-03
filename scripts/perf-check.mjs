@@ -178,10 +178,14 @@ if (process.env.CLICK) {
   for (const label of ["ยังไม่มีทุน", "ขายแล้วไม่มีใบขาย"]) {
     const b = page.locator("button", { hasText: label }).first();
     if (!(await b.count())) { console.log("   ไม่เจอปุ่ม", label); continue; }
+    const before = (await shown()).trim();
     await b.click(); await page.waitForTimeout(400);
-    console.log("   กด " + label + " →", (await shown()).trim());
+    const on = (await shown()).trim();
     await b.click(); await page.waitForTimeout(400);
-    console.log("   ปิด " + label + " →", (await shown()).trim());
+    const off = (await shown()).trim();
+    // ปุ่มกรองต้องทำให้รายการเปลี่ยนจริง — เคยพลาดเพราะลืมใส่ dependency แล้วรายการไม่คำนวณใหม่
+    const ok = on !== before && off === before;
+    console.log("   ปุ่ม " + label + ": " + before + " → " + on + " → " + off + (ok ? "  ✓ เปลี่ยนจริง" : "  ✗ ไม่เปลี่ยน"));
   }
 }
 // TAGCHECK — ป้ายชื่อเซลล์ในรายการสต็อกขึ้นไหม
