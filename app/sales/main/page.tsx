@@ -173,6 +173,15 @@ export default function SalesMain() {
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest"); // เรียงตามวันที่เข้าสต็อก
   const [viewMode, setViewMode]   = useState<"card" | "table" | "byModel">("card"); // มุมมอง: การ์ด/ตาราง/ตามรุ่น
   const [selected, setSelected]   = useState<Forklift | null>(null);
+  /**
+   * ⚠️ selected เป็น "สำเนา" ของรถตอนกดเลือก — พอกล่องรับประกันกดบันทึก ตัวกลางอัปเดตแล้ว
+   * แต่สำเนานี้ไม่อัปเดตตาม → ด่านตรวจยังเห็นว่า "ยังไม่กรอกประกัน" กดปิดการขายไม่ได้
+   * (ผู้ใช้แจ้ง 3 ต.ค. 2569 ว่าต้องกด 3-4 ครั้งถึงผ่าน — เพราะต้องรอให้สำเนาถูกเซ็ตใหม่)
+   * → ทุกที่ที่ต้องรู้ "สถานะล่าสุดของรถคันนี้" ให้ใช้ selectedLive ไม่ใช่ selected
+   */
+  const selectedLive = useMemo(
+    () => (selected ? forklifts.find(f => f.id === selected.id) ?? selected : null),
+    [selected, forklifts]);
   const [editingSale, setEditingSale] = useState<Sale | null>(null); // ไม่ null = กำลังแก้ไขดีลเดิม
   const [form, setForm]           = useState(emptyCheckout);
   const [errors, setErrors]       = useState<Record<string, string>>({});
@@ -667,7 +676,7 @@ export default function SalesMain() {
     if (isCredit && !form.bill_note_no.trim()) e.bill_note_no = "กรุณากรอกเลขใบวางบิล";
     // ⭐ ปิดการขาย/จัดส่งแล้ว = รถถึงมือลูกค้า → ต้องลงข้อมูลรับประกัน + รอบเช็คให้ครบก่อน
     //    (ไม่บังคับตอนจอง/รอโอน/รอไฟแนนซ์ เพราะยังไม่ส่งมอบ ยังไม่รู้วันเริ่มประกัน)
-    if (status === "ปิดการขาย/จัดส่งแล้ว" && needWarranty && !warrantyFilled(selected!))
+    if (status === "ปิดการขาย/จัดส่งแล้ว" && needWarranty && !warrantyFilled(selectedLive!))
       e.warranty = "กรุณากรอก \"บริการหลังการขาย / รับประกัน\" (วันเริ่มประกัน + เงื่อนไข) แล้วกดบันทึกในกล่องนั้นก่อน";
     return e;
   };
@@ -688,7 +697,7 @@ export default function SalesMain() {
       clear("delivery_date", !!form.delivery_date);
       clear("bill_note_no", !!form.bill_note_no.trim());
       clear("payment_proof", paymentProofs.length > 0);
-      clear("warranty", !needWarranty || warrantyFilled(selected!));
+      clear("warranty", !needWarranty || warrantyFilled(selectedLive!));
       return changed ? next : prev;
     });
   }, [form, paymentProofs]);
@@ -988,7 +997,7 @@ export default function SalesMain() {
   // ตรวจฟอร์มแล้วบันทึกดีลด้วยสถานะที่เลือก (ใช้ร่วมทุกปุ่ม)
   // รถคันที่เลือกต้องลงข้อมูลบริการหลังการขายก่อนปิดการขายไหม
   // (เฉพาะรถที่ขายพร้อมเงื่อนไขเข้าเซอร์วิส = โฟล์คลิฟท์ · รถเช่าไม่ใช่การขาย จึงข้าม)
-  const needWarranty = !!selected && isForkliftVehicle(selected.brand, selected.model) && form.sale_type !== "รถเช่า";
+  const needWarranty = !!selectedLive && isForkliftVehicle(selectedLive.brand, selectedLive.model) && form.sale_type !== "รถเช่า";
 
   const submitSale = (status: SaleStatus) => {
     const errs = validate(status);
@@ -2049,14 +2058,14 @@ export default function SalesMain() {
                     {/* ── บริการหลังการขาย / รอบเช็ค — ต้องกรอกก่อนปิดการขาย (รถที่มีเงื่อนไขเข้าเซอร์วิส) ── */}
                     {/* (25 ก.ย. 2569 · ผู้ใช้สั่ง) เดิมกรอกได้หลังปิดการขายเท่านั้น ทำให้หลายดีลค้างไม่ได้ลง
                         ค่าคอมเลยเป็น 0 ย้อนหลัง · ย้ายมาให้กรอกตรงนี้ + บังคับก่อนกดปิดการขาย */}
-                    {selected && (
+                    {selectedLive && (
                       <div className="pt-2">
-                        {needWarranty && !warrantyFilled(selected) && (
+                        {needWarranty && !warrantyFilled(selectedLive) && (
                           <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
                             ⚠️ รถรุ่นนี้ขายพร้อมเงื่อนไขบริการ (เช็คฟรี {SVC_ROUNDS} รอบ) — <b>ต้องกรอกและกดบันทึกกล่องนี้ก่อน</b> ถึงจะปิดการขายได้
                           </p>
                         )}
-                        <WarrantyBlock forklift={selected} actor={salesUser?.name || "ฝ่ายขาย"} defaultStart={form.delivery_date || ""} />
+                        <WarrantyBlock forklift={selectedLive} actor={salesUser?.name || "ฝ่ายขาย"} defaultStart={form.delivery_date || ""} />
                       </div>
                     )}
 
