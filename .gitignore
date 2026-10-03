@@ -60,3 +60,6 @@ DATA-SYNC-PLAN.md
 sync-rules.md
 ocr-server/.env
 excem pr/
+
+# ไฟล์ทดลองชั่วคราว
+_*.mjs
