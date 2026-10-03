@@ -18,7 +18,7 @@ import { isPendingId, displayCode, piLabel } from "@/lib/productId";
 import { STATUS_BADGE, SALE_STATUS_BADGE, CONTACT_SOURCE_COLORS, VEHICLE_CATS, paymentBadgeClass, sameStaff, canonicalStaff } from "@/lib/constants";
 import { MoneyInput } from "@/components/ui/MoneyInput";
 import { WarrantyBlock } from "@/components/WarrantyBlock";
-import { SVC_ROUNDS } from "@/lib/warranty";
+import { buildDefaultSvc, SVC_ROUNDS } from "@/lib/warranty";
 import { CLOSE_SALE_ALERT_DAYS } from "@/lib/dataHealth";
 import { parseSvc, nextDue, SVC_SOON_DAYS } from "@/lib/warranty";
 import { formatBaht, toIsoDate } from "@/lib/format";
@@ -676,8 +676,10 @@ export default function SalesMain() {
     if (isCredit && !form.bill_note_no.trim()) e.bill_note_no = "กรุณากรอกเลขใบวางบิล";
     // ⭐ ปิดการขาย/จัดส่งแล้ว = รถถึงมือลูกค้า → ต้องลงข้อมูลรับประกัน + รอบเช็คให้ครบก่อน
     //    (ไม่บังคับตอนจอง/รอโอน/รอไฟแนนซ์ เพราะยังไม่ส่งมอบ ยังไม่รู้วันเริ่มประกัน)
-    if (status === "ปิดการขาย/จัดส่งแล้ว" && needWarranty && !warrantyFilled(selectedLive!))
-      e.warranty = "กรุณากรอก \"บริการหลังการขาย / รับประกัน\" (วันเริ่มประกัน + เงื่อนไข) แล้วกดบันทึกในกล่องนั้นก่อน";
+    if (status === "ปิดการขาย/จัดส่งแล้ว" && !warrantyReady)
+      e.warranty = String(form.delivery_date ?? "").trim()
+        ? "ชนิดรถนี้ยังไม่มีเงื่อนไขรับประกันมาตรฐาน — กรอก \"บริการหลังการขาย / รับประกัน\" แล้วกดบันทึกในกล่องนั้นก่อน"
+        : "กรอก \"วันส่งมอบ\" ก่อน — ระบบจะใช้เป็นวันเริ่มประกันและเติมเงื่อนไขมาตรฐานให้เอง";
     return e;
   };
 
@@ -697,7 +699,7 @@ export default function SalesMain() {
       clear("delivery_date", !!form.delivery_date);
       clear("bill_note_no", !!form.bill_note_no.trim());
       clear("payment_proof", paymentProofs.length > 0);
-      clear("warranty", !needWarranty || warrantyFilled(selectedLive!));
+      clear("warranty", warrantyReady);
       return changed ? next : prev;
     });
   }, [form, paymentProofs]);
@@ -998,8 +1000,31 @@ export default function SalesMain() {
   // รถคันที่เลือกต้องลงข้อมูลบริการหลังการขายก่อนปิดการขายไหม
   // (เฉพาะรถที่ขายพร้อมเงื่อนไขเข้าเซอร์วิส = โฟล์คลิฟท์ · รถเช่าไม่ใช่การขาย จึงข้าม)
   const needWarranty = !!selectedLive && isForkliftVehicle(selectedLive.brand, selectedLive.model) && form.sale_type !== "รถเช่า";
+  /**
+   * รับประกัน "พร้อมแล้ว" = บันทึกไว้แล้ว หรือระบบเติมค่ามาตรฐานให้ได้เอง
+   * (วันเริ่ม = วันส่งมอบ · เงื่อนไข = มาตรฐานตามชนิดรถ) → ไม่ต้องขึ้นกล่องแดงให้คนงง
+   * เหลือเตือนเฉพาะกรณีที่เดาไม่ได้จริง ๆ เช่น ยังไม่กรอกวันส่งมอบ
+   * หรือชนิดรถที่ยังไม่มีเงื่อนไขมาตรฐาน (3 ต.ค. 2569 · ผู้ใช้ขอ)
+   */
+  const warrantyReady = !needWarranty || !selectedLive
+    || warrantyFilled(selectedLive)
+    || !!buildDefaultSvc(selectedLive, true, form.delivery_date || "", "");
 
   const submitSale = (status: SaleStatus) => {
+    // ⭐ (3 ต.ค. 2569 · ผู้ใช้บอกว่าไม่อยากเจอกล่องแดงบ่อย ๆ)
+    //    กล่องรับประกันเติมค่าให้อยู่แล้ว (วันเริ่ม = วันส่งมอบ · เงื่อนไข = มาตรฐานตามชนิดรถ)
+    //    เหลือแค่คนลืมกดปุ่มบันทึกในกล่องนั้น แล้วมาเจอกล่องแดงตอนกดปิดการขาย
+    //    → ถ้าค่ามาตรฐานครบ บันทึกให้เลย ไม่ต้องเตือน · เดาไม่ได้เมื่อไหร่ค่อยเตือน (เงื่อนไขเดิม)
+    if (status === "ปิดการขาย/จัดส่งแล้ว" && needWarranty && selectedLive && !warrantyFilled(selectedLive)) {
+      const svc = buildDefaultSvc(selectedLive, true, form.delivery_date || "", salesUser?.name || "ฝ่ายขาย");
+      if (svc) {
+        updateForklift({
+          ...selectedLive,
+          custom_fields: { ...(selectedLive.custom_fields ?? {}), "บริการหลังการขาย": JSON.stringify(svc) },
+        });
+      }
+    }
+
     const errs = validate(status);
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
@@ -2060,9 +2085,9 @@ export default function SalesMain() {
                         ค่าคอมเลยเป็น 0 ย้อนหลัง · ย้ายมาให้กรอกตรงนี้ + บังคับก่อนกดปิดการขาย */}
                     {selectedLive && (
                       <div className="pt-2">
-                        {needWarranty && !warrantyFilled(selectedLive) && (
+                        {needWarranty && !warrantyReady && (
                           <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
-                            ⚠️ รถรุ่นนี้ขายพร้อมเงื่อนไขบริการ (เช็คฟรี {SVC_ROUNDS} รอบ) — <b>ต้องกรอกและกดบันทึกกล่องนี้ก่อน</b> ถึงจะปิดการขายได้
+                            ⚠️ รถรุ่นนี้ขายพร้อมเงื่อนไขบริการ (เช็คฟรี {SVC_ROUNDS} รอบ) — ระบบเติมค่ามาตรฐานให้ไม่ได้ ({!String(form.delivery_date ?? "").trim() ? "ยังไม่กรอกวันส่งมอบ" : "ชนิดรถนี้ยังไม่มีเงื่อนไขมาตรฐาน"}) <b>ต้องกรอกและกดบันทึกกล่องนี้ก่อน</b>
                           </p>
                         )}
                         <WarrantyBlock forklift={selectedLive} actor={salesUser?.name || "ฝ่ายขาย"} defaultStart={form.delivery_date || ""} />
