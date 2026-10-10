@@ -283,6 +283,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  /**
+   * บันทึกไม่สำเร็จ → ถอยข้อมูลบนจอกลับของเดิม (10 ต.ค. 2569)
+   *
+   * ที่มา: ทุกการบันทึกโชว์ผลบนจอก่อนรู้ผลจากเซิร์ฟเวอร์ (optimistic) เพื่อให้กดแล้วไหลลื่น
+   * แต่ถ้าเซิร์ฟเวอร์ปฏิเสธ เดิมขึ้นแค่แถบแดง ข้อมูลบนจอยังเป็นค่าใหม่อยู่
+   * → ผู้ใช้เห็นว่าบันทึกแล้ว ปิดแอปไป พอเปิดใหม่ข้อมูลหาย
+   *   (อาการเดียวกับเคส 010253T1376 แต่เกิดกับทุกช่อง เช่น ประกัน · สเปกรถ · ทุน)
+   * ถอยคืนทันทีจะเห็นชัดว่ายังไม่ได้บันทึก ต้องกดใหม่ — ไม่ปล่อยให้เข้าใจผิด
+   *
+   * ด่านตรวจ: scripts/e2e-save-rollback.mjs
+   */
+  const withRollback = (p: Promise<unknown>, what: string, rollback: () => void) => {
+    p.catch(e => { failed(what)(e); rollback(); });
+  };
+
   const actorRef = useRef<string>("ระบบ");
   const setActor = useCallback((name: string) => { actorRef.current = (name || "").trim() || "ระบบ"; }, []);
   const logAudit = useCallback((action: string, entity: string, entityId: string, detail?: unknown) => {
@@ -469,38 +484,48 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const addCustomer = useCallback((c: Customer) => {
     lastLocalEditRef.current = Date.now();
     setCustomers(p => [c, ...p]);
-    if (api.apiEnabled) api.addCustomerApi(c).catch(failed("addCustomer"));
+    if (api.apiEnabled) withRollback(api.addCustomerApi(c), "addCustomer",
+      () => setCustomers(p => p.filter(x => x.id !== c.id)));
   }, []);
   const updateCustomer = useCallback((c: Customer) => {
+    const before = customersRef.current.find(x => x.id === c.id);
     lastLocalEditRef.current = Date.now();
     setCustomers(p => p.map(x => x.id === c.id ? c : x));
-    if (api.apiEnabled) api.updateCustomerApi(c).catch(failed("updateCustomer"));
+    if (api.apiEnabled) withRollback(api.updateCustomerApi(c), "updateCustomer",
+      () => { if (before) setCustomers(p => p.map(x => x.id === c.id ? before : x)); });
   }, []);
   const deleteCustomer = useCallback((id: string) => {
+    const at = customersRef.current.findIndex(x => x.id === id);
+    const before = at < 0 ? undefined : customersRef.current[at];
     lastLocalEditRef.current = Date.now();
     setCustomers(p => p.filter(x => x.id !== id));
-    if (api.apiEnabled) api.deleteCustomerApi(id).catch(failed("deleteCustomer"));
+    if (api.apiEnabled) withRollback(api.deleteCustomerApi(id), "deleteCustomer",
+      () => { if (before) setCustomers(p => p.some(x => x.id === id) ? p : [...p.slice(0, at), before, ...p.slice(at)]); });
   }, []);
 
   // ── Forklift CRUD ─────────────────────────────────────────────────────────
   const addForklift = useCallback((f: Forklift) => {
     lastLocalEditRef.current = Date.now();
     setForklifts(p => [f, ...p]);
-    if (api.apiEnabled) api.addForkliftApi(f).catch(failed("addForklift"));
+    if (api.apiEnabled) withRollback(api.addForkliftApi(f), "addForklift",
+      () => setForklifts(p => p.filter(x => x.id !== f.id)));
   }, []);
   // เพิ่มรถหลายคันพร้อมกัน (อัปโหลดจากไฟล์) — optimistic + upsert เป็นก้อน
   const addForkliftsBulk = useCallback((fs: Forklift[]) => {
     if (fs.length === 0) return;
     lastLocalEditRef.current = Date.now();
     setForklifts(p => [...fs, ...p]);
-    if (api.apiEnabled) api.bulkUpsertForkliftsApi(fs).catch(failed("addForkliftsBulk"));
+    if (api.apiEnabled) withRollback(api.bulkUpsertForkliftsApi(fs), "addForkliftsBulk",
+      () => { const ids = new Set(fs.map(f => f.id)); setForklifts(p => p.filter(x => !ids.has(x.id))); });
     logAudit(`นำเข้ารถเข้าสต็อก ${fs.length} คัน`, "forklift", fs[0].id, { count: fs.length, ids: fs.slice(0, 20).map(f => f.id), pi: fs[0].pi_no });
   }, []);
   const updateForklift = useCallback((f: Forklift) => {
     const before = forkliftsRef.current.find(x => x.id === f.id);
     lastLocalEditRef.current = Date.now();
     setForklifts(p => p.map(x => x.id === f.id ? f : x));
-    if (api.apiEnabled) api.updateForkliftApi(f).catch(failed("updateForklift"));
+    // บันทึกสเปก/ประกัน/ทุนไม่สำเร็จ → ถอยกลับค่าเดิม ไม่ให้จอบอกว่าบันทึกแล้ว
+    if (api.apiEnabled) withRollback(api.updateForkliftApi(f), "updateForklift",
+      () => { if (before) setForklifts(p => p.map(x => x.id === f.id ? before : x)); });
     // ⭐ (23 ก.ย. 2569) ชื่อยี่ห้อ/รุ่นในใบขายเป็น "สำเนาข้อความ" ไม่ได้ join กับทะเบียนรถ
     //    แก้ชื่อรุ่นที่รถแล้วใบขายยังค้างชื่อเก่า → รายงาน (รุ่นขายดี/วางแผนสั่งสต็อก) ยังโชว์ชื่อผิด
     //    จึงอัปเดตใบขายของคันนั้นตามไปด้วย (เฉพาะยี่ห้อ/รุ่น — ฟิลด์อื่นของใบขายไม่แตะ)
@@ -532,10 +557,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
   const deleteForklift = useCallback((id: string) => {
-    const before = forkliftsRef.current.find(f => f.id === id);
+    const at = forkliftsRef.current.findIndex(f => f.id === id);
+    const before = at < 0 ? undefined : forkliftsRef.current[at];
     lastLocalEditRef.current = Date.now();
     setForklifts(p => p.filter(f => f.id !== id));
-    if (api.apiEnabled) api.deleteForkliftApi(id).catch(failed("deleteForklift"));
+    // ลบไม่สำเร็จ → เอารถกลับเข้ารายการ ไม่ให้เข้าใจว่าลบแล้วทั้งที่ยังอยู่ในฐานข้อมูล
+    if (api.apiEnabled) withRollback(api.deleteForkliftApi(id), "deleteForklift",
+      () => { if (before) setForklifts(p => p.some(f => f.id === id) ? p : [...p.slice(0, at), before, ...p.slice(at)]); });
     logAudit("ลบรถออกจากสต็อก", "forklift", id, before ? { model: `${before.brand} ${before.model}`, SN: before.SN, status: before.status } : null);
   }, []);
 
