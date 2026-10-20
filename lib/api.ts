@@ -125,9 +125,22 @@ async function fetchAllRows(table: string, select = "*"): Promise<Record<string,
 }
 
 // ── อ่านข้อมูลทั้งหมดครั้งเดียว ──────────────────────────────────────────────
+/**
+ * เซสชันหลุด/หมดอายุ — โยน error ตัวนี้ออกไปให้หน้าจอฟ้องผู้ใช้
+ *
+ * ที่มา (20 ต.ค. 2569): ผู้ใช้เปิดหน้าสต็อกแล้วข้อมูล "หายหมด" ทุกช่องเป็น 0
+ * ที่จริงข้อมูลอยู่ครบ แต่เซสชันของฐานข้อมูลหมดอายุ → RLS ตอบ 200 พร้อมผลลัพธ์ว่าง
+ * ไม่ใช่ error เลยไม่มีอะไรฟ้อง หน้าจอจึงขึ้น 0 เงียบ ๆ เหมือนข้อมูลถูกลบทิ้ง
+ * (ล็อกอินของแอปเก็บใน localStorage แยกจากเซสชันฐานข้อมูล ชื่อผู้ใช้เลยยังค้างอยู่บนหัวจอ)
+ */
+export const AUTH_EXPIRED = "AUTH_EXPIRED";
+
 export async function bootstrap(): Promise<BootstrapData> {
   if (isTransporterMode()) return bootstrapTransporter();
   const c = sb();
+  // ไม่มีเซสชัน = อ่านอะไรไม่ได้เลย ต้องบอกผู้ใช้ ไม่ใช่โชว์ 0 เฉย ๆ
+  const { data: { session } } = await c.auth.getSession();
+  if (!session) throw new Error(AUTH_EXPIRED);
   const [fkRows, slRows, insRows, custRows, cfg] = await Promise.all([
     fetchAllRows("forklifts"),
     fetchAllRows("sales", SALE_COLUMNS),   // ไม่เอารูปสลิป — ดู SALE_COLUMNS
