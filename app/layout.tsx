@@ -3,6 +3,7 @@ import { Sarabun } from "next/font/google";
 import { AppProvider } from "@/lib/AppContext";
 import { UpdateChecker } from "@/components/UpdateChecker";
 import { SaveErrorBanner } from "@/components/SaveErrorBanner";
+import AuthExpiredBanner from "@/components/AuthExpiredBanner";
 import "./globals.css";
 
 const sarabun = Sarabun({
@@ -27,7 +28,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="th" className={`${sarabun.variable} h-full`}>
       <body className="min-h-full flex flex-col bg-slate-50 font-sans antialiased">
-        <AppProvider>{children}<SaveErrorBanner /></AppProvider>
+        <AppProvider>{children}<SaveErrorBanner /><AuthExpiredBanner /></AppProvider>
         <UpdateChecker />
       </body>
     </html>
