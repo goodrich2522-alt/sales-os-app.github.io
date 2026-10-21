@@ -124,7 +124,6 @@ interface AppContextType {
   scanInlineImages: () => Promise<InlineScan>;                    // หารูปที่ยังฝังเป็นข้อมูลดิบ
   liftInlineImages: (onStep?: (done: number, total: number) => void) => Promise<InlineLiftResult>;  // อัปขึ้นที่เก็บไฟล์แล้วแทนด้วยลิงก์
   saveError: { what: string; msg: string; at: number } | null;   // บันทึกขึ้นเซิร์ฟเวอร์ไม่สำเร็จครั้งล่าสุด
-  authExpired: boolean;        // เซสชันฐานข้อมูลหมดอายุ → อ่านข้อมูลไม่ได้ ต้องเข้าสู่ระบบใหม่
   clearSaveError: () => void;  // โหลดรูปสลิปของดีลใบนั้น (ไม่ได้โหลดมาตอนเปิดแอป)
   updateSale: (s: Sale) => void;
   deleteSale: (saleId: string) => void;
@@ -254,9 +253,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   //    พอรีเฟรชข้อมูลก็หาย โดยไม่มีใครรู้ว่าเกิดอะไรขึ้น (29 ก.ย. 2569)
   //    → เก็บข้อความ error ล่าสุดไว้ ให้แถบเตือนขึ้นทุกหน้า
   const [saveError, setSaveError] = useState<{ what: string; msg: string; at: number } | null>(null);
-  // เซสชันหมดอายุ = ฐานข้อมูลตอบ 200 แต่ 0 แถวทุกตาราง หน้าจอจะขึ้น 0 เงียบ ๆ เหมือนข้อมูลหาย
-  // จึงต้องจับแล้วฟ้องให้ชัด (เจอจริง 20 ต.ค. 2569 — ผู้ใช้เข้าใจว่าข้อมูลหายทั้งระบบ)
-  const [authExpired, setAuthExpired] = useState(false);
   const clearSaveError = useCallback(() => setSaveError(null), []);
   const failed = (what: string) => (e: unknown) => {
     console.warn(what, e);
@@ -350,8 +346,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           setMounted(true);
           return;
         } catch (e) {
-          // เซสชันหมดอายุ → อย่าถอยไปใช้ข้อมูลในเครื่องเงียบ ๆ ต้องฟ้องให้เข้าสู่ระบบใหม่
-          if (e instanceof Error && e.message === api.AUTH_EXPIRED) { if (!cancelled) { setAuthExpired(true); setMounted(true); } return; }
           console.warn("โหลดข้อมูลจาก Google Sheets ไม่สำเร็จ — ใช้ข้อมูลในเครื่องแทน", e);
         }
       }
@@ -385,10 +379,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setDeletedInspections((data.deletedInspections ?? []) as DeletedInspectionRecord[]);
         setCustomers(data.customers ?? []);
         // ไม่อัปเดต fieldConfig จาก realtime — กัน loop การเซฟกลับ
-      } catch (e) {
-        if (e instanceof Error && e.message === api.AUTH_EXPIRED) { setAuthExpired(true); return; }
-        console.warn("realtime pull", e);
-      }
+      } catch (e) { console.warn("realtime pull", e); }
     };
     // สำรอง: payload ไม่มีข้อมูลแถว (RLS กรอง/ผิดรูปแบบ) → ค่อยโหลดทั้งหมด แบบรวบหลาย event เป็นครั้งเดียว
     const fullPullSoon = () => { clearTimeout(timer); timer = setTimeout(pull, 1500); };
@@ -1103,7 +1094,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       forklifts, sales, inspections, deletedInspections, customers, fieldConfig,
       addCustomer, updateCustomer, deleteCustomer,
       addForklift, addForkliftsBulk, updateForklift, deleteForklift,
-      addSale, addSalesBulk, loadSaleProofs, updateSale, saveError, clearSaveError, authExpired, scanInlineImages, liftInlineImages, deleteSale, returnSale, approveStockSale, rejectStockSale, setActor,
+      addSale, addSalesBulk, loadSaleProofs, updateSale, saveError, clearSaveError, scanInlineImages, liftInlineImages, deleteSale, returnSale, approveStockSale, rejectStockSale, setActor,
       exportData, importData,
       addInspection, deleteInspection, restoreInspection, purgeInspection,
       refresh,

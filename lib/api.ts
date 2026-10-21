@@ -125,37 +125,8 @@ async function fetchAllRows(table: string, select = "*"): Promise<Record<string,
 }
 
 // ── อ่านข้อมูลทั้งหมดครั้งเดียว ──────────────────────────────────────────────
-/**
- * อ่านข้อมูลไม่ได้เลย — โยน error ตัวนี้ออกไปให้หน้าจอฟ้องผู้ใช้
- *
- * ที่มา (20 ต.ค. 2569): ผู้ใช้เปิดหน้าสต็อกแล้วข้อมูล "หายหมด" ทุกช่องเป็น 0
- * ที่จริงข้อมูลอยู่ครบ 1,172 คัน แต่ฐานข้อมูลตอบ 200 พร้อมผลลัพธ์ว่างทุกตาราง
- * ซึ่งไม่ใช่ error เลยไม่มีอะไรฟ้อง หน้าจอจึงขึ้น 0 เงียบ ๆ เหมือนข้อมูลถูกลบทิ้ง
- *
- * สาเหตุที่เจอจริง: แอปล็อกอินด้วย Google (components/GoogleLoginButton → signInWithIdToken)
- * และ RLS ของทุกตารางเป็น "for select to authenticated" → ไม่มี session = อ่านไม่ได้สักแถว
- * แต่ล็อกอินฝั่งแอปเก็บแยกใน localStorage ชื่อผู้ใช้จึงยังค้างบนหัวจอเหมือนยังล็อกอินอยู่
- *
- * ⚠️ ทำไมเช็คที่ "ผลลัพธ์ว่างทั้งหมด" ไม่ใช่เช็ค session:
- *    session ที่ค้างใน localStorage อาจมีอยู่แต่หมดอายุแล้ว (getSession ไม่ได้ถามเซิร์ฟเวอร์)
- *    ดูที่ผลจริงว่าอ่านได้หรือไม่ได้ ครอบคลุมทั้งกรณีไม่มี session และ token หมดอายุ
- *    (lib/auth.ts hasActiveSession() ใช้ getUser() ตรวจกับเซิร์ฟเวอร์ ถ้าต้องเช็ค session ให้ใช้ตัวนั้น)
- */
-export const AUTH_EXPIRED = "AUTH_EXPIRED";
-
-/** ว่างหมดทุกตาราง = อ่านข้อมูลไม่ได้จริง (ธุรกิจนี้ไม่มีทางมีรถ 0 คัน) */
-const allEmpty = (d: BootstrapData) =>
-  (d.forklifts?.length ?? 0) === 0 &&
-  (d.sales?.length ?? 0) === 0 &&
-  (d.inspections?.length ?? 0) === 0 &&
-  (d.customers?.length ?? 0) === 0;
-
 export async function bootstrap(): Promise<BootstrapData> {
-  if (isTransporterMode()) {
-    const t = await bootstrapTransporter();
-    if (allEmpty(t)) throw new Error(AUTH_EXPIRED);
-    return t;
-  }
+  if (isTransporterMode()) return bootstrapTransporter();
   const c = sb();
   const [fkRows, slRows, insRows, custRows, cfg] = await Promise.all([
     fetchAllRows("forklifts"),
@@ -169,7 +140,7 @@ export async function bootstrap(): Promise<BootstrapData> {
   const insAll = insRows as unknown as (InspectionRecord & { deleted_at?: string | null })[];
   const active = insAll.filter(r => !r.deleted_at) as InspectionRecord[];
   const deleted = insAll.filter(r => r.deleted_at).map(r => ({ ...r, deletedAt: r.deleted_at as string })) as DeletedInspectionRecord[];
-  const out: BootstrapData = {
+  return {
     forklifts: (fk.data ?? []) as Forklift[],
     sales: (sl.data ?? []) as Sale[],
     inspections: active,
@@ -177,9 +148,6 @@ export async function bootstrap(): Promise<BootstrapData> {
     customers: (custRows as unknown as Customer[]) ?? [],
     fieldConfig: ((cfg.data as { data?: Record<string, unknown> } | null)?.data) ?? {},
   };
-  // ทุกตารางว่างพร้อมกัน = อ่านข้อมูลไม่ได้ ไม่ใช่ "ข้อมูลหมด" → ฟ้องผู้ใช้ อย่าโชว์ 0 เงียบ ๆ
-  if (allEmpty(out)) throw new Error(AUTH_EXPIRED);
-  return out;
 }
 
 // ── Customer (ทะเบียนลูกค้า — เฟส 3) ──────────────────────────────────────────
