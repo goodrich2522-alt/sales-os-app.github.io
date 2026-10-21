@@ -132,10 +132,14 @@ async function fetchAllRows(table: string, select = "*"): Promise<Record<string,
  * ที่จริงข้อมูลอยู่ครบ 1,172 คัน แต่ฐานข้อมูลตอบ 200 พร้อมผลลัพธ์ว่างทุกตาราง
  * ซึ่งไม่ใช่ error เลยไม่มีอะไรฟ้อง หน้าจอจึงขึ้น 0 เงียบ ๆ เหมือนข้อมูลถูกลบทิ้ง
  *
- * ⚠️ บทเรียน (21 ต.ค. 2569): เวอร์ชันแรกของด่านนี้เช็ค auth.getSession() แล้วไม่มี session = ฟ้อง
- *    ผิด! แอปนี้ไม่ได้ล็อกอินกับ Supabase เลย (ไม่มี signInWithPassword ที่ไหน) ใช้ anon key ตลอด
- *    จึงไม่มี session เป็นเรื่องปกติ → แถบเตือนเด้งใส่ทุกคน และบล็อกการโหลดข้อมูลจริง
- *    ต้องดูที่ "ผลลัพธ์ว่างทั้งหมด" เท่านั้น ไม่ใช่ดูที่ session
+ * สาเหตุที่เจอจริง: แอปล็อกอินด้วย Google (components/GoogleLoginButton → signInWithIdToken)
+ * และ RLS ของทุกตารางเป็น "for select to authenticated" → ไม่มี session = อ่านไม่ได้สักแถว
+ * แต่ล็อกอินฝั่งแอปเก็บแยกใน localStorage ชื่อผู้ใช้จึงยังค้างบนหัวจอเหมือนยังล็อกอินอยู่
+ *
+ * ⚠️ ทำไมเช็คที่ "ผลลัพธ์ว่างทั้งหมด" ไม่ใช่เช็ค session:
+ *    session ที่ค้างใน localStorage อาจมีอยู่แต่หมดอายุแล้ว (getSession ไม่ได้ถามเซิร์ฟเวอร์)
+ *    ดูที่ผลจริงว่าอ่านได้หรือไม่ได้ ครอบคลุมทั้งกรณีไม่มี session และ token หมดอายุ
+ *    (lib/auth.ts hasActiveSession() ใช้ getUser() ตรวจกับเซิร์ฟเวอร์ ถ้าต้องเช็ค session ให้ใช้ตัวนั้น)
  */
 export const AUTH_EXPIRED = "AUTH_EXPIRED";
 

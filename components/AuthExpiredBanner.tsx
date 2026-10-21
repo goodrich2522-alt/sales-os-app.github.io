@@ -14,13 +14,23 @@ export default function AuthExpiredBanner() {
   const { authExpired } = useApp();
   if (!authExpired) return null;
 
+  // พากลับไปหน้าล็อกอินของส่วนที่ใช้อยู่ (หน้านั้นมีปุ่มเข้าสู่ระบบด้วย Google)
+  const loginPath = () => {
+    const p = location.pathname;
+    const base = p.slice(0, p.indexOf("/", p.indexOf("sales-os-app.github.io") + 1) + 1) || "/";
+    if (p.includes("/sales/")) return p.replace(/\/sales\/.*$/, "/sales/login/");
+    if (p.includes("/stock/")) return p.replace(/\/stock\/.*$/, "/stock/login/");
+    if (p.includes("/transporter/")) return p.replace(/\/transporter\/.*$/, "/transporter/login/");
+    return base;
+  };
   const relogin = () => {
     try {
-      // ล้างสำเนาข้อมูลเก่าในเครื่อง (อาจค้างไม่ครบ) แล้วบังคับโหลดสดจากฐานข้อมูล
-      // ไม่แตะการล็อกอิน — ปัญหานี้ไม่เกี่ยวกับการล็อกอิน
-      Object.keys(localStorage).filter(k => k.startsWith("salesos_")).forEach(k => localStorage.removeItem(k));
+      // ล้างสำเนาข้อมูลเก่าในเครื่อง + ร่องรอย session ที่หมดอายุ แล้วให้ล็อกอินใหม่
+      Object.keys(localStorage).filter(k => k.startsWith("salesos_") || k.startsWith("sb-"))
+        .forEach(k => localStorage.removeItem(k));
+      ["stock_user", "sales_user"].forEach(k => localStorage.removeItem(k));
     } catch { /* เบราว์เซอร์บางตัวห้ามแตะ localStorage */ }
-    location.href = location.pathname + "?nolocal=1&v=" + Date.now();   // กันทั้งแคชไฟล์และสำเนาในเครื่อง
+    location.href = loginPath() + "?v=" + Date.now();
   };
 
   return (
@@ -31,16 +41,16 @@ export default function AuthExpiredBanner() {
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold text-amber-900">ยังโหลดข้อมูลไม่ได้</p>
             <p className="text-[12px] text-amber-800 mt-1 leading-relaxed">
-              <b>ข้อมูลไม่ได้หายนะครับ</b> ยังอยู่ครบในฐานข้อมูล แต่ตอนนี้แอปติดต่อฐานข้อมูลแล้วได้ผลลัพธ์ว่าง
-              จึงดึงข้อมูลไม่ได้ ทุกช่องเลยขึ้นเป็น 0 · ลองกดปุ่มข้างล่างเพื่อโหลดใหม่
+              <b>ข้อมูลไม่ได้หายนะครับ</b> ยังอยู่ครบในฐานข้อมูล แต่ตอนนี้ดึงออกมาไม่ได้ ทุกช่องเลยขึ้นเป็น 0
+              สาเหตุที่พบบ่อยคือ<b>การเข้าสู่ระบบหมดอายุ</b> — กดปุ่มข้างล่างแล้ว<b>เข้าสู่ระบบด้วย Google อีกครั้ง</b>
             </p>
             <p className="text-[11px] text-amber-700 mt-1.5">
-              ระหว่างนี้<b>อย่าเพิ่งกดแก้ไขหรือบันทึกอะไร</b> — รอเข้าสู่ระบบใหม่ให้ข้อมูลขึ้นครบก่อน
+              ระหว่างนี้<b>อย่าเพิ่งกดแก้ไขหรือบันทึกอะไร</b> — รอให้ข้อมูลขึ้นครบก่อน
             </p>
           </div>
           <button onClick={relogin}
             className="flex-shrink-0 text-sm font-bold bg-amber-600 hover:bg-amber-700 text-white px-4 py-2.5 rounded-xl transition-all active:scale-95">
-            โหลดใหม่
+            เข้าสู่ระบบใหม่
           </button>
         </div>
       </div>
