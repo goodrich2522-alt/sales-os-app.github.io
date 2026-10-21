@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { execSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 // basePath สำหรับ GitHub Pages (repo sales-os-app.github.io → เสิร์ฟที่ /sales-os-app.github.io)
 // ตั้งผ่าน env ได้ (เช่น ปล่อยว่างตอนเทสต์ local) ค่าเริ่มต้น = /sales-os-app.github.io
@@ -15,6 +16,14 @@ const buildStamp = (() => {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${rev} · ${p(t.getDate())}/${p(t.getMonth() + 1)} ${p(t.getHours())}:${p(t.getMinutes())}`;
 })();
+
+// เขียนป้ายเวอร์ชันลงไฟล์ให้เว็บดึงไปเทียบเองได้ (public/ ถูกคัดลอกเข้า out/ ตอน build)
+// ⭐ (21 ต.ค. 2569) เสียเวลาไล่บั๊กที่แก้ไปแล้วหลายรอบ เพราะเบราว์เซอร์ยังใช้ไฟล์เก่า
+//    ผู้ใช้ไม่มีทางรู้เองว่าต้อง Ctrl+Shift+R → ให้แอปเทียบเวอร์ชันแล้วบอกเอง
+try {
+  mkdirSync("public", { recursive: true });
+  writeFileSync("public/version.txt", buildStamp + "\n", "utf8");
+} catch { /* เขียนไม่ได้ก็ข้าม ไม่ควรทำให้ build ล้ม */ }
 
 const nextConfig: NextConfig = {
   output: "export",            // สร้างเว็บ static (โฟลเดอร์ out/) สำหรับ GitHub Pages
