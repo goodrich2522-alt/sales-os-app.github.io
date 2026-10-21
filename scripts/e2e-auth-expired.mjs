@@ -46,13 +46,13 @@ await page.evaluate(() => {
 await page.goto("http://localhost:4330" + BASE + "/stock/main/", { waitUntil: "load" });
 await page.waitForTimeout(6000);
 
-const warned = await page.getByText("เซสชันหมดอายุ", { exact: false }).count().catch(() => 0);
+const warned = await page.getByText("ยังโหลดข้อมูลไม่ได้", { exact: false }).count().catch(() => 0);
 const reassured = await page.getByText("ข้อมูลไม่ได้หาย", { exact: false }).count().catch(() => 0);
-const btn = await page.getByRole("button", { name: /เข้าสู่ระบบใหม่/ }).count().catch(() => 0);
+const btn = await page.getByRole("button", { name: /โหลดใหม่/ }).count().catch(() => 0);
 
-console.log("1) ขึ้นคำเตือนว่าเซสชันหมดอายุ:", warned > 0 ? "✓ ขึ้นแล้ว" : "✗ ไม่ขึ้น — ผู้ใช้เข้าใจว่าข้อมูลหายทั้งระบบ");
+console.log("1) ขึ้นคำเตือนว่าโหลดข้อมูลไม่ได้:", warned > 0 ? "✓ ขึ้นแล้ว" : "✗ ไม่ขึ้น — ผู้ใช้เข้าใจว่าข้อมูลหายทั้งระบบ");
 console.log("2) บอกว่าข้อมูลไม่ได้หาย:", reassured > 0 ? "✓ บอกแล้ว" : "✗ ไม่บอก");
-console.log("3) มีปุ่มเข้าสู่ระบบใหม่:", btn > 0 ? "✓ มี" : "✗ ไม่มี");
+console.log("3) มีปุ่มโหลดใหม่:", btn > 0 ? "✓ มี" : "✗ ไม่มี");
 
 await browser.close(); srv.close();
 process.exitCode = (warned > 0 && reassured > 0 && btn > 0) ? 0 : 1;

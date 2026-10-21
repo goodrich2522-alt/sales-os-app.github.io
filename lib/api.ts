@@ -126,21 +126,33 @@ async function fetchAllRows(table: string, select = "*"): Promise<Record<string,
 
 // ── อ่านข้อมูลทั้งหมดครั้งเดียว ──────────────────────────────────────────────
 /**
- * เซสชันหลุด/หมดอายุ — โยน error ตัวนี้ออกไปให้หน้าจอฟ้องผู้ใช้
+ * อ่านข้อมูลไม่ได้เลย — โยน error ตัวนี้ออกไปให้หน้าจอฟ้องผู้ใช้
  *
  * ที่มา (20 ต.ค. 2569): ผู้ใช้เปิดหน้าสต็อกแล้วข้อมูล "หายหมด" ทุกช่องเป็น 0
- * ที่จริงข้อมูลอยู่ครบ แต่เซสชันของฐานข้อมูลหมดอายุ → RLS ตอบ 200 พร้อมผลลัพธ์ว่าง
- * ไม่ใช่ error เลยไม่มีอะไรฟ้อง หน้าจอจึงขึ้น 0 เงียบ ๆ เหมือนข้อมูลถูกลบทิ้ง
- * (ล็อกอินของแอปเก็บใน localStorage แยกจากเซสชันฐานข้อมูล ชื่อผู้ใช้เลยยังค้างอยู่บนหัวจอ)
+ * ที่จริงข้อมูลอยู่ครบ 1,172 คัน แต่ฐานข้อมูลตอบ 200 พร้อมผลลัพธ์ว่างทุกตาราง
+ * ซึ่งไม่ใช่ error เลยไม่มีอะไรฟ้อง หน้าจอจึงขึ้น 0 เงียบ ๆ เหมือนข้อมูลถูกลบทิ้ง
+ *
+ * ⚠️ บทเรียน (21 ต.ค. 2569): เวอร์ชันแรกของด่านนี้เช็ค auth.getSession() แล้วไม่มี session = ฟ้อง
+ *    ผิด! แอปนี้ไม่ได้ล็อกอินกับ Supabase เลย (ไม่มี signInWithPassword ที่ไหน) ใช้ anon key ตลอด
+ *    จึงไม่มี session เป็นเรื่องปกติ → แถบเตือนเด้งใส่ทุกคน และบล็อกการโหลดข้อมูลจริง
+ *    ต้องดูที่ "ผลลัพธ์ว่างทั้งหมด" เท่านั้น ไม่ใช่ดูที่ session
  */
 export const AUTH_EXPIRED = "AUTH_EXPIRED";
 
+/** ว่างหมดทุกตาราง = อ่านข้อมูลไม่ได้จริง (ธุรกิจนี้ไม่มีทางมีรถ 0 คัน) */
+const allEmpty = (d: BootstrapData) =>
+  (d.forklifts?.length ?? 0) === 0 &&
+  (d.sales?.length ?? 0) === 0 &&
+  (d.inspections?.length ?? 0) === 0 &&
+  (d.customers?.length ?? 0) === 0;
+
 export async function bootstrap(): Promise<BootstrapData> {
-  if (isTransporterMode()) return bootstrapTransporter();
+  if (isTransporterMode()) {
+    const t = await bootstrapTransporter();
+    if (allEmpty(t)) throw new Error(AUTH_EXPIRED);
+    return t;
+  }
   const c = sb();
-  // ไม่มีเซสชัน = อ่านอะไรไม่ได้เลย ต้องบอกผู้ใช้ ไม่ใช่โชว์ 0 เฉย ๆ
-  const { data: { session } } = await c.auth.getSession();
-  if (!session) throw new Error(AUTH_EXPIRED);
   const [fkRows, slRows, insRows, custRows, cfg] = await Promise.all([
     fetchAllRows("forklifts"),
     fetchAllRows("sales", SALE_COLUMNS),   // ไม่เอารูปสลิป — ดู SALE_COLUMNS
@@ -153,7 +165,7 @@ export async function bootstrap(): Promise<BootstrapData> {
   const insAll = insRows as unknown as (InspectionRecord & { deleted_at?: string | null })[];
   const active = insAll.filter(r => !r.deleted_at) as InspectionRecord[];
   const deleted = insAll.filter(r => r.deleted_at).map(r => ({ ...r, deletedAt: r.deleted_at as string })) as DeletedInspectionRecord[];
-  return {
+  const out: BootstrapData = {
     forklifts: (fk.data ?? []) as Forklift[],
     sales: (sl.data ?? []) as Sale[],
     inspections: active,
@@ -161,6 +173,9 @@ export async function bootstrap(): Promise<BootstrapData> {
     customers: (custRows as unknown as Customer[]) ?? [],
     fieldConfig: ((cfg.data as { data?: Record<string, unknown> } | null)?.data) ?? {},
   };
+  // ทุกตารางว่างพร้อมกัน = อ่านข้อมูลไม่ได้ ไม่ใช่ "ข้อมูลหมด" → ฟ้องผู้ใช้ อย่าโชว์ 0 เงียบ ๆ
+  if (allEmpty(out)) throw new Error(AUTH_EXPIRED);
+  return out;
 }
 
 // ── Customer (ทะเบียนลูกค้า — เฟส 3) ──────────────────────────────────────────
