@@ -3,7 +3,7 @@
 // อ่าน PDF ในเบราว์เซอร์ (ไฟล์ไม่ออกนอกเครื่อง) → parse → คนตรวจ/แก้ → บันทึกเข้าสต็อก
 // รอบแรกรองรับ HELI (text layer) · เจ้าอื่นทยอยเพิ่ม
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Fragment } from "react";
 import { useApp } from "@/lib/AppContext";
 import { readPdfText, looksScanned, readScannedPdfText, parseQuoteText, parseQuoteExcel, readExcelRows, isExcelFile, isImageFile, readImageText, normalizeStaxxModel, ParsedVehicle, QuoteDocCheck, KD_LEAD_MIN_DAYS, KD_LEAD_MAX_DAYS } from "@/lib/quoteImport";
 import { categorizeModel, modelWarning } from "@/lib/constants";
@@ -144,7 +144,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
           const res = parseQuoteExcel(await readExcelRows(f));
           if (res.vehicles.length === 0) { setNotice(`⚠️ "${f.name}" ไม่พบคอลัมน์ Serial No./Model`); continue; }
           vendors.add("STAXX (Serial List)");
-          all.push(...res.vehicles);
+          all.push(...tagDoc(res.vehicles, f.name));
           continue;
         }
         // รูป (JPEG/PNG) → OCR ในเครื่อง แล้วส่งเข้า parser เดิม
@@ -159,7 +159,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
             setNotice(`ℹ️ "${f.name}" อ่าน (OCR) แล้วยังจับรายการรถอัตโนมัติไม่ได้ (ภาพเอียง/ไม่ชัด/ตารางซับซ้อน) — กด "เพิ่มรถเอง" แล้วกรอกจากรูปได้`);
             continue;
           }
-          all.push(...res.vehicles.map(v => ({ ...v, doc_kind: res.doc_kind })));
+          all.push(...tagDoc(res.vehicles.map(v => ({ ...v, doc_kind: res.doc_kind })), f.name));
           continue;
         }
         // PDF
@@ -183,7 +183,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
         if (res.vendor === "unknown") { setNotice(`⚠️ "${f.name}" เดาผู้ผลิตไม่ได้`); continue; }
         if (res.vendor === "STAXX") { setNotice(`ℹ️ "${f.name}" เป็น STAXX — ใบ PDF ได้แค่รุ่น/ราคา · ใช้ไฟล์ Excel Serial List เพื่อดึง SN`); continue; }
         if (res.vehicles.length === 0) { setNotice(`⚠️ "${f.name}" (${res.vendor}) อ่านข้อความได้แต่ไม่พบรายการรถ — มักเกิดจาก **รหัสรุ่นที่ระบบยังไม่รู้จัก** · แจ้งทีมพัฒนาพร้อมชื่อรุ่นในใบ (เพิ่มที่ lib/quoteImport/models.ts) หรือกด "เพิ่มรถเอง (กรอกมือ)" ไปก่อน`); continue; }
-        all.push(...res.vehicles.map(v => ({ ...v, doc_kind: res.doc_kind })));
+        all.push(...tagDoc(res.vehicles.map(v => ({ ...v, doc_kind: res.doc_kind })), f.name));
       } catch (e) {
         setOcr(null);
         setNotice(`อ่าน "${f.name}" ไม่ได้: ${e instanceof Error ? e.message : "ผิดพลาด"}`);
@@ -251,6 +251,22 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
   const removeRow = (i: number) => setRows((r) => r.filter((_, j) => j !== i));
   // เพิ่มรถเอง (กรอกมือ) — สำรองกรณีอ่านไฟล์ PDF ไม่ได้ / เอกสารรูปแบบไม่รองรับ
   const addBlankRow = () => setRows((r) => [...r, { brand: "HELI", model: "", SN: "", vendor: "unknown", flags: ["เพิ่มเอง — ตรวจข้อมูลให้ครบ"] }]);
+
+  /**
+   * ติดชื่อไฟล์ต้นทางให้ทุกคัน + เติมเลข PI ให้คันที่อ่านไม่เจอ โดยใช้ของคันอื่นในใบเดียวกัน
+   * (21 ต.ค. 2569) ใบสแกนบางคันอ่านรหัสสัญญาไม่ออก เลยไม่มีเลข PI ทั้งที่มาจากใบเดียวกัน
+   * ผู้ใช้ต้องมานั่งกรอกเองทีละคัน — เอกสารใบเดียวกันย่อมเป็น PI เดียวกันอยู่แล้ว
+   */
+  const tagDoc = (list: ParsedVehicle[], file: string): ParsedVehicle[] => {
+    const pi = list.find(v => String(v.pi_no ?? "").trim())?.pi_no;
+    const ref = list.find(v => String(v.import_ref ?? "").trim())?.import_ref;
+    return list.map(v => ({
+      ...v,
+      src_file: file,
+      pi_no: String(v.pi_no ?? "").trim() || pi,
+      import_ref: String(v.import_ref ?? "").trim() || ref,
+    }));
+  };
 
   const toForklift = (v: ParsedVehicle, i: number): Forklift => {
     // สถานะเริ่มต้น: เลือกเอง (รอรับ/พร้อมขาย) หรือ auto → STAXX/CNC มาเป็นตู้ทั้งล็อต ลงวันรับแล้วขายได้เลย · แบรนด์อื่นต้องผ่านผู้รับรถ = รอรับ
@@ -633,13 +649,29 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                   {/* การ์ดต่อคัน — ช่องกว้าง มีป้ายกำกับ อ่าน/แก้ง่ายกว่าตารางแคบ */}
                   <div className="flex flex-col gap-3">
                     {rows.map((v, i) => {
+                      // ── หัวข้อคั่นเมื่อขึ้นเอกสารใบใหม่ (21 ต.ค. 2569) ──
+                      // ลากหลายใบพร้อมกันแล้วเดิมเป็นลิสต์ยาวเดียว ดูไม่ออกว่าคันไหนมาจากใบไหน
+                      // ตรวจทานยากและเสี่ยงแก้ผิดคัน — คั่นให้เห็นชัดว่าแต่ละใบมีรถกี่คัน PI อะไร
+                      const src = String(v.src_file ?? "").trim();
+                      const newDoc = src && src !== String(rows[i - 1]?.src_file ?? "").trim();
+                      const sameDoc = src ? rows.filter(r => String(r.src_file ?? "").trim() === src) : [];
+                      const docPi = sameDoc.find(r => String(r.pi_no ?? "").trim())?.pi_no;
+                      const docHead = newDoc ? (
+                        <div key={`h${i}`} className="flex items-center gap-2 flex-wrap mt-1 px-1">
+                          <span className="text-[11px] font-bold px-2 py-1 rounded-lg bg-slate-800 text-white">📄 {src}</span>
+                          {docPi && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">{docPi}</span>}
+                          <span className="text-[11px] text-slate-500">{sameDoc.length} คันในใบนี้</span>
+                        </div>
+                      ) : null;
                       const dupKey = dupKeyOf(v, i);
                       const dup = dupKey !== null;
                       const mto = isMto(v);
                       const warn = modelWarning(v.model);   // ชื่อรุ่นขัดกับความจริง (เช่น CDD + LI)
                       const flags = [...(v.flags ?? []).filter((f) => !(mto && f === "ไม่พบ SN")), ...(warn ? [warn] : [])]; // KD ยังไม่มี SN = ปกติ
                       return (
-                        <div key={i} className={`rounded-2xl border p-4 ${dup ? "border-red-300 bg-red-50/50" : mto ? "border-violet-200 bg-violet-50/40" : "border-slate-200 bg-slate-50/60"}`}>
+                        <Fragment key={i}>
+                        {docHead}
+                        <div className={`rounded-2xl border p-4 ${dup ? "border-red-300 bg-red-50/50" : mto ? "border-violet-200 bg-violet-50/40" : "border-slate-200 bg-slate-50/60"}`}>
                           <div className="flex items-center justify-between gap-2 mb-3">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-sm font-bold text-slate-700">คันที่ {i + 1}</span>
@@ -675,6 +707,7 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                           {mto && <p className="text-[11px] text-violet-700 bg-violet-50 border border-violet-200 rounded-lg px-2.5 py-1.5 mt-2.5">🏭 รถสั่งผลิต — บันทึกเป็นสถานะ &ldquo;สั่งผลิต&rdquo; · คาดได้ SN {kdFrom ? thaiDate(kdFrom) : "?"} ถึง {kdTo ? thaiDate(kdTo) : "?"} · รหัสชั่วคราว {v.pi_no || v.import_ref || "PI"}#{i + 1}</p>}
                           {flags.length ? <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-2.5">⚠️ {flags.join(" · ")}</p> : null}
                         </div>
+                        </Fragment>
                       );
                     })}
                   </div>
