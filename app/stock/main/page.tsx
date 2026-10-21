@@ -470,7 +470,10 @@ export default function StockMain() {
     return next;
   });
 
-  const handleLogout = () => { void signOutSupabase(); localStorage.removeItem("stock_user"); router.push("/stock/login"); };
+  // ออกจากระบบที่หน้าใดหน้าหนึ่ง = เซสชันฐานข้อมูล (ใช้ร่วมกันทุกหน้า) ถูกปิดไปด้วย
+  // ถ้าลบเฉพาะล็อกอินของหน้านี้ หน้าฝ่ายขายที่เปิดค้างอีกแท็บจะยัง "ดูเหมือนล็อกอินอยู่"
+  // แต่ดึงข้อมูลไม่ได้เลย → ขึ้น 0 ทุกช่องแบบไม่มีอะไรฟ้อง (เจอจริง 21 ต.ค. 2569)
+  const handleLogout = () => { void signOutSupabase(); ["stock_user", "sales_user"].forEach(k => localStorage.removeItem(k)); router.push("/stock/login"); };
 
   // ── เครื่องมือข้อมูล: สำรอง (export) / นำเข้า (import) / อัปโหลด CSV ──
   const [dataBusy, setDataBusy]   = useState(false);
