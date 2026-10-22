@@ -63,6 +63,19 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
     return taken.has(id) ? id : sn && taken.has(sn) ? sn : null;
   };
 
+  /**
+   * ใบนี้เคยนำเข้าไปแล้วหรือยัง — นับรถในสต็อกที่อ้างเลข PI เดียวกัน (21 ต.ค. 2569)
+   *
+   * ที่มา: ผู้ใช้ถามว่า "มันมีข้อมูลแล้ว ทำไมถึงให้อัปข้อมูลลงไปอีก"
+   * เดิมเช็คซ้ำด้วย SN อย่างเดียว คันที่ OCR อ่าน SN ไม่ออกจึงดูเหมือนรถใหม่เสมอ
+   * ทั้งที่ใบนั้นลงสต็อกไปแล้ว → เสี่ยงได้รถซ้ำ
+   */
+  const stockByPi = (pi?: string) => {
+    const p = String(pi ?? "").trim().toUpperCase();
+    if (!p) return [];
+    return forklifts.filter((f) => String(f.pi_no ?? "").trim().toUpperCase() === p);
+  };
+
   // ── แถว "รอ SN" ที่รอเติม (รถสั่งผลิต/รอรับ ที่ยังไม่มี SN) ──
   // ใช้จับคู่ตอนนำเข้าใบที่มี SN แล้ว → เติมลงแถวเดิมแทนการสร้างแถวใหม่ (กันรถผี)
   const PH_STATUS = ["สั่งผลิต", "รอรับ", "รอยืนยันนำเข้าสต็อก"];
@@ -656,11 +669,21 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                       const newDoc = src && src !== String(rows[i - 1]?.src_file ?? "").trim();
                       const sameDoc = src ? rows.filter(r => String(r.src_file ?? "").trim() === src) : [];
                       const docPi = sameDoc.find(r => String(r.pi_no ?? "").trim())?.pi_no;
+                      const already = stockByPi(docPi);
                       const docHead = newDoc ? (
-                        <div key={`h${i}`} className="flex items-center gap-2 flex-wrap mt-1 px-1">
-                          <span className="text-[11px] font-bold px-2 py-1 rounded-lg bg-slate-800 text-white">📄 {src}</span>
-                          {docPi && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">{docPi}</span>}
-                          <span className="text-[11px] text-slate-500">{sameDoc.length} คันในใบนี้</span>
+                        <div key={`h${i}`} className="mt-1 px-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[11px] font-bold px-2 py-1 rounded-lg bg-slate-800 text-white">📄 {src}</span>
+                            {docPi && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">{docPi}</span>}
+                            <span className="text-[11px] text-slate-500">{sameDoc.length} คันในใบนี้</span>
+                          </div>
+                          {already.length > 0 && (
+                            <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-1.5">
+                              ⚠️ <b>ใบนี้เคยนำเข้าไปแล้ว</b> — ในสต็อกมีรถที่อ้าง {docPi} อยู่ {already.length} คัน
+                              ({already.slice(0, 4).map((f) => f.SN || f.id).join(" · ")}{already.length > 4 ? " …" : ""})
+                              <br />ตรวจก่อนบันทึก ถ้าเป็นคันเดียวกันให้กดถังขยะลบแถวนั้นออก ไม่งั้นจะได้รถซ้ำ
+                            </p>
+                          )}
                         </div>
                       ) : null;
                       const dupKey = dupKeyOf(v, i);
@@ -677,6 +700,16 @@ export function QuoteImport({ onClose }: { onClose: () => void }) {
                               <span className="text-sm font-bold text-slate-700">คันที่ {i + 1}</span>
                               {v.model?.trim() && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">{categorizeModel(v.model)}</span>}
                               {dup && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700" title={`ตรงกับ ${dupKey} ที่มีในสต็อกแล้ว`}>⚠️ มีในสต็อกแล้ว ({dupKey})</span>}
+                              {/* ไม่มี SN ให้เทียบ แต่ PI+รุ่นตรงกับของในสต็อก → น่าจะคันเดียวกัน ให้คนตัดสิน */}
+                              {!dup && !String(v.SN ?? "").trim() && (() => {
+                                const same = already.filter((f) => String(f.model ?? "").trim().toUpperCase() === String(v.model ?? "").trim().toUpperCase());
+                                return same.length > 0 ? (
+                                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800"
+                                    title={`สต็อกมีรุ่นนี้จาก ${docPi} อยู่แล้ว: ${same.map((f) => f.SN || f.id).join(", ")}`}>
+                                    ⚠️ อาจซ้ำ — {docPi} รุ่นนี้มีแล้ว {same.length} คัน
+                                  </span>
+                                ) : null;
+                              })()}
                               {fillTargets[i] && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-sky-100 text-sky-700" title="รถคันนี้เคยลงไว้ตอนสั่งผลิต/รอรับ — ระบบจะเติม SN ลงแถวเดิม ไม่สร้างแถวใหม่ (กันรถผี)">↻ เติม SN ลงแถวเดิม ({fillTargets[i]!.id})</span>}
                               {/* กดสลับได้ — เผื่อเอกสารไม่ได้เขียน KD ไว้ หรืออ่านไม่เจอ · คันที่มี SN แล้วไม่ต้องถาม */}
                               {!String(v.SN ?? "").trim() && <button onClick={() => toggleMto(i)}
