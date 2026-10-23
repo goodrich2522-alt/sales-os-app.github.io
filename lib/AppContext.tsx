@@ -115,6 +115,8 @@ interface AppContextType {
   updateCustomer: (c: Customer) => void;
   deleteCustomer: (id: string) => void;
   addForklift: (f: Forklift) => void;
+  /** แก้รถหลายคันพร้อมกัน — ใช้ตอนอัปราคาทุนจากไฟล์กลับเข้าแอป */
+  updateForkliftsBulk: (fs: Forklift[]) => void;
   addForkliftsBulk: (fs: Forklift[]) => void;
   updateForklift: (f: Forklift) => void;
   deleteForklift: (id: string) => void;
@@ -519,6 +521,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (api.apiEnabled) withRollback(api.bulkUpsertForkliftsApi(fs), "addForkliftsBulk",
       () => { const ids = new Set(fs.map(f => f.id)); setForklifts(p => p.filter(x => !ids.has(x.id))); });
     logAudit(`นำเข้ารถเข้าสต็อก ${fs.length} คัน`, "forklift", fs[0].id, { count: fs.length, ids: fs.slice(0, 20).map(f => f.id), pi: fs[0].pi_no });
+  }, []);
+  /**
+   * แก้รถหลายคันพร้อมกัน (23 ต.ค. 2569)
+   *
+   * ที่มา: เจ้าของกรอกราคาทุนในไฟล์แล้วอยากอัปกลับเข้าแอป
+   * ปุ่ม "อัปโหลดหลายคัน" เดิมมีไว้เพิ่มรถใหม่ SN ซ้ำจะกลายเป็นรถคันใหม่ (SN#2)
+   * จึงต้องมีเส้นทางแยกสำหรับ "แก้ของที่มีอยู่" โดยเฉพาะ
+   */
+  const updateForkliftsBulk = useCallback((fs: Forklift[]) => {
+    if (fs.length === 0) return;
+    const ids = new Set(fs.map(f => f.id));
+    const before = forkliftsRef.current.filter(f => ids.has(f.id));   // ไว้ถอยคืนถ้าบันทึกไม่สำเร็จ
+    lastLocalEditRef.current = Date.now();
+    const byId = new Map(fs.map(f => [f.id, f]));
+    setForklifts(p => p.map(f => byId.get(f.id) ?? f));
+    if (api.apiEnabled) withRollback(api.bulkUpsertForkliftsApi(fs), "updateForkliftsBulk",
+      () => { const old = new Map(before.map(f => [f.id, f])); setForklifts(p => p.map(f => old.get(f.id) ?? f)); });
+    logAudit(`แก้ข้อมูลรถหลายคัน ${fs.length} คัน`, "forklift", fs[0].id,
+      { count: fs.length, ids: fs.slice(0, 20).map(f => f.id) });
   }, []);
   const updateForklift = useCallback((f: Forklift) => {
     const before = forkliftsRef.current.find(x => x.id === f.id);
@@ -1100,7 +1121,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     <AppContext.Provider value={{
       forklifts, sales, inspections, deletedInspections, customers, fieldConfig,
       addCustomer, updateCustomer, deleteCustomer,
-      addForklift, addForkliftsBulk, updateForklift, deleteForklift,
+      addForklift, addForkliftsBulk, updateForklift, updateForkliftsBulk, deleteForklift,
       addSale, addSalesBulk, loadSaleProofs, updateSale, saveError, clearSaveError, scanInlineImages, liftInlineImages, deleteSale, returnSale, approveStockSale, rejectStockSale, setActor,
       exportData, importData,
       addInspection, deleteInspection, restoreInspection, purgeInspection,
