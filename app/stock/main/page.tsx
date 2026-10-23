@@ -22,6 +22,7 @@ import { VEHICLE_CATS, CatFilter, categorizeModel, modelWarning, staffLabel, SAL
 import { QuoteImport } from "@/components/QuoteImport";
 import { PickBox } from "@/components/PickBox";
 import { parseForkliftCsv, assignIdsAndStamp, buildCsvTemplate } from "@/lib/forkliftCsv";
+import { readExcelRows, isExcelFile } from "@/lib/quoteImport";
 import { hasActiveSession, signOutSupabase } from "@/lib/auth";
 import { apiEnabled, uploadImageApi } from "@/lib/api";
 import { driveImg, resizeImageFile } from "@/lib/img";
@@ -81,7 +82,7 @@ function fmtAdded(iso?: string) {
 export default function StockMain() {
   const router = useRouter();
   const {
-    forklifts, addForkliftsBulk, updateForklift, deleteForklift, inspections, addInspection, sales, addSale, updateSale, refresh,
+    forklifts, addForkliftsBulk, updateForklift, updateForkliftsBulk, deleteForklift, inspections, addInspection, sales, addSale, updateSale, refresh,
     returnSale, approveStockSale, rejectStockSale, setActor,
     exportData, importData,
     fieldConfig, updateFieldOptions,
@@ -489,6 +490,72 @@ export default function StockMain() {
   const [csvMsg, setCsvMsg]       = useState<{ ok: boolean; text: string } | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const csvInputRef     = useRef<HTMLInputElement>(null);
+
+  // ── ดาวน์โหลด/อัปโหลด "ราคาทุน" เป็นไฟล์ (23 ต.ค. 2569) ──────────────────
+  // ที่มา: เจ้าของอยากกรอกทุนใน Excel แล้วอัปกลับ · ปุ่ม "อัปโหลดหลายคัน" ใช้ไม่ได้
+  // เพราะมันสร้างรถใหม่ (SN ซ้ำ → SN#2) · เส้นทางนี้ "แก้ของที่มีอยู่" เท่านั้น
+  const costInputRef = useRef<HTMLInputElement>(null);
+  const [costPreview, setCostPreview] = useState<null | { fill: { f: Forklift; cost: number }[]; skip: number; unknown: string[] }>(null);
+
+  /** ออกไฟล์รายการรถที่ยังไม่มีทุน — รหัสรถเป็นกุญแจจับคู่ ห้ามแก้ */
+  const exportNoCost = () => {
+    const list = forklifts.filter(f => (Number(f.cost_price) || 0) <= 0);
+    if (!list.length) { showToast("ไม่มีรถที่ทุนเป็น 0 แล้ว ✓"); return; }
+    const esc = (s: unknown) => { const t = String(s ?? ""); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+    const head = ["รหัสรถ_ห้ามแก้", "SN", "ยี่ห้อ", "รุ่น", "เลข PI", "สถานะ", "วันรับรถ", "ราคาทุน_กรอกตรงนี้"];
+    const rows = list
+      .sort((a, b) => String(a.brand ?? "").localeCompare(String(b.brand ?? "")) || String(a.model ?? "").localeCompare(String(b.model ?? "")))
+      .map(f => [f.id, f.SN ?? "", f.brand ?? "", f.model ?? "", f.pi_no ?? "", f.status ?? "", f.received_date ?? "", ""]);
+    downloadFile(`กรอกราคาทุน-${list.length}คัน-${today()}.csv`,
+      "﻿" + [head, ...rows].map(r => r.map(esc).join(",")).join("\n") + "\n", "text/csv");
+    showToast(`ดาวน์โหลดแล้ว ${list.length} คัน — กรอกช่อง "ราคาทุน_กรอกตรงนี้" แล้วอัปกลับ`);
+  };
+
+  /** อ่านไฟล์ที่กรอกทุนแล้ว → จับคู่ด้วยรหัสรถ/SN → เตรียมรายการให้ยืนยันก่อนบันทึก */
+  const handleCostFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      let rows: string[][];
+      if (isExcelFile(file.name)) rows = await readExcelRows(file);
+      else {
+        const text = (await file.text()).replace(/^﻿/, "");
+        rows = text.split(/\r?\n/).filter(Boolean).map(l => l.split(",").map(c => c.replace(/^"|"$/g, "").replace(/""/g, '"')));
+      }
+      if (rows.length < 2) { showToast("ไฟล์ว่าง หรืออ่านไม่ออก"); return; }
+      const head = rows[0].map(h => h.trim().replace(/\s+/g, ""));
+      const col = (...names: string[]) => head.findIndex(h => names.some(n => h.includes(n)));
+      const iId = col("รหัสรถ"), iSn = col("SN"), iCost = col("ราคาทุน");
+      if (iCost < 0 || (iId < 0 && iSn < 0)) { showToast('ไม่พบหัวตาราง "รหัสรถ_ห้ามแก้"/"SN" และ "ราคาทุน_กรอกตรงนี้"'); return; }
+      const byId = new Map(forklifts.map(f => [String(f.id).trim().toUpperCase(), f]));
+      const bySn = new Map(forklifts.filter(f => String(f.SN ?? "").trim()).map(f => [String(f.SN).trim().toUpperCase(), f]));
+      const fill: { f: Forklift; cost: number }[] = [];
+      const unknown: string[] = [];
+      let skip = 0;
+      for (const r of rows.slice(1)) {
+        const key = String((iId >= 0 ? r[iId] : "") || "").trim().toUpperCase();
+        const sn = String((iSn >= 0 ? r[iSn] : "") || "").trim().toUpperCase();
+        const f = byId.get(key) || bySn.get(sn) || bySn.get(key);
+        const cost = Number(String(r[iCost] ?? "").replace(/[^\d.-]/g, ""));
+        if (!f) { if (key || sn) unknown.push(key || sn); continue; }
+        if (!(cost > 0)) { skip++; continue; }                     // ไม่ได้กรอก = ข้าม
+        if ((Number(f.cost_price) || 0) > 0) { skip++; continue; } // มีทุนแล้ว = ไม่ทับ
+        fill.push({ f, cost });
+      }
+      if (!fill.length) { showToast(`ไม่มีคันไหนต้องเติม (ข้าม ${skip} · ไม่เจอในสต็อก ${unknown.length})`); return; }
+      setCostPreview({ fill, skip, unknown });
+    } catch (err) {
+      showToast("อ่านไฟล์ไม่สำเร็จ — " + String(err instanceof Error ? err.message : err).slice(0, 70));
+    }
+  };
+
+  const saveCostFile = () => {
+    if (!costPreview) return;
+    updateForkliftsBulk(costPreview.fill.map(({ f, cost }) => ({ ...f, cost_price: cost })));
+    showToast(`เติมราคาทุนให้ ${costPreview.fill.length} คันแล้ว ✓`);
+    setCostPreview(null);
+  };
 
   const downloadFile = (name: string, content: string, type: string) => {
     const blob = new Blob([content], { type });
@@ -1416,8 +1483,32 @@ export default function StockMain() {
             </button>
           </div>
 
-          {/* กลุ่ม 2: สำรอง / กู้คืน (ไม่ใช่การเพิ่มรถ) */}
-          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-1.5">➋ สำรอง / กู้คืนข้อมูล</p>
+          {/* ── กลุ่ม 2: ราคาทุน — ออกไฟล์ไปกรอก แล้วอัปกลับ (23 ต.ค. 2569) ──
+              ปุ่ม "อัปโหลดหลายคัน" ด้านบนมีไว้เพิ่มรถใหม่ SN ซ้ำจะกลายเป็นรถคันใหม่
+              เส้นทางนี้ "แก้ของที่มีอยู่" เท่านั้น — เติมเฉพาะคันที่ทุนยังเป็น 0 */}
+          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-1.5">➋ เติมราคาทุนจากไฟล์</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-3">
+            <button onClick={exportNoCost} disabled={dataBusy}
+              className="flex items-center gap-2.5 rounded-xl border border-amber-200 bg-amber-50 hover:bg-amber-100 px-3.5 py-3 text-left transition-colors disabled:opacity-50">
+              <Download className="w-5 h-5 text-amber-600 flex-shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-amber-800">ดาวน์โหลดรายการที่ยังไม่มีทุน{noCostCount > 0 ? ` (${noCostCount} คัน)` : ""}</p>
+                <p className="text-[11px] text-amber-600">เปิดใน Excel กรอกช่องราคาทุน แล้วอัปกลับ</p>
+              </div>
+            </button>
+            <button onClick={() => costInputRef.current?.click()} disabled={dataBusy}
+              className="flex items-center gap-2.5 rounded-xl border border-amber-300 bg-white hover:bg-amber-50 px-3.5 py-3 text-left transition-colors disabled:opacity-50">
+              <Upload className="w-5 h-5 text-amber-600 flex-shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-amber-800">อัปโหลดราคาทุนกลับ</p>
+                <p className="text-[11px] text-amber-600">เติมให้เฉพาะคันที่ทุนยังเป็น 0 · ไม่สร้างรถใหม่</p>
+              </div>
+            </button>
+          </div>
+          <input ref={costInputRef} data-testid="cost-input" type="file" accept=".csv,text/csv,.xlsx,.xls,.xlsm" className="hidden" onChange={handleCostFile} />
+
+          {/* กลุ่ม 3: สำรอง / กู้คืน (ไม่ใช่การเพิ่มรถ) */}
+          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-1.5">➌ สำรอง / กู้คืนข้อมูล</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {/* สำรองข้อมูล */}
             <button onClick={handleExport} disabled={dataBusy}
@@ -3256,6 +3347,53 @@ export default function StockMain() {
                   ))}
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── ยืนยันก่อนเติมราคาทุนจากไฟล์ — ให้เห็นก่อนว่าจะแตะกี่คัน ── */}
+      {costPreview && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[95] flex items-center justify-center p-4"
+          onClick={e => e.target === e.currentTarget && setCostPreview(null)}>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col">
+            <div className="p-5 border-b border-slate-100">
+              <p className="text-lg font-bold text-slate-800">เติมราคาทุนจากไฟล์</p>
+              <p className="text-sm text-slate-500 mt-1">
+                จะเติมให้ <b className="text-amber-700">{costPreview.fill.length} คัน</b>
+                {costPreview.skip > 0 && <> · ข้าม {costPreview.skip} คัน (ไม่ได้กรอก หรือมีทุนอยู่แล้ว)</>}
+                {costPreview.unknown.length > 0 && <> · <span className="text-red-600">ไม่เจอในสต็อก {costPreview.unknown.length}</span></>}
+              </p>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 pt-3">
+              <table className="w-full text-sm">
+                <thead><tr className="text-left text-[11px] text-slate-400 border-b border-slate-100">
+                  <th className="pb-1.5">SN / รหัสรถ</th><th className="pb-1.5">ยี่ห้อ รุ่น</th><th className="pb-1.5 text-right">ทุนที่จะลง</th>
+                </tr></thead>
+                <tbody>
+                  {costPreview.fill.slice(0, 200).map(({ f, cost }) => (
+                    <tr key={f.id} className="border-b border-slate-50">
+                      <td className="py-1.5 font-mono text-[12px]">{f.SN || f.id}</td>
+                      <td className="py-1.5 text-slate-600">{f.brand} {f.model}</td>
+                      <td className="py-1.5 text-right font-bold text-slate-800">{cost.toLocaleString("th-TH")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {costPreview.fill.length > 200 && <p className="text-[11px] text-slate-400 mt-2">… และอีก {costPreview.fill.length - 200} คัน</p>}
+              {costPreview.unknown.length > 0 && (
+                <p className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-2 mt-3">
+                  ไม่เจอในสต็อก: {costPreview.unknown.slice(0, 10).join(" · ")}{costPreview.unknown.length > 10 ? " …" : ""}
+                  <br />แถวพวกนี้จะถูกข้าม — ตรวจว่าแก้คอลัมน์ &ldquo;รหัสรถ_ห้ามแก้&rdquo; ไปหรือเปล่า
+                </p>
+              )}
+            </div>
+            <div className="p-5 border-t border-slate-100 flex items-center justify-end gap-2">
+              <button onClick={() => setCostPreview(null)} className="text-sm font-semibold text-slate-500 hover:text-slate-700 px-4 py-2.5">ยกเลิก</button>
+              <button onClick={saveCostFile}
+                className="text-sm font-bold bg-amber-600 hover:bg-amber-700 text-white px-5 py-2.5 rounded-xl transition-all active:scale-95">
+                เติมทุนให้ {costPreview.fill.length} คัน
+              </button>
             </div>
           </div>
         </div>
