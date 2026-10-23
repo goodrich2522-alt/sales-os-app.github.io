@@ -137,7 +137,8 @@ interface AppContextType {
   deleteInspection: (id: string) => void;
   restoreInspection: (id: string) => void;
   purgeInspection: (id: string) => void;
-  refresh: () => Promise<void>;
+  /** ดึงข้อมูลล่าสุด — คืนจำนวนที่ได้มาจริง (undefined = ไม่ได้ต่อฐานข้อมูล) · ล้มเหลวจะโยน error */
+  refresh: () => Promise<{ forklifts: number; sales: number } | undefined>;
   // Stock form field config
   updateFieldOptions: (field: DropdownField, options: string[]) => void;
   addCustomFieldDef: (name: string, type?: "text" | "select", options?: string[]) => void;
@@ -1077,16 +1078,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // ดึงข้อมูลใหม่จาก Google Sheets ทันที (ปุ่มรีเฟรชเอง)
+  /**
+   * ดึงข้อมูลล่าสุดด้วยมือ (ปุ่มรีเฟรช)
+   *
+   * ⚠️ (23 ต.ค. 2569) เดิมกลืน error เงียบ ๆ แล้วหน้าจอขึ้น "ดึงข้อมูลล่าสุดแล้ว ✓" เสมอ
+   *    ผู้ใช้กดรีเฟรชแล้วเห็นข้อมูลเก่า แต่ระบบบอกว่าสำเร็จ → เข้าใจว่าข้อมูลยังไม่ถูกบันทึก
+   *    เสียเวลาไล่หาผิดจุด · ตอนนี้โยน error ออกไปให้ปุ่มรู้ว่าไม่สำเร็จ
+   */
   const refresh = useCallback(async () => {
     if (!api.apiEnabled) return;
-    try {
-      const data = await api.bootstrap();
-      setForklifts(data.forklifts ?? []);
-      setSales(data.sales ?? []);
-      setInspections((data.inspections ?? []) as InspectionRecord[]);
-      setDeletedInspections((data.deletedInspections ?? []) as DeletedInspectionRecord[]);
-      setCustomers(data.customers ?? []);
-    } catch (e) { console.warn("refresh", e); }
+    const data = await api.bootstrap();          // ล้มเหลว = โยนออกไป ห้ามบอกว่าสำเร็จ
+    setForklifts(data.forklifts ?? []);
+    setSales(data.sales ?? []);
+    setInspections((data.inspections ?? []) as InspectionRecord[]);
+    setDeletedInspections((data.deletedInspections ?? []) as DeletedInspectionRecord[]);
+    setCustomers(data.customers ?? []);
+    return { forklifts: data.forklifts?.length ?? 0, sales: data.sales?.length ?? 0 };
   }, []);
 
   return (
