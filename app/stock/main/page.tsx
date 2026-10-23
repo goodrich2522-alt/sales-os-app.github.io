@@ -121,8 +121,16 @@ export default function StockMain() {
   const [refreshing, setRefreshing] = useState(false);
   const doRefresh = async () => {
     setRefreshing(true);
-    try { await refresh(); showToast("ดึงข้อมูลล่าสุดแล้ว ✓"); }
-    finally { setRefreshing(false); }
+    const before = forklifts.length;
+    try {
+      const got = await refresh();
+      // บอกจำนวนที่ได้มาจริง — ถ้าตัวเลขไม่ขยับ ผู้ใช้จะได้รู้ว่าไม่ใช่เรื่องรอโหลด
+      const now = got?.forklifts ?? before;
+      showToast(now !== before ? `ดึงข้อมูลล่าสุดแล้ว ✓ (${before} → ${now} คัน)` : `ดึงข้อมูลล่าสุดแล้ว ✓ (${now} คัน เท่าเดิม)`);
+    } catch (e) {
+      // ⚠️ (23 ต.ค. 2569) เดิมขึ้น ✓ เสมอแม้ดึงไม่สำเร็จ ทำให้เข้าใจผิดว่าข้อมูลไม่ได้ถูกบันทึก
+      showToast("ดึงข้อมูลไม่สำเร็จ — " + String(e instanceof Error ? e.message : e).slice(0, 80));
+    } finally { setRefreshing(false); }
   };
   // ── แก้สเปก/ราคาหลายคันพร้อมกัน — ช่องที่เว้นว่าง = ไม่แก้ (ใช้ซ่อมข้อมูลที่นำเข้าผิดทั้งล็อต) ──
   const [bulkEdit, setBulkEdit] = useState<null | { brand: string; model: string; capacity: string; cost: string; cat: string; pi: string }>(null);
