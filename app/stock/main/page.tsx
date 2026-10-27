@@ -6,7 +6,7 @@ import {
   Package, Plus, LogOut, CheckCircle, AlertCircle, List, X,
   TrendingUp, Boxes, Trash2, Settings, Pencil, Check, ChevronDown, ChevronRight,
   Clock, Hash, Camera, ImageOff, Eye, Bell, MapPin, History,
-  Download, Upload, FileText, ShoppingCart, User, QrCode, PackageCheck, ClipboardList, RotateCcw, RefreshCw
+  Download, Upload, FileText, ShoppingCart, User, QrCode, PackageCheck, ClipboardList, RotateCcw, RefreshCw, Truck
 } from "lucide-react";
 import { Forklift, Sale, STOCK_APPROVAL_FIELD, isVoidSale } from "@/lib/types";
 import { COMMISSION_FIELD, COMMISSION_CATEGORIES, isClosedSale, isForkliftVehicle, closeMonth, closeDate } from "@/lib/commission";
@@ -731,6 +731,10 @@ export default function StockMain() {
   const mastOf = (f: Forklift) => String((f.custom_fields as Record<string, unknown> | undefined)?.["MAST"] ?? "").trim();
   // จำนวนรถที่ยังไม่ได้กรอกราคาทุน — โชว์บนปุ่มกรอง เพื่อรู้ว่าเหลือต้องกรอกอีกกี่คัน
   const noCostCount = useMemo(() => forklifts.filter(f => (Number(f.cost_price) || 0) <= 0).length, [forklifts]);
+  // รถที่ "ไปรับได้แล้ว" (ของถึงแล้วแต่ยังไม่เข้าคลัง) — ไม่นับรถสั่งผลิตที่โรงงานยังทำไม่เสร็จ
+  const pickupCount = useMemo(
+    () => forklifts.filter(f => ["รอรับ", "รอยืนยันนำเข้าสต็อก"].includes(String(f.status ?? "").trim())).length,
+    [forklifts]);
   // จำนวนคันที่ชื่อรุ่นน่าสงสัย (ดู modelWarning ใน constants.ts)
   const badModelCount = useMemo(() => forklifts.filter(f => !!modelWarning(f.model)).length, [forklifts]);
 
@@ -1243,6 +1247,12 @@ export default function StockMain() {
             <button onClick={doRefresh} disabled={refreshing} title="ดึงข้อมูลล่าสุดจากเซิร์ฟเวอร์"
               className="flex items-center gap-1.5 text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 text-sm font-medium px-3 py-1.5 rounded-lg transition-all border border-transparent hover:border-emerald-200">
               <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin text-emerald-600" : ""}`} /><span className="hidden sm:inline">รีเฟรช</span>
+            </button>
+            {/* รายงานรถที่ต้องไปรับ (27 ต.ค. 2569) — รวมตามล็อต เห็นว่าค้างมากี่วัน */}
+            <button onClick={() => router.push("/stock/pickup")}
+              title="รถที่ยังไม่เข้าคลัง — จัดกลุ่มตามล็อต พร้อมวันนัดรับ"
+              className="flex items-center gap-1.5 text-slate-600 hover:text-sky-700 hover:bg-sky-50 text-sm font-medium px-3 py-1.5 rounded-lg transition-all border border-transparent hover:border-sky-200">
+              <Truck className="w-4 h-4" /><span className="hidden sm:inline">ต้องไปรับ{pickupCount > 0 ? ` (${pickupCount})` : ""}</span>
             </button>
             {/* ประวัติการรับรถเข้าคลัง — ไปหน้าแกลเลอรีตรวจรับรถ (ใคร/เมื่อไหร่/รูป 6 ช่อง + Export Excel) */}
             <button onClick={() => router.push("/dashboard/inspections")}
