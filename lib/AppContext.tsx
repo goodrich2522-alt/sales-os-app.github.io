@@ -233,9 +233,20 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 // ── Provider ──────────────────────────────────────────────────────────────────
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted]     = useState(false);
-  const [forklifts, setForklifts] = useState<Forklift[]>(mockForklifts);
-  const [sales, setSales]         = useState<Sale[]>(mockSales);
-  const [inspections, setInspections]         = useState<InspectionRecord[]>(mockInspections);
+  /**
+   * ⚠️ (28 ต.ค. 2569) ห้ามตั้งต้นด้วยข้อมูลสาธิตเมื่อต่อฐานข้อมูลจริง
+   *
+   * ที่มา: หน้าค่าคอมขึ้นเดือน "ส.ค. 2567 … ม.ค. 2567" ซึ่งเป็นข้อมูลเดโมใน mockData.ts
+   * ผู้ใช้เข้าใจว่าข้อมูลจริงไม่อัปเดต ที่จริงคือข้อมูลจริงยังไม่มา แล้วจอโชว์ของปลอมแทน
+   * (หน้าแดชบอร์ดเคยขึ้น "สมชาย ใจดี ฿12.37 ล." ด้วยเหตุเดียวกัน)
+   *
+   * ของปลอมที่ดูเหมือนจริงอันตรายกว่าจอว่าง — ตัดสินใจผิดได้
+   * ข้อมูลสาธิตใช้ได้เฉพาะโหมดที่ไม่ได้ต่อฐานข้อมูล (เดโม/ออฟไลน์) เท่านั้น
+   */
+  const demo = <T,>(sample: T[]): T[] => (api.apiEnabled ? [] : sample);
+  const [forklifts, setForklifts] = useState<Forklift[]>(() => demo(mockForklifts));
+  const [sales, setSales]         = useState<Sale[]>(() => demo(mockSales));
+  const [inspections, setInspections]         = useState<InspectionRecord[]>(() => demo(mockInspections));
   const [deletedInspections, setDeletedInspections] = useState<DeletedInspectionRecord[]>([]);
   const [customers, setCustomers]             = useState<Customer[]>([]);
   const [fieldConfig, setFieldConfig]         = useState<FieldConfig>(DEFAULT_FIELD_CFG);
@@ -314,8 +325,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // โหลดจาก localStorage (ใช้เป็น cache / fallback เมื่อไม่มี GAS หรือออฟไลน์)
     lsPrune();   // ล้างแคชที่บวมเกินก่อน ไม่งั้นแค่เปิดแอปก็กินหน่วยความจำจนแครช
     const loadFromLocal = () => {
-      setForklifts(lsLoad(LS_KEYS.forklifts, mockForklifts));
-      setSales(lsLoad(LS_KEYS.sales, mockSales));
+      // ไม่มีแคชในเครื่อง + ต่อฐานข้อมูลจริง → ว่างไว้ อย่าเอาข้อมูลสาธิตมาโชว์แทน
+      setForklifts(lsLoad(LS_KEYS.forklifts, demo(mockForklifts)));
+      setSales(lsLoad(LS_KEYS.sales, demo(mockSales)));
       const savedMeta = lsLoad<InspectionRecord[]>(LS_KEYS.inspMeta, []);
       const savedImages = lsLoad<Record<string, string[]>>(LS_KEYS.inspImages, {});
       if (savedMeta.length > 0) {
