@@ -30,8 +30,18 @@ export const commissionSplitPct = (s: Sale): number => {
 export const COMMISSION_CATEGORIES = ["ลูกค้าใหม่", "ลูกค้าใหม่+ออกพบเอง", "ลูกค้าเก่า/รับช่วงต่อ"] as const;
 export type CommissionCategory = (typeof COMMISSION_CATEGORIES)[number];
 
-// รุ่นสแตกเกอร์ที่คิดค่าคอมตามยอดขาย (RE/CDD/CBS)
-export const isStackerModel = (model?: string) => /^(RE|CDD|CBS)/i.test(String(model ?? "").trim());
+// รุ่นสแตกเกอร์ที่คิดค่าคอมตามยอดขาย (RE/CDD/CBS/WMS)
+//
+// WMS ทั้งซีรีส์ — เจ้าของเคาะ 28 ต.ค. 2569 ว่าเป็น "สแตกเกอร์" (เรตคงที่ 500/800 ต่อคัน)
+//   ⚠️ ไฟล์บัญชีเองลงไม่เหมือนกัน 2 ใบ — ยึดตามที่เจ้าของเคาะ ไม่ยึดไฟล์บัญชี
+//      WMS1500-M2000 (IV-690923012 ตั้งใจทำ สแปร์ พาร์ท 25,500 · ชีตไหมแก้ว) → บล็อกสแต๊กเกอร์ ✓ ตรงกัน
+//      WMS10-200     (IV-690928004 ไทยธาดา เอเนอร์จี้ 24,500 · ชีตดรีม)       → บล็อกแฮนด์ลิฟท์ ✗ ไม่ตรง
+//      ผลคือค่าคอม ก.ย. ของดรีมที่บัญชีจ่ายไว้ ต่ำกว่าเกณฑ์นี้ 255 บาท — ต้องแจ้งบัญชี
+//
+// ลำดับสำคัญ: calcCommission (และหน้าปิดการขาย) เช็ก isStackerModel "ก่อน" isOtherGroup
+//   จึงชนะยี่ห้อ STAXX ที่เหมาทั้งแบรนด์เป็นกลุ่มอื่น — และต้องไม่ใส่ WMS ไว้ใน
+//   isOtherGroupModel ด้วย ไม่งั้นรุ่นเดียวจะเข้าเงื่อนไข 2 กลุ่ม แก้ที่เดียวไม่ครบ
+export const isStackerModel = (model?: string) => /^(RE|CDD|CBS|WMS)/i.test(String(model ?? "").trim());
 
 // แบรนด์ที่เป็นแฮนด์ลิฟท์/รถคลังสินค้าทั้งแบรนด์ → รถกลุ่มอื่นเสมอ (ไม่ใช่โฟล์คลิฟท์)
 // (CNC ไม่เหมาทั้งแบรนด์ เพราะมีบางรุ่นกำกวม — ใช้จำแนกจากรุ่นแทน)
@@ -47,7 +57,8 @@ export const OTHER_GROUP_BRANDS = ["STAXX", "เจนบรรเจิด"];
 export const isOtherGroupModel = (model?: string) => {
   const m = String(model ?? "").trim().toUpperCase();
   if (!m) return false;
-  return /^(CBD|CNS|PWH|SDA|DG\d|EPS|PS\d|PD\d|PTS|DYC|BF[\dS]|BDD|ETAS|AC\d|WH|WP|CBY|HPT|WMS|WS-)/.test(m) || /HAND\s*PALLET|PALLET\s*TRUCK|LIFT\s*TABLE/.test(m);
+  // WMS ย้ายไปอยู่ isStackerModel แล้ว (เจ้าของเคาะ 28 ต.ค.) — ห้ามใส่ซ้ำที่นี่
+  return /^(CBD|CNS|PWH|SDA|DG\d|EPS|PS\d|PD\d|PTS|DYC|BF[\dS]|BDD|ETAS|AC\d|WH|WP|CBY|HPT|WS-)/.test(m) || /HAND\s*PALLET|PALLET\s*TRUCK|LIFT\s*TABLE/.test(m);
 };
 
 // จำแนกรถกลุ่มอื่น: จากแบรนด์ (STAXX/เจนบรรเจิด/CNC) หรือ จากรุ่น
