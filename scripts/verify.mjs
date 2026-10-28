@@ -90,6 +90,12 @@ step("ตัวอ่านใบขายย้อนหลัง", () => {
   if (!m) throw new Error(out.split("\n").slice(-3).join("\n"));
   return `${m[1]}/${m[2]} ข้อ`;
 });
+step("จำแนกกลุ่มค่าคอมจากรุ่นรถ", () => {
+  const out = run("node", ["scripts/test-commission-group.mjs"]);
+  const m = /ผ่านทั้งหมด (\d+)\/(\d+) รุ่น/.exec(out);
+  if (!m) throw new Error(out.split("\n").slice(-6).join("\n"));
+  return `${m[1]}/${m[2]} รุ่น`;
+});
 
 // 6) build — ต้องผ่านก่อนถึงจะทดสอบหน้าจริงได้
 const built = step("build", () => {
