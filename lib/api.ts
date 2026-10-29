@@ -87,6 +87,52 @@ const SALE_COLUMNS = [
 ].join(",");
 
 /**
+ * ── add_ons / freebie / shipping_cost — ฟิลด์ที่ไม่มีคอลัมน์จริง ──
+ *
+ * ของพวกนี้เก็บใน custom_fields (ดูคำเตือนใน SALE_COLUMNS ข้างบน)
+ * แต่เดิมทำไว้แค่ฝั่ง "อ่าน" — ฝั่ง "เขียน" ยัง upsert ทั้งก้อน Sale ขึ้นไปตรง ๆ
+ * PostgREST จึงตีกลับทั้งคำขอ: "Could not find the 'freebie' column of 'sales'"
+ * (เกิดจริง 29 ต.ค. 2569 · HELI CPCD25-Q22K2 · ผู้ใช้ติ๊กของแถมแล้วดีลไม่ลงเลย)
+ *
+ * ที่ไม่โผล่มาก่อน เพราะไม่กรอก = undefined แล้ว JSON.stringify ตัดคีย์ทิ้ง
+ * จะพังเฉพาะตอนติ๊กของแถม / ใส่ค่าขนส่ง / ใส่อุปกรณ์เสริม เท่านั้น
+ * และตัวสำรองใน addSaleApi ตัดออกแค่รูปสลิป ไม่ได้ตัด 3 ตัวนี้ → ดีลไม่ลงเลย
+ *
+ * แปลงทั้งขาเข้าขาออกที่นี่จุดเดียว ทุกหน้าที่เรียกใช้จึงได้เหมือนกันหมด
+ */
+const CF_ADDONS = "อุปกรณ์เสริม";
+const CF_FREEBIE = "ของแถม";
+const CF_SHIP = "ค่าขนส่ง";
+const FREEBIE_AMOUNT = 2800;   // ตรงกับ dealProfit ใน lib/commission.ts
+
+/** Sale → แถวที่ส่งขึ้นฐานข้อมูล (ย้าย 3 ฟิลด์ลง custom_fields แล้วตัดคีย์ปลอมทิ้ง) */
+const saleToRow = (s: Sale): Record<string, unknown> => {
+  const { add_ons, freebie, shipping_cost, ...rest } = s;
+  const cf: Record<string, string> = { ...(s.custom_fields ?? {}) };
+  // ค่าว่าง = ลบคีย์ทิ้ง (ผู้ใช้ติ๊กออกแล้วต้องหายจริง ไม่ค้างของเดิม)
+  if (add_ons?.length) cf[CF_ADDONS] = JSON.stringify(add_ons); else delete cf[CF_ADDONS];
+  if (freebie) cf[CF_FREEBIE] = String(FREEBIE_AMOUNT); else delete cf[CF_FREEBIE];
+  if (Number(shipping_cost) > 0) cf[CF_SHIP] = String(Number(shipping_cost)); else delete cf[CF_SHIP];
+  return { ...rest, custom_fields: cf };
+};
+
+/** แถวจากฐานข้อมูล → Sale (ดึง 3 ฟิลด์กลับออกมาจาก custom_fields) */
+export const saleFromRow = (r: Sale): Sale => {
+  const cf = (r.custom_fields ?? {}) as Record<string, string>;
+  const out: Sale = { ...r };
+  const raw = String(cf[CF_ADDONS] ?? "").trim();
+  if (raw) {
+    try {
+      const a = JSON.parse(raw);
+      if (Array.isArray(a)) out.add_ons = a as Sale["add_ons"];
+    } catch { /* ข้อมูลเก่าที่ไม่ใช่ JSON — ข้ามไป ไม่ทำให้ทั้งระบบพัง */ }
+  }
+  if (Number(cf[CF_FREEBIE]) > 0) out.freebie = true;
+  if (Number(cf[CF_SHIP]) > 0) out.shipping_cost = Number(cf[CF_SHIP]);
+  return out;
+};
+
+/**
  * รูปสลิปของ "ทุกใบขาย" แบบเบา — เอาเฉพาะ 3 คอลัมน์ ไว้ไล่หาว่ายังมีรูปฝังดิบเหลืออยู่ไหม
  * (30 ก.ย. 2569 · ใช้กับเครื่องมือเก็บกวาดรูป — ไม่ได้โหลดตอนเปิดแอป)
  */
@@ -136,7 +182,8 @@ export async function bootstrap(): Promise<BootstrapData> {
     c.from("app_config").select("data").eq("id", 1).maybeSingle(),
   ]);
   const fk = { data: fkRows as unknown as Forklift[] };
-  const sl = { data: slRows as unknown as Sale[] };
+  // ดึง add_ons / freebie / shipping_cost กลับออกมาจาก custom_fields (ดู saleFromRow)
+  const sl = { data: (slRows as unknown as Sale[]).map(saleFromRow) };
   const insAll = insRows as unknown as (InspectionRecord & { deleted_at?: string | null })[];
   const active = insAll.filter(r => !r.deleted_at) as InspectionRecord[];
   const deleted = insAll.filter(r => r.deleted_at).map(r => ({ ...r, deletedAt: r.deleted_at as string })) as DeletedInspectionRecord[];
@@ -181,9 +228,10 @@ export const deleteForkliftApi = async (id: string)  => { const { error } = awai
 // ── Sale ──────────────────────────────────────────────────────────────────--
 // ถ้าคอลัมน์ payment_proof ยังไม่มีใน DB (ยังไม่รัน migration) → retry แบบไม่มีคอลัมน์นี้ กันดีลหาย
 export const addSaleApi = async (s: Sale) => {
-  const { error } = await sb().from("sales").upsert(s);
+  const row = saleToRow(s);
+  const { error } = await sb().from("sales").upsert(row);
   if (error) {
-    const { payment_proof: _pp, payment_proofs: _pps, ...core } = s;
+    const { payment_proof: _pp, payment_proofs: _pps, ...core } = row;
     const { error: e2 } = await sb().from("sales").upsert(core);
     if (e2) throw error;
   }
@@ -191,7 +239,7 @@ export const addSaleApi = async (s: Sale) => {
 };
 // แก้ไขดีลที่ทำไปแล้ว — update ตรงตาม id (ไม่สร้างใหม่)
 export const updateSaleApi = async (s: Sale) => {
-  const { id, ...rest } = s;
+  const { id, ...rest } = saleToRow(s);
   const { error } = await sb().from("sales").update(rest).eq("id", id);
   if (error) {
     const { payment_proof: _pp, payment_proofs: _pps, ...core } = rest;

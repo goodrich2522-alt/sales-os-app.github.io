@@ -129,6 +129,13 @@ if (built) {
     const out = run("node", ["scripts/e2e-warranty-gate.mjs"], { env });
     if (!/✓ หายแล้ว/.test(out) || !/✓ ไม่ติด/.test(out)) throw new Error(out.split("\n").slice(-4).join("\n"));
   });
+  // (29 ต.ค. 2569) ติ๊กของแถมแล้วขึ้น "Could not find the 'freebie' column of 'sales'" — ดีลไม่ลงเลย
+  step("ใบขายต้องส่งเฉพาะคอลัมน์จริง", () => {
+    const out = run("node", ["scripts/e2e-sale-extra-fields.mjs"], { env });
+    if (!/1\) คีย์ที่ไม่ใช่คอลัมน์จริง: ✓/.test(out)) throw new Error("ส่งคีย์ที่ไม่มีคอลัมน์จริงขึ้นไป ฐานข้อมูลจะตีกลับทั้งใบ\n" + out.split("\n").slice(-6).join("\n"));
+    if (!/2\) ค่าที่กรอกถูกเก็บไว้: ✓/.test(out)) throw new Error("ของแถม/ค่าขนส่งหายไประหว่างบันทึก — กำไรจะคำนวณผิด\n" + out.split("\n").slice(-6).join("\n"));
+    if (!/3\).*✓ ไม่ขึ้น/.test(out)) throw new Error("ขึ้นแถบแดงบันทึกไม่สำเร็จ");
+  });
   // (3 ต.ค. 2569) รถ 010253T1376 ขึ้น "ปิดการขายแล้ว" แต่ไม่มีดีล — ใบขายลงไม่สำเร็จแต่สถานะรถลงสำเร็จ
   step("ใบขายลงไม่ได้ → ห้ามตั้งรถเป็นขายแล้ว", () => {
     const out = run("node", ["scripts/e2e-sale-write-fail.mjs"], { env });
