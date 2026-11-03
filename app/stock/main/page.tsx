@@ -2417,6 +2417,15 @@ export default function StockMain() {
         const saleForItem = [...sales]
           .filter(s => String(s.forklift_id) === String(it.id) || (it.SN && String(s.forklift_unit_no).toUpperCase() === String(it.SN).toUpperCase()))
           .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
+        // ── ลูกค้าคืนรถ = ไม่ใช่การขายอีกต่อไป (3 พ.ย. 2569 · ผู้ใช้สั่ง) ──
+        // ตอนกดรับคืน ระบบตัดยอด/ค่าคอมออกให้แล้ว (returnSale ใน lib/AppContext.tsx)
+        // แต่การ์ดยังโชว์บล็อก "ข้อมูลการขาย" เต็ม ๆ + ป้ายเขียว "เข้างวดค่าคอมแล้ว"
+        // เจอจริงกับ 08015JUP986 (บัญชีออกใบลดหนี้ SR-690715001 คืนเต็มจำนวน)
+        // ผู้ใช้: "ประวัติการคืนสินค้าต้องอยู่ที่อื่น ถ้าโชว์แบบนี้ก็จะเป็นรถขายไปแล้ว"
+        //   activeSale   = ดีลที่ยังมีผล → ใช้กับบล็อกข้อมูลการขาย/ป้ายค่าคอม/ประกัน
+        //   returnedSale = ดีลที่ถูกคืน → ยกไปบล็อกประวัติแยก และต้องปิดการขายใหม่ได้
+        const returnedSale = saleForItem && String(saleForItem.sale_status ?? "").trim() === "คืนสินค้า" ? saleForItem : null;
+        const activeSale = returnedSale ? null : saleForItem;
         // ── ไทม์ไลน์รถคันนี้ — รวมเหตุการณ์ตลอดชีวิตรถ (นำเข้า→รับ→ขาย→บริการ) ──
         const carSales = [...sales].filter(s => String(s.forklift_id) === String(it.id) || (it.SN && String(s.forklift_unit_no ?? "").toUpperCase() === String(it.SN).toUpperCase()));
         const dstr = (x: unknown) => String(x ?? "").slice(0, 10);
@@ -2428,30 +2437,30 @@ export default function StockMain() {
         carSales.forEach(s => timeline.push({ d: dstr(s.delivery_date || s.created_at), emoji: "🛒", t: String(s.sale_status || "ขายแล้ว"), sub: `${s.customer_name || "—"} · ฿${Number(s.actual_sale || 0).toLocaleString("th-TH")} · เซลล์ ${s.sales_staff || "—"}`, color: "text-emerald-600" }));
         { const svc = parseSvc(it); if (svc) svc.rounds.forEach((r, i) => { if (r.done && r.date) timeline.push({ d: dstr(r.date), emoji: "🔧", t: `เข้าเช็ค/บำรุงรอบที่ ${i + 1}`, sub: r.note || undefined, color: "text-teal-600" }); }); }
         timeline.sort((a, b) => a.d.localeCompare(b.d)); // เก่า → ใหม่ (ไล่ตามลำดับชีวิตรถ)
-        const saleRows: [string, string][] = saleForItem ? [
-          ["เซลล์ผู้ขาย", saleForItem.sales_staff ?? ""],
-          ["ลูกค้า", saleForItem.customer_name ?? ""],
-          ["เบอร์โทร", saleForItem.customer_tel ?? ""],
-          ["จังหวัด", saleForItem.province ?? ""],
-          ["ประเภทลูกค้า", (saleForItem.customer_type as string) ?? ""],
-          ["ราคาขาย", saleForItem.actual_sale ? `฿${Number(saleForItem.actual_sale).toLocaleString()}` : ""],
-          ["การชำระ", (saleForItem.payment_type as string) ?? ""],
-          ["สถานะดีล", (saleForItem.sale_status as string) ?? ""],
+        const saleRows: [string, string][] = activeSale ? [
+          ["เซลล์ผู้ขาย", activeSale.sales_staff ?? ""],
+          ["ลูกค้า", activeSale.customer_name ?? ""],
+          ["เบอร์โทร", activeSale.customer_tel ?? ""],
+          ["จังหวัด", activeSale.province ?? ""],
+          ["ประเภทลูกค้า", (activeSale.customer_type as string) ?? ""],
+          ["ราคาขาย", activeSale.actual_sale ? `฿${Number(activeSale.actual_sale).toLocaleString()}` : ""],
+          ["การชำระ", (activeSale.payment_type as string) ?? ""],
+          ["สถานะดีล", (activeSale.sale_status as string) ?? ""],
           // วันปิดการขายจริง = วันส่งมอบ (กติกาข้อ 8) · created_at เป็นแค่วันที่สร้างดีล
           // เดิมโชว์ created_at ดิบ ๆ เป็น 2026-08-24T00:00:00.000Z อ่านไม่รู้เรื่องและไม่ใช่วันที่ใช้จริง
-          ["วันส่งมอบ / ปิดการขาย", toIsoDate(saleForItem.delivery_date) || "— ยังไม่กรอก (ค่าคอมใช้วันนี้คิดงวด)"],
+          ["วันส่งมอบ / ปิดการขาย", toIsoDate(activeSale.delivery_date) || "— ยังไม่กรอก (ค่าคอมใช้วันนี้คิดงวด)"],
           // ⭐ (29 ก.ย. 2569) ผู้ใช้ถาม "ปิดการขายแล้วทำไมไม่มีในประวัติค่าคอม"
           //    คำตอบคือดีลยังไม่มีวันรับเงิน → อยู่กลุ่ม "รอรับเงิน" ยังไม่เข้างวดไหน
           //    เดิมการ์ดไม่ได้บอกเรื่องนี้เลย ต้องไปเปิดหน้าค่าคอมเองถึงจะรู้
           // ⭐ (30 ก.ย. 2569) เดิมเขียนตายตัวว่า "ยังไม่เข้างวดค่าคอม" ทุกครั้งที่ไม่มีวันรับเงิน
           //    ซึ่งขัดกับป้ายด้านล่างที่บอกว่าเข้างวดแล้ว — ดีลที่ปิด ≤ ก.ค. 69 เข้างวดตามเดือนที่ปิด
           //    ไม่ต้องรอวันรับเงิน · ข้อความจึงต้องแยก 2 กรณี ไม่งั้นการ์ดขัดกันเอง
-          ["วันที่รับเงิน (งวดค่าคอม)", toIsoDate(saleForItem.payment_received_date)
-            || (toIsoDate(saleForItem.delivery_date).slice(0, 7) <= "2026-07" && toIsoDate(saleForItem.delivery_date)
+          ["วันที่รับเงิน (งวดค่าคอม)", toIsoDate(activeSale.payment_received_date)
+            || (toIsoDate(activeSale.delivery_date).slice(0, 7) <= "2026-07" && toIsoDate(activeSale.delivery_date)
               ? "— ยังไม่ลงวันรับเงิน (ไม่กระทบงวด · ดีลก่อน ส.ค. 69 ใช้เดือนที่ปิดการขาย)"
               : "— ยังไม่รับเงิน · ยังไม่เข้างวดค่าคอม")],
-          ["วันที่สร้างดีล", toIsoDate(saleForItem.created_at)],
-          ["เลขที่ใบกำกับ", (saleForItem.custom_fields?.["เลขที่ใบกำกับภาษี"] as string) ?? ""],
+          ["วันที่สร้างดีล", toIsoDate(activeSale.created_at)],
+          ["เลขที่ใบกำกับ", (activeSale.custom_fields?.["เลขที่ใบกำกับภาษี"] as string) ?? ""],
         ] : [];
         // custom_fields ที่โชว์ในสเปก/ข้อมูลแล้ว + คีย์ internal (JSON/มี block เฉพาะ) → ไม่ต้องโชว์ซ้ำใน "ข้อมูลเพิ่มเติม"
         const SHOWN_CF = new Set(["ประเภทสินค้า","MAST","Valve","ขนาดงา","ชนิดล้อ","เซลล์ผู้ดูแล","รายละเอียด (ลูกค้า)","เลขที่ใบกำกับภาษี","ชีตต้นทาง",
@@ -2546,7 +2555,7 @@ export default function StockMain() {
                 <Section title="สเปกรถ" rows={spec} keepAlways={SPEC_ALWAYS} />
                 <Section title="ข้อมูลสต็อก / จัดซื้อ" rows={info} />
                 {/* ข้อมูลการขาย (ลูกค้า/ราคา/สถานะ) — สำคัญสุดสำหรับรถที่ขายแล้ว จึงอยู่บนสุด */}
-                {saleForItem && (
+                {activeSale && (
                   <div>
                     <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-1.5"><ShoppingCart className="w-3.5 h-3.5 text-indigo-500" />ข้อมูลการขาย</p>
                     <div className="grid grid-cols-2 gap-2">
@@ -2560,8 +2569,8 @@ export default function StockMain() {
                     {/* ── ป้ายบอกว่าดีลนี้อยู่งวดค่าคอมไหนแล้ว (29 ก.ย. 2569) ── */}
                     {/* ปิดการขายแล้วไม่ได้แปลว่าเข้างวดทันที — งวดยึด "เดือนที่เงินเข้าบัญชี" */}
                     {(() => {
-                      const paid = toIsoDate(saleForItem.payment_received_date);
-                      const cm = toIsoDate(saleForItem.delivery_date).slice(0, 7);
+                      const paid = toIsoDate(activeSale.payment_received_date);
+                      const cm = toIsoDate(activeSale.delivery_date).slice(0, 7);
                       // ดีลที่ปิด ≤ ก.ค. 69 เข้างวดตามเดือนที่ปิดเลย (ยุคก่อนจ่ายผ่านแอป)
                       const old = !!cm && cm <= "2026-07";
                       const period = paid ? paid.slice(0, 7) : (old ? cm : "");
@@ -2576,7 +2585,7 @@ export default function StockMain() {
 
                     {/* ── แก้ชื่อเซลล์เจ้าของงานจากการ์ดรถได้เลย (29 ก.ย. 2569 · ผู้ใช้สั่ง) ── */}
                     {/* ดีลที่นำเข้าจากบิลภาษีมักไม่มีชื่อเซลล์ → ยอดขายไม่เข้าใคร ค่าคอมก็ไม่ขึ้น */}
-                    {staffEditFor === saleForItem.id ? (
+                    {staffEditFor === activeSale.id ? (
                       <div className="mt-2 flex flex-wrap items-center gap-1.5 bg-indigo-50 border border-indigo-200 rounded-xl px-2.5 py-2">
                         <span className="text-[11px] font-semibold text-indigo-800">เซลล์เจ้าของงาน:</span>
                         <input list="card-staff-opts" value={staffEditVal} onChange={e => setStaffEditVal(e.target.value)}
@@ -2586,21 +2595,49 @@ export default function StockMain() {
                         <button onClick={() => {
                             const nm = staffEditVal.trim();
                             if (!nm) { showToast("ต้องระบุชื่อเซลล์ — ไม่งั้นค่าคอมไม่รู้ว่าของใคร"); return; }
-                            updateSale({ ...saleForItem, sales_staff: nm,
-                              custom_fields: { ...(saleForItem.custom_fields ?? {}), "แก้ชื่อเซลล์โดยฝ่ายสต็อก": `${today()} · ${username || "สต็อก"}` } });
+                            updateSale({ ...activeSale, sales_staff: nm,
+                              custom_fields: { ...(activeSale.custom_fields ?? {}), "แก้ชื่อเซลล์โดยฝ่ายสต็อก": `${today()} · ${username || "สต็อก"}` } });
                             setStaffEditFor(null); showToast("บันทึกชื่อเซลล์แล้ว ✓");
                           }}
                           className="text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-1.5">บันทึก</button>
                         <button onClick={() => setStaffEditFor(null)} className="text-[11px] font-semibold text-slate-500 px-2 py-1.5">ยกเลิก</button>
                       </div>
                     ) : (
-                      <button onClick={() => { setStaffEditFor(saleForItem.id); setStaffEditVal(saleForItem.sales_staff ?? ""); }}
+                      <button onClick={() => { setStaffEditFor(activeSale.id); setStaffEditVal(activeSale.sales_staff ?? ""); }}
                         className="mt-1.5 text-[11px] font-semibold text-indigo-700 hover:text-indigo-900 underline decoration-dotted">
-                        {String(saleForItem.sales_staff ?? "").trim()
+                        {String(activeSale.sales_staff ?? "").trim()
                           ? "✎ แก้ชื่อเซลล์เจ้าของงาน"
                           : "⚠️ ดีลนี้ยังไม่มีชื่อเซลล์ — แตะเพื่อใส่ชื่อ (ค่าคอมจะได้เข้าถูกคน)"}
                       </button>
                     )}
+                  </div>
+                )}
+                {/* ── ประวัติการคืนสินค้า — ไม่ใช่ "ข้อมูลการขาย" (3 พ.ย. 2569) ── */}
+                {/* รถกลับมาพร้อมขายแล้ว บล็อกนี้มีไว้บอกที่มาเฉย ๆ ห้ามทำให้ดูเหมือนรถที่ขายไปแล้ว */}
+                {returnedSale && (
+                  <div className="bg-rose-50/60 border border-rose-200 rounded-2xl p-3.5">
+                    <p className="text-sm font-bold text-rose-800 flex items-center gap-1.5">
+                      <RotateCcw className="w-4 h-4" />ประวัติการคืนสินค้า — เคยขายแล้วลูกค้าคืน
+                    </p>
+                    <p className="text-[11px] text-rose-600 mt-0.5 mb-2">
+                      ดีลนี้<b>ไม่นับเป็นยอดขายและไม่เข้าค่าคอม</b> · รถกลับเข้าคลังเป็นของพร้อมขายตามปกติ
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {([
+                        ["ลูกค้าเดิม", returnedSale.customer_name ?? ""],
+                        ["เซลล์เจ้าของงาน", returnedSale.sales_staff ?? ""],
+                        ["ราคาขายเดิม", returnedSale.actual_sale ? `฿${Number(returnedSale.actual_sale).toLocaleString()}` : ""],
+                        ["วันส่งมอบเดิม", toIsoDate(returnedSale.delivery_date)],
+                        ["คืนเมื่อ", (returnedSale.custom_fields?.["คืนสินค้าเมื่อ"] as string) ?? ""],
+                        ["เหตุผลที่คืน", (returnedSale.custom_fields?.["เหตุผลคืน"] as string) ?? ""],
+                        ["เลขที่ใบกำกับเดิม", (returnedSale.custom_fields?.["เลขที่ใบกำกับภาษี"] as string) ?? ""],
+                      ] as [string, string][]).filter(([, v]) => String(v ?? "").trim()).map(([k, v]) => (
+                        <div key={k} className="bg-white/70 border border-rose-100 rounded-xl px-3 py-2">
+                          <p className="text-[11px] text-rose-400">{k}</p>
+                          <p className="text-sm font-semibold text-slate-700 break-words">{v}</p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
                 {/* ไทม์ไลน์รถคันนี้ — รวมเหตุการณ์ตลอดชีวิตรถ (พับเก็บได้) */}
@@ -2656,7 +2693,7 @@ export default function StockMain() {
 
                 {/* ── ปิดการขายแทนฝ่ายขาย (29 ก.ย. 2569 · ผู้ใช้สั่ง) ── */}
                 {/* บางทีเซลล์อยู่หน้างาน สต็อกต้องปิดให้ — ปิดได้ แต่ต้องระบุชื่อเซลล์เจ้าของงาน */}
-                {!saleForItem && (
+                {!activeSale && (
                   <div className="bg-indigo-50/60 border border-indigo-200 rounded-2xl p-3.5">
                     {!closeForm ? (
                       <>
@@ -2959,7 +2996,10 @@ export default function StockMain() {
                 {(() => {
                   const cf = (it.custom_fields || {}) as Record<string, unknown>;
                   // ถ้ายังไม่บันทึกเอง (cf ว่าง) → ใช้ข้อมูลจากดีลฝ่ายขายที่ลงมาแล้ว
-                  const deal = dealOf(it);
+                  // ⚠️ ดีลที่ลูกค้าคืนไปแล้วไม่ใช่ยอดขาย — ห้ามเอามาโชว์ราคาขาย/กำไรจริง
+                  //    (3 พ.ย. 2569 เจอจริง: การ์ดรถที่คืนแล้วยังขึ้น "กำไรจริง ฿30,000")
+                  const dealRaw = dealOf(it);
+                  const deal = String(dealRaw?.sale_status ?? "").trim() === "คืนสินค้า" ? undefined : dealRaw;
                   const dealAddon = (deal?.add_ons ?? []).reduce((s, a) => s + (Number(a.price) || 0), 0);
                   const sale = Number(cf["ราคาขายจริง"]) || Number(deal?.actual_sale) || 0;
                   const ship = Number(cf["ค่าขนส่งจริง"]) || Number(deal?.shipping_cost) || 0;
@@ -3036,7 +3076,7 @@ export default function StockMain() {
                   );
                 })()}
                 {/* บริการหลังการขาย / รับประกัน — โชว์เมื่อรถขายแล้ว (คอมโพเนนต์ร่วมกับหน้าขาย) */}
-                {(saleForItem || String(it.status).includes("ปิดการขาย")) && (
+                {(activeSale || String(it.status).includes("ปิดการขาย")) && (
                   <WarrantyBlock forklift={it} actor={`${username} (สต็อก)`} onSaved={setDetailItem}
                     defaultStart={String(dealOf(it)?.delivery_date ?? "").slice(0, 10)} />
                 )}
