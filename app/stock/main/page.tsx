@@ -18,7 +18,7 @@ import { Lightbox } from "@/components/ui/Lightbox";
 import { Chip } from "@/components/ui/Chip";
 import { StatusBadge } from "@/components/ui/Badge";
 import { MoneyInput } from "@/components/ui/MoneyInput";
-import { VEHICLE_CATS, CatFilter, categorizeModel, modelWarning, staffLabel, SALE_STATUS_BADGE, saleStatusGroup, SALE_STATUS_FILTER_GROUPS, SALE_STATUS_OPTIONS } from "@/lib/constants";
+import { VEHICLE_CATS, CatFilter, categorizeModel, modelWarning, staffLabel, SALE_STATUS_BADGE, saleStatusGroup, SALE_STATUS_FILTER_GROUPS, SALE_STATUS_OPTIONS, RENT_CODE_FIELD, RENT_STATUS, rentCodeOf } from "@/lib/constants";
 import { QuoteImport } from "@/components/QuoteImport";
 import { PickBox } from "@/components/PickBox";
 import { parseForkliftCsv, assignIdsAndStamp, buildCsvTemplate } from "@/lib/forkliftCsv";
@@ -152,6 +152,8 @@ export default function StockMain() {
   const [finSaved, setFinSaved]           = useState(false);
   const [snEdit, setSnEdit]               = useState(""); // เติม/แก้ SN (รถสั่งผลิต/ลงข้อมูลเก่า)
   const [snSaved, setSnSaved]             = useState(false);
+  const [rentEdit, setRentEdit]           = useState(""); // รหัสรถเช่า (GR-xx) — โชว์ต่อท้ายป้ายสถานะ
+  const [rentSaved, setRentSaved]         = useState(false);
   const [piEdit, setPiEdit]               = useState(""); // เติม/แก้เลขที่ PI (ฝ่ายสต็อกทุกคนกรอกได้)
   const [piSaved, setPiSaved]             = useState(false);
   // แก้ไขสเปกรถ (ฝ่ายสต็อกทุกคน) — ลงข้อมูลย้อนหลัง รถเก่าที่สเปกว่าง · แก้ได้ทุกสถานะ
@@ -248,6 +250,7 @@ export default function StockMain() {
     setFinSaved(false);
     setSnEdit(detailItem?.SN ?? ""); setSnSaved(false);
     setPiEdit(detailItem?.pi_no ?? ""); setPiSaved(false);
+    setRentEdit(String(detailItem?.custom_fields?.[RENT_CODE_FIELD] ?? "")); setRentSaved(false);
     // สเปกรถ — เติมค่าเดิม (custom_fields MAST/Valve · คอลัมน์หลัก category/capacity/height/fork/fuel)
     setSpecEdit({
       brand:    detailItem?.brand ?? "",
@@ -1796,7 +1799,7 @@ export default function StockMain() {
                           <td className="px-2.5 py-2 text-slate-600 whitespace-nowrap">{item.capacity || (item.capacity_kg ? `${item.capacity_kg} kg` : "—")}</td>
                           <td className="px-2.5 py-2 text-slate-600 whitespace-nowrap">{item.fuel || "—"}</td>
                           <td className="px-2.5 py-2 text-slate-600 whitespace-nowrap">{item.height || "—"}</td>
-                          <td className="px-2.5 py-2 whitespace-nowrap"><StatusBadge status={item.status} /></td>
+                          <td className="px-2.5 py-2 whitespace-nowrap"><StatusBadge status={item.status} note={rentCodeOf(item)} /></td>
                           <td className="px-2.5 py-2 font-bold text-emerald-700 whitespace-nowrap">{item.cost_price ? `฿${item.cost_price.toLocaleString()}` : "—"}</td>
                           <td className="px-2.5 py-2 text-slate-500 whitespace-nowrap">{item.location || "—"}</td>
                           <td className="px-2.5 py-2 text-slate-500 whitespace-nowrap">{ownerOf(item) || "—"}</td>
@@ -1900,7 +1903,7 @@ export default function StockMain() {
                       <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1"><Clock className="w-3 h-3 flex-shrink-0" />เติมเมื่อ {fmtAdded(item.created_at)}</p>
                     )}
                   </div>
-                  <span className="flex-shrink-0"><StatusBadge status={item.status} /></span>
+                  <span className="flex-shrink-0"><StatusBadge status={item.status} note={rentCodeOf(item)} /></span>
                   {deleteConfirm === item.id ? (
                     <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
                       <button onClick={() => { deleteForklift(item.id); setDeleteConfirm(null); }}
@@ -2499,7 +2502,7 @@ export default function StockMain() {
                   <div className="flex items-center gap-2 flex-wrap mb-1">
                     <span className={`text-xs font-bold px-2 py-0.5 rounded-md ${isPendingId(it.id) ? "text-amber-700 bg-amber-50 border border-amber-200" : "text-slate-600 bg-slate-100 border border-slate-200"}`}>#{displayCode(it)}</span>
                     {it.pi_no && displayCode(it) !== it.pi_no && <span className="text-xs font-bold px-2 py-0.5 rounded-md text-violet-700 bg-violet-50 border border-violet-200">{piLabel(it.pi_no)}</span>}
-                    <StatusBadge status={it.status} />
+                    <StatusBadge status={it.status} note={rentCodeOf(it)} />
                   </div>
                   <h3 className="text-lg font-bold text-slate-800 truncate">{it.brand} {it.model}</h3>
                   {it.SN && <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5"><Hash className="w-3 h-3" />SN {it.SN}</p>}
@@ -2896,6 +2899,32 @@ export default function StockMain() {
                     {statusOpts.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                   <p className="text-[10px] text-slate-400 mt-1">* เปลี่ยนสถานะรถ (พร้อมขาย/รอรับ/รถเช่า/เคลม ฯลฯ) — อัปเดตทุกฝ่ายทันที</p>
+                  {/* ── รหัสรถเช่า (3 พ.ย. 2569 · ผู้ใช้สั่ง) ── */}
+                  {/* รถเช่ามีหลายคัน ป้าย "รถเช่า" เฉย ๆ แยกไม่ออกว่าคันไหนสัญญาไหน
+                      บัญชีเรียกด้วยรหัส GR-xx อยู่แล้ว (เห็นในบิลค่าเช่า) → ใส่แล้วโชว์เป็น "รถเช่า · GR-111" */}
+                  {String(it.status ?? "").trim() === RENT_STATUS && (
+                    <div className="mt-2 bg-teal-50/60 border border-teal-200 rounded-xl px-3 py-2.5">
+                      <p className="text-[11px] font-bold text-teal-800 mb-1.5">รหัสรถเช่า — โชว์ต่อท้ายสถานะทุกหน้า</p>
+                      <div className="flex gap-2">
+                        <input value={rentEdit} onChange={e => { setRentEdit(e.target.value); setRentSaved(false); }}
+                          placeholder="เช่น GR-111"
+                          className="flex-1 border border-teal-200 rounded-lg px-3 py-2 text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-teal-400" />
+                        <button
+                          onClick={() => {
+                            const code = rentEdit.trim();
+                            const cf = { ...(it.custom_fields ?? {}) };
+                            if (code) cf[RENT_CODE_FIELD] = code; else delete cf[RENT_CODE_FIELD];  // ลบออกได้ ไม่ค้างของเดิม
+                            const u = { ...it, custom_fields: cf };
+                            updateForklift(u); setDetailItem(u); setRentSaved(true);
+                            showToast(code ? `ตั้งรหัสรถเช่าเป็น “${code}” ✓` : "ลบรหัสรถเช่าแล้ว ✓");
+                          }}
+                          className="px-4 py-2 rounded-lg text-sm font-bold bg-teal-600 text-white hover:bg-teal-700 transition-all active:scale-95">
+                          {rentSaved ? "บันทึกแล้ว ✓" : "บันทึก"}
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-teal-600 mt-1">* เว้นว่างแล้วกดบันทึก = ลบรหัสออก · เปลี่ยนสถานะเป็นอย่างอื่น รหัสจะไม่โชว์ (แต่ยังเก็บไว้)</p>
+                    </div>
+                  )}
                 </div>
                 {/* รับคืนสินค้า (ลูกค้าคืน) — เฉพาะรถที่ปิดการขายแล้ว + มีดีลผูกอยู่ · เก็บประวัติดีลไว้ ตัดยอด/ค่าคอมออก */}
                 {(() => {

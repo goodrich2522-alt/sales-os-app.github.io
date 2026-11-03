@@ -8,12 +8,17 @@ const SIZE = {
 } as const;
 
 /** ป้ายสถานะรถ — สีมาจาก constants ทุกหน้าใช้ชุดเดียวกัน */
-export function StatusBadge({ status, size = "md" }: { status: unknown; size?: keyof typeof SIZE }) {
+/**
+ * @param note ข้อความต่อท้ายในป้ายเดียวกัน เช่น รหัสรถเช่า "GR-111" → "รถเช่า · GR-111"
+ *             สีป้ายยังอิงสถานะหลักเสมอ · ว่าง = ไม่โชว์จุดคั่น (กันขยะ "รถเช่า ·" ลอย ๆ)
+ */
+export function StatusBadge({ status, note, size = "md" }: { status: unknown; note?: unknown; size?: keyof typeof SIZE }) {
   const s = String(status ?? "").trim();
   if (!s) return null;
+  const n = String(note ?? "").trim();
   return (
     <span className={`inline-block font-semibold rounded-full border whitespace-nowrap ${SIZE[size]} ${statusBadgeClass(s)}`}>
-      {s}
+      {n ? `${s} · ${n}` : s}
     </span>
   );
 }

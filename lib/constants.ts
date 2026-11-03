@@ -76,6 +76,17 @@ export const STATUS_BADGE: Record<string, string> = {
 };
 
 /** สีป้ายสถานะ — ถ้าไม่รู้จักสถานะ คืนสีเทากลางๆ (กันจอพังเมื่อเจอค่าสะกดแปลก) */
+/**
+ * รหัสรถเช่า — บัญชีเรียกรถเช่าด้วยรหัส GR-xx (เห็นในบิลค่าเช่า "GR-59 ค่าเช่า 6/09/69 - 05/10/69")
+ * เก็บใน custom_fields แล้วโชว์ต่อท้ายป้ายสถานะเป็น "รถเช่า · GR-111"
+ * (3 พ.ย. 2569 · ผู้ใช้สั่ง — รถเช่ามีหลายคัน ป้ายเดิมแยกไม่ออกว่าคันไหนสัญญาไหน)
+ */
+export const RENT_CODE_FIELD = "รหัสรถเช่า";
+export const RENT_STATUS = "รถเช่า";
+/** คืนรหัสรถเช่าเฉพาะตอนสถานะเป็น "รถเช่า" — สถานะอื่นไม่ต้องโชว์ แม้จะเคยกรอกไว้ */
+export const rentCodeOf = (f?: { status?: unknown; custom_fields?: Record<string, string> | null } | null): string =>
+  String(f?.status ?? "").trim() === RENT_STATUS ? String(f?.custom_fields?.[RENT_CODE_FIELD] ?? "").trim() : "";
+
 export const statusBadgeClass = (status: unknown): string =>
   STATUS_BADGE[String(status ?? "").trim()] ?? "bg-slate-100 text-slate-600 border-slate-200";
 
