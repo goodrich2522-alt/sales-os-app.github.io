@@ -22,7 +22,9 @@ export interface InvoiceDoc {
   item: string;         // ข้อความรายการสินค้าเต็ม
   net: number;          // ยอดก่อน VAT
   total: number;        // ยอดรวม VAT
-  kind: string;         // ประเภทงาน (งานขาย / งานเช่า / งานซ่อม)
+  kind: string;         // ประเภทงาน (งานขาย / งานเช่า / งานซ่อม / ใบลดหนี้)
+  ref?: string;         // ใบลดหนี้: เลขที่บิลที่ถูกลดหนี้
+  cancelledBy?: string; // บิลขาย: เลขที่ใบลดหนี้ที่ลดเต็มจำนวน = การขายถูกยกเลิก
   docStatus: string;    // สถานะเอกสาร (รับชำระแล้ว / ยกเลิก / ร่าง)
   staff: string;        // เซลล์ดูแล
   sns: string[];        // SN ที่พบในรายการ
@@ -39,7 +41,17 @@ export const SALES_SHEETS = ["รายงานใบเสร็จรับ�
 export const SALE_KINDS = ["งานขาย"];
 /** สถานะเอกสารที่ไม่นับเป็นการขายจริง */
 export const DEAD_DOC_STATUS = ["ยกเลิก", "ร่าง"];
-export const isLiveDoc = (d: InvoiceDoc) => !DEAD_DOC_STATUS.includes(t(d.docStatus));
+/** ชีตใบลดหนี้ — อยู่ในไฟล์เดียวกับรายงานขาย แต่ไม่ใช่ชีตขาย จึงอ่านแยก */
+export const CREDIT_SHEET = "รายงานใบลดหนี้";
+export const CREDIT_KIND = "ใบลดหนี้";
+/**
+ * ใบที่ยังเป็นการขายจริง — ไม่ใช่ใบยกเลิก/ร่าง และไม่ถูกลดหนี้เต็มจำนวน
+ *
+ * (3 พ.ย. 2569) เดิมอ่านแต่ชีตขาย ไม่เคยอ่านใบลดหนี้เลย บิลที่ลูกค้าคืนของทีหลัง
+ * จึงยังถูกนับเป็น "ขายแล้ว" — เจอจริง 3 ใบจากบิล 874 ใบของปี 2569
+ * เช่น IV-690616012 (CDD15J-RE 08015JUP986) ถูกลดหนี้เต็มด้วย SR-690715001
+ */
+export const isLiveDoc = (d: InvoiceDoc) => !DEAD_DOC_STATUS.includes(t(d.docStatus)) && !d.cancelledBy;
 
 /**
  * เลขที่เอกสารบอกปี/เดือนไว้ในตัว — IV-690107008 = ปี 69 เดือน 01 วันที่ 07 · CH6901-001 = ปี 69 เดือน 01
@@ -95,7 +107,7 @@ export function snsFrom(text: unknown): string[] {
   return out;
 }
 
-interface Layout { head: number; doc: number; date: number; cust: number; item: number; net: number; total: number; kind: number; staff: number; docStatus: number; }
+interface Layout { head: number; doc: number; date: number; cust: number; item: number; net: number; total: number; kind: number; staff: number; docStatus: number; ref: number; }
 
 /** หาแถวหัวตาราง + ตำแหน่งคอลัมน์จากชื่อหัวคอลัมน์ (คืน null ถ้าไม่ใช่ชีตเอกสารขาย) */
 function findLayout(rows: string[][]): Layout | null {
@@ -115,6 +127,8 @@ function findLayout(rows: string[][]): Layout | null {
       staff: find("เซลล์ดูแล", "เซลล์"),
       // ⚠️ ใบที่ "ยกเลิก" หรือยังเป็น "ร่าง" ไม่ใช่การขายจริง — ต้องไม่นำเข้า
       docStatus: find("สถานะ"),
+      // ชีตใบลดหนี้มีคอลัมน์นี้ ชี้ว่าลดหนี้ของบิลใบไหน (ชีตขายไม่มี → -1)
+      ref: find("เอกสารอ้างอิง", "อ้างอิง", "เลขที่เอกสารอ้างอิง"),
     };
   }
   return null;
@@ -134,7 +148,7 @@ export function parseInvoiceSheet(rows: string[][], sheet: string, source: strin
     const rec = docs.get(doc) ?? {
       doc, date: invoiceDate(g(L.date), doc), customer: g(L.cust), item,
       net: num(g(L.net)), total: num(g(L.total)),
-      kind: g(L.kind), staff: g(L.staff), docStatus: g(L.docStatus), sns, sheet, source,
+      kind: g(L.kind), staff: g(L.staff), docStatus: g(L.docStatus), ref: g(L.ref), sns, sheet, source,
     };
     // แถวซ้ำ = งวดผ่อนชำระ → เก็บยอดสูงสุด และเติมช่องที่ยังว่าง
     rec.net = Math.max(rec.net, num(g(L.net)));
@@ -149,19 +163,57 @@ export function parseInvoiceSheet(rows: string[][], sheet: string, source: strin
   return [...docs.values()];
 }
 
-/** อ่านทั้งไฟล์ (ทุกชีตที่เป็นเอกสารขาย) */
+/** อ่าน 1 ชีตใบลดหนี้ → รายการใบลดหนี้ (kind = "ใบลดหนี้" จึงไม่หลุดไปอยู่ในงานขาย) */
+export function parseCreditSheet(rows: string[][], sheet: string, source: string): InvoiceDoc[] {
+  return parseInvoiceSheet(rows, sheet, source).map(d => ({ ...d, kind: CREDIT_KIND }));
+}
+
+/**
+ * เอาใบลดหนี้มาติดธงให้บิลขายที่ถูกยกเลิก
+ *
+ * ลดหนี้ "เต็มจำนวน" (รวมทุกใบที่อ้างถึงบิลเดียวกัน ≥ ยอดบิล) = การขายถูกยกเลิก → ไม่นำเข้า
+ * ลดหนี้ "บางส่วน" (เช่น ปรับราคาให้ตรง PO) = ยังขายอยู่ → นำเข้าตามปกติ
+ *
+ * ⚠️ ใบลดหนี้มักอยู่คนละเดือนกับบิล (เจอจริง: บิล มิ.ย. ลดหนี้ ก.ค.)
+ *    จึงต้องเรียกกับ "ทุกใบที่โหลดมารวมกัน" ไม่ใช่ทีละไฟล์
+ */
+export function applyCreditNotes(docs: InvoiceDoc[]): InvoiceDoc[] {
+  const credited = new Map<string, { sum: number; by: string[] }>();
+  for (const n of docs) {
+    if (n.kind !== CREDIT_KIND) continue;
+    const ref = t(n.ref);
+    if (!ref) continue;
+    const cur = credited.get(ref) ?? { sum: 0, by: [] };
+    cur.sum += Number(n.net) || 0;
+    cur.by.push(n.doc);
+    credited.set(ref, cur);
+  }
+  return docs.map(d => {
+    if (d.kind === CREDIT_KIND) return d;
+    const c = credited.get(t(d.doc));
+    // เผื่อปัดเศษสตางค์ 1 บาท
+    if (!c || !(c.sum >= (Number(d.net) || 0) - 1) || !(Number(d.net) > 0)) return d;
+    return { ...d, cancelledBy: c.by.join(", ") };
+  });
+}
+
+/** อ่านทั้งไฟล์ (ชีตเอกสารขาย + ชีตใบลดหนี้) */
 export async function readInvoiceFile(file: File): Promise<InvoiceDoc[]> {
   const XLSX = await import("xlsx");
   const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
   const out: InvoiceDoc[] = [];
   for (const name of wb.SheetNames) {
-    if (!SALES_SHEETS.includes(name.trim())) continue;
+    const n = name.trim();
+    const isSale = SALES_SHEETS.includes(n);
+    const isCredit = n === CREDIT_SHEET;
+    if (!isSale && !isCredit) continue;
     const ws = wb.Sheets[name];
     if (!ws) continue;
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" }) as string[][];
-    out.push(...parseInvoiceSheet(rows, name.trim(), file.name));
+    out.push(...(isCredit ? parseCreditSheet(rows, n, file.name) : parseInvoiceSheet(rows, n, file.name)));
   }
-  return out;
+  // ติดธงภายในไฟล์เดียวกันไว้ก่อน — ข้ามไฟล์ให้ฝั่งที่รวมใบทั้งหมดเรียก applyCreditNotes ซ้ำ
+  return applyCreditNotes(out);
 }
 
 // ── SN ในบิลพิมพ์ผิดแบบ "ตัวที่สับสนกันบ่อย" ────────────────────────────────
