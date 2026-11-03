@@ -15,7 +15,7 @@
 import { useState } from "react";
 import { X, Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, Download } from "lucide-react";
 import { useApp } from "@/lib/AppContext";
-import { readInvoiceFile, InvoiceDoc, SALE_KINDS, isLiveDoc, snNearMatch } from "@/lib/salesImport";
+import { readInvoiceFile, InvoiceDoc, SALE_KINDS, isLiveDoc, snNearMatch, applyCreditNotes } from "@/lib/salesImport";
 import type { Forklift, Sale } from "@/lib/types";
 
 const key = (v: unknown) => String(v ?? "").trim().toUpperCase().replace(/\s+/g, "");
@@ -55,7 +55,8 @@ export function SalesBackfillImport({ onClose }: { onClose: () => void }) {
     // ใบเดียวกันมาจากหลายไฟล์ได้ (ใบแจ้งหนี้ + ใบเสร็จ) → เก็บใบเดียว
     const m = new Map(docs.map(d => [d.doc, d]));
     out.forEach(d => m.set(d.doc, d));
-    setDocs([...m.values()]);
+    // ใบลดหนี้มักอยู่คนละเดือน/คนละไฟล์กับบิล → ต้องจับคู่กับ "ทุกใบที่โหลดมาแล้ว" ไม่ใช่ทีละไฟล์
+    setDocs(applyCreditNotes([...m.values()]));
     setErr(bad || (out.length ? "" : "ไม่พบชีตเอกสารขายในไฟล์นี้ — ต้องมีชีตชื่อ รายงานใบเสร็จรับเงิน · รายงานใบแจ้งหนี้ · บิลเงินสด"));
   };
 
@@ -67,6 +68,8 @@ export function SalesBackfillImport({ onClose }: { onClose: () => void }) {
   sales.forEach(s => { [s.forklift_id, s.forklift_unit_no].forEach(k => { if (key(k)) saleByFk.set(key(k), s); }); });
 
   const dead = docs.filter(d => d.sns.length && SALE_KINDS.includes(d.kind) && !isLiveDoc(d));
+  // บิลที่ถูกลดหนี้เต็มจำนวน — แยกโชว์ให้ผู้ใช้เห็นว่าทำไมหายไป ไม่ใช่เงียบ ๆ
+  const credited = dead.filter(d => d.cancelledBy);
   const live = docs.filter(d => d.sns.length && SALE_KINDS.includes(d.kind) && isLiveDoc(d));
 
   const rows: Row[] = live.flatMap(d => {
@@ -168,8 +171,24 @@ export function SalesBackfillImport({ onClose }: { onClose: () => void }) {
                 <Stat n={toAdd.length} label="จะเพิ่มใบขายใหม่" tone="emerald" />
                 <Stat n={already.length} label="มีใบขายแล้ว (ข้าม)" tone="slate" />
                 <Stat n={noFk.length} label="หารถจาก SN ไม่เจอ" tone="amber" />
-                <Stat n={dead.length} label="ใบยกเลิก/ร่าง (ไม่นำเข้า)" tone="slate" />
+                <Stat n={dead.length} label="ใบยกเลิก/ร่าง/ถูกลดหนี้ (ไม่นำเข้า)" tone="slate" />
               </div>
+
+              {/* ── บิลที่ถูกลดหนี้เต็มจำนวน = ลูกค้าคืนของ (3 พ.ย. 2569) ── */}
+              {/* เดิมไม่เคยอ่านชีตใบลดหนี้เลย บิลพวกนี้จึงถูกนำเข้าเป็นการขายทั้งที่คืนไปแล้ว */}
+              {credited.length > 0 && (
+                <div className="bg-rose-50 border border-rose-200 rounded-xl px-3 py-2 text-xs">
+                  <p className="font-bold text-rose-800">
+                    ไม่นำเข้า {credited.length} ใบ — บัญชีออกใบลดหนี้เต็มจำนวนแล้ว (ลูกค้าคืนของ/ยกเลิกการขาย)
+                  </p>
+                  <ul className="mt-1 text-rose-700 space-y-0.5">
+                    {credited.slice(0, 8).map(d => (
+                      <li key={d.doc}>• {d.doc} · {d.customer || "—"} · ฿{Number(d.net || 0).toLocaleString("th-TH")} → ลดหนี้ด้วย {d.cancelledBy}</li>
+                    ))}
+                    {credited.length > 8 && <li>• … อีก {credited.length - 8} ใบ</li>}
+                  </ul>
+                </div>
+              )}
 
               <label className="flex items-start gap-2 text-xs bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
                 <input type="checkbox" checked={countCommission} onChange={e => setCountCommission(e.target.checked)} className="mt-0.5" />
