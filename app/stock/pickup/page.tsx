@@ -98,12 +98,26 @@ export default function PickupReportPage() {
   const lots = tab === "ready" ? ready : making;
   const totalCars = (l: Lot[]) => l.reduce((n, x) => n + x.cars.length, 0);
 
-  /** ไฟเตือนตามอายุ — ไม่ระบุวันถือว่าน่าห่วงเหมือนกัน เพราะไม่มีใครตามได้ */
+  /** ไฟเตือนตามอายุ — ไม่ระบุวันถือว่าน่าห่วงเหมือนกัน เพราะไม่มีใครตามได้
+   *  (19 พ.ย. 2569) เดิมมี 3 ระดับ ค้าง 30 วันกับ 129 วันเลยเป็นสีแดงเท่ากัน แยกไม่ออกว่าอันไหนหนักกว่า
+   *  → เพิ่มระดับ "เกิน 60 วัน" เป็นแดงเข้ม + ขีดซ้ายหนา ให้เห็นตั้งแต่ยังไม่อ่านตัวเลข */
   const tone = (l: Lot) =>
-    l.days === null ? { bg: "bg-slate-50 border-slate-200", chip: "bg-slate-200 text-slate-700", label: "ไม่ระบุวัน" }
-      : l.days >= 30 ? { bg: "bg-red-50 border-red-200", chip: "bg-red-100 text-red-700", label: `ค้าง ${l.days} วัน` }
-        : l.days >= 15 ? { bg: "bg-amber-50 border-amber-200", chip: "bg-amber-100 text-amber-800", label: `ค้าง ${l.days} วัน` }
-          : { bg: "bg-white border-slate-200", chip: "bg-emerald-100 text-emerald-700", label: `${l.days} วัน` };
+    l.days === null ? { bg: "bg-slate-50 border-slate-200", bar: "border-l-slate-300", chip: "bg-slate-200 text-slate-700", label: "ไม่ระบุวัน" }
+      : l.days >= 60 ? { bg: "bg-red-50 border-red-300", bar: "border-l-red-600", chip: "bg-red-600 text-white", label: `ค้าง ${l.days} วัน` }
+        : l.days >= 30 ? { bg: "bg-orange-50 border-orange-200", bar: "border-l-orange-500", chip: "bg-orange-100 text-orange-800", label: `ค้าง ${l.days} วัน` }
+          : l.days >= 15 ? { bg: "bg-amber-50 border-amber-200", bar: "border-l-amber-400", chip: "bg-amber-100 text-amber-800", label: `ค้าง ${l.days} วัน` }
+            : { bg: "bg-white border-slate-200", bar: "border-l-slate-200", chip: "bg-emerald-100 text-emerald-700", label: `${l.days} วัน` };
+
+  /** ── แถบสรุปบนสุด (19 พ.ย. 2569 · ผู้ใช้ขอ "เห็นภาพใน 3 วินาที") ──
+   *  เดิมอ่านได้แค่ยอดรวมจากปุ่มแท็บ ต้องเลื่อนดูเองว่าล็อตไหนเลยนัด/ยังไม่นัด/ค้างนานสุด
+   *  "เลยนัด" กับ "ไม่มีวันนัด" คือ 2 ตัวที่ต้องลงมือจริง จึงแยกออกมาให้เห็นชัด */
+  const summary = useMemo(() => {
+    const now = today();
+    const overdue = lots.filter(l => l.due && l.due < now);
+    const noDate = lots.filter(l => !l.due);
+    const oldest = lots.reduce<Lot | null>((a, b) => ((b.days ?? -1) > (a?.days ?? -1) ? b : a), null);
+    return { cars: totalCars(lots), lots: lots.length, overdue, noDate, oldest };
+  }, [lots]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveLot = () => {
     if (!edit) return;
@@ -176,6 +190,40 @@ export default function PickupReportPage() {
       </div>
 
       <div className="max-w-6xl mx-auto px-4 py-5">
+        {/* ── แถบสรุป 4 ช่อง — ตัวเลขของ "แท็บที่เปิดอยู่" ── */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+          <div className="bg-white border border-slate-200 rounded-2xl px-3 py-2.5">
+            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">ค้างรวม</p>
+            <p className="text-xl font-extrabold text-slate-800 leading-tight">{summary.cars} คัน</p>
+            <p className="text-[11px] text-slate-500">{summary.lots} ล็อต</p>
+          </div>
+          <div className={`rounded-2xl px-3 py-2.5 border ${summary.overdue.length ? "bg-red-50 border-red-300" : "bg-white border-slate-200"}`}>
+            <p className={`text-[11px] font-bold uppercase tracking-wide ${summary.overdue.length ? "text-red-500" : "text-slate-400"}`}>เลยนัดแล้ว</p>
+            <p className={`text-xl font-extrabold leading-tight ${summary.overdue.length ? "text-red-700" : "text-slate-300"}`}>
+              {summary.overdue.length} ล็อต
+            </p>
+            <p className="text-[11px] text-red-600 truncate">
+              {summary.overdue.length ? summary.overdue.map(l => l.pi).join(" · ") : "— ไม่มี"}
+            </p>
+          </div>
+          <div className={`rounded-2xl px-3 py-2.5 border ${summary.noDate.length ? "bg-amber-50 border-amber-300" : "bg-white border-slate-200"}`}>
+            <p className={`text-[11px] font-bold uppercase tracking-wide ${summary.noDate.length ? "text-amber-600" : "text-slate-400"}`}>ไม่มีวันนัด</p>
+            <p className={`text-xl font-extrabold leading-tight ${summary.noDate.length ? "text-amber-700" : "text-slate-300"}`}>
+              {summary.noDate.length} ล็อต
+            </p>
+            <p className="text-[11px] text-amber-700 truncate">
+              {summary.noDate.length ? `${totalCars(summary.noDate)} คัน ยังไม่รู้จะไปรับวันไหน` : "— ตั้งครบแล้ว"}
+            </p>
+          </div>
+          <div className="bg-white border border-slate-200 rounded-2xl px-3 py-2.5">
+            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">ค้างนานสุด</p>
+            <p className="text-xl font-extrabold text-slate-800 leading-tight">
+              {summary.oldest?.days != null ? `${summary.oldest.days} วัน` : "—"}
+            </p>
+            <p className="text-[11px] text-slate-500 truncate">{summary.oldest?.pi ?? "— ไม่มีรถค้าง"}</p>
+          </div>
+        </div>
+
         {/* แท็บ 2 กลุ่ม — รอผลิตยังไปรับไม่ได้ จึงไม่ปนกัน */}
         <div className="flex items-center gap-2 mb-4 print:hidden">
           <button onClick={() => setTab("ready")}
@@ -203,7 +251,7 @@ export default function PickupReportPage() {
             {lots.map(l => {
               const t = tone(l);
               return (
-                <div key={l.pi} className={`rounded-2xl border p-4 ${t.bg}`}>
+                <div key={l.pi} data-lot={l.pi} className={`rounded-2xl border border-l-4 p-4 ${t.bg} ${t.bar}`}>
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">

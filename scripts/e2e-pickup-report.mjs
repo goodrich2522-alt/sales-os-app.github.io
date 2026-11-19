@@ -36,9 +36,15 @@ const mk = (id, pi, status, received) => ({
   vehicle_category: "Forklift", pi_no: pi, custom_fields: {},
 });
 // ล็อต A: ไปรับได้ 3 คัน ค้าง 60 วัน · ล็อต B: รอผลิต 2 คัน (ต้องแยกกลุ่ม)
+const older = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);  // ค้าง 120 วัน
+const fresh = new Date(Date.now() - 10 * 86400000).toISOString().slice(0, 10);   // ค้าง 10 วัน
+const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);    // นัดไว้เมื่อวาน = เลยนัด
 const forklifts = [
   mk("PK001", "LOT-A", "รอรับ", old), mk("PK002", "LOT-A", "รอรับ", old), mk("PK003", "LOT-A", "รอรับ", old),
   mk("PK004", "LOT-B", "สั่งผลิต", old), mk("PK005", "LOT-B", "สั่งผลิต", old),
+  // (19 พ.ย. 2569) เพิ่มเคสสำหรับแถบสรุป + ไฟสีตามอายุ
+  mk("PK006", "LOT-C", "รอรับ", older),                        // ค้างนานสุด 120 วัน · ไม่มีวันนัด
+  { ...mk("PK007", "LOT-D", "รอรับ", fresh), custom_fields: { "วันนัดรับ": yesterday } },  // เลยนัดแล้ว
 ];
 
 const writes = [];
@@ -78,17 +84,35 @@ await page.waitForTimeout(3000);
 
 const body = () => page.evaluate(() => document.body.innerText.replace(/\n+/g, " | "));
 const txt = await body();
-const readyTab = /ไปรับได้แล้ว \(3 คัน · 1 ล็อต\)/.test(txt);
+const readyTab = /ไปรับได้แล้ว \(5 คัน · 3 ล็อต\)/.test(txt);
 const makingTab = /รอผลิต \(2 คัน · 1 ล็อต\)/.test(txt);
-console.log("1) แยกกลุ่มถูก:", readyTab && makingTab ? "✓ ไปรับได้ 3 คัน · รอผลิต 2 คัน" : "✗ ผิด — " + txt.slice(0, 160));
+console.log("1) แยกกลุ่มถูก:", readyTab && makingTab ? "✓ ไปรับได้ 5 คัน · รอผลิต 2 คัน" : "✗ ผิด — " + txt.slice(0, 160));
 const lotA = /LOT-A/.test(txt) && !/LOT-B/.test(txt);
 console.log("2) แท็บแรกโชว์เฉพาะล็อตที่ไปรับได้:", lotA ? "✓ เห็น LOT-A ไม่เห็น LOT-B" : "✗ ปนกัน");
 const aged = /ค้าง (59|60|61) วัน/.test(txt);
 console.log("3) บอกอายุค้าง:", aged ? "✓ " + (/ค้าง \d+ วัน/.exec(txt) || [""])[0] : "✗ ไม่บอก");
 
+// ── (19 พ.ย. 2569) แถบสรุป + ไฟสีตามอายุ — ผู้ใช้ขอ "ดูง่าย ๆ เห็นภาพใน 3 วินาที" ──
+// ของเดิมอ่านได้แค่ยอดรวมจากปุ่มแท็บ ต้องเลื่อนดูเองว่าล็อตไหนเลยนัด/ไม่มีนัด/ค้างนานสุด
+const sumTotal = /ค้างรวม[\s\S]{0,40}?5 คัน[\s\S]{0,20}?3 ล็อต/.test(txt);
+console.log("5) แถบสรุป — ค้างรวม:", sumTotal ? "✓ 5 คัน · 3 ล็อต" : "✗ ไม่มีแถบสรุป หรือตัวเลขผิด");
+const sumOverdue = /เลยนัด[\s\S]{0,40}?1 ล็อต/.test(txt);
+console.log("6) แถบสรุป — เลยนัดแล้ว:", sumOverdue ? "✓ 1 ล็อต (LOT-D นัดไว้เมื่อวาน)" : "✗ ไม่ได้นับล็อตที่เลยวันนัด");
+const sumNoDate = /ไม่มีวันนัด[\s\S]{0,40}?2 ล็อต/.test(txt);
+console.log("7) แถบสรุป — ไม่มีวันนัด:", sumNoDate ? "✓ 2 ล็อต (LOT-A, LOT-C)" : "✗ ไม่ได้นับล็อตที่ยังไม่ตั้งวันนัด");
+const sumOldest = /ค้างนานสุด[\s\S]{0,60}?(119|120|121) วัน/.test(txt) && /ค้างนานสุด[\s\S]{0,80}?LOT-C/.test(txt);
+console.log("8) แถบสรุป — ค้างนานสุด:", sumOldest ? "✓ 120 วัน · LOT-C" : "✗ ไม่บอกว่าล็อตไหนค้างนานสุด");
+// เรียงล็อตค้างนานสุดขึ้นก่อน — ของเดิมเรียงตามชื่อล็อต ทำให้ของด่วนจมอยู่ล่าง
+// ⚠️ วัดลำดับจาก "การ์ดล็อตจริง" (data-lot) ไม่ใช่ข้อความทั้งหน้า —
+//    แถบสรุปเอ่ยชื่อล็อตที่เลยนัดไว้ด้านบน ทำให้ indexOf บนข้อความทั้งหน้าเพี้ยน
+const order = await page.evaluate(() => [...document.querySelectorAll("[data-lot]")].map(e => e.getAttribute("data-lot")));
+const sorted = JSON.stringify(order) === JSON.stringify(["LOT-C", "LOT-A", "LOT-D"]);
+console.log("9) เรียงค้างนานสุดขึ้นก่อน:", sorted ? "✓ LOT-C(120) → LOT-A(60) → LOT-D(10)" : `✗ ลำดับผิด: ${order.join(" → ")}`);
+
 // ตั้งวันนัดรับ → ต้องเขียนลงทั้ง 3 คันในล็อต
 let savedAll = false;
-const btn = page.getByRole("button", { name: "ตั้งวันนัดรับ" }).first();
+// เกาะที่ล็อต LOT-A โดยตรง (ล็อตการ์ดมี data-lot) — ของเดิมใช้ปุ่มแรก ซึ่งเปลี่ยนตามลำดับการเรียง
+const btn = page.locator('[data-lot="LOT-A"]').getByRole("button", { name: "ตั้งวันนัดรับ" }).first();
 if (await btn.count()) {
   await btn.click();
   await page.waitForTimeout(600);
@@ -107,4 +131,5 @@ if (await btn.count()) {
 }
 
 await browser.close(); srv.close();
-process.exitCode = (readyTab && makingTab && lotA && aged && savedAll) ? 0 : 1;
+process.exitCode = (readyTab && makingTab && lotA && aged && savedAll
+  && sumTotal && sumOverdue && sumNoDate && sumOldest && sorted) ? 0 : 1;
