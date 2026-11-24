@@ -728,6 +728,18 @@ export default function StockMain() {
   const hs = (v: unknown) => (v == null ? "" : String(v)).toLowerCase();
   // ฐานรุ่น = ตัด MAST ท้าย (M###/ZSM###/WS#) ออก → ค้น "CBS15J-M350" ให้เจอ CBS15J ทุก MAST
   const baseModel = (s: string) => s.replace(/[-\s]*(m\d+|zsm\d+|ws\d\w*)$/i, "").trim();
+  /**
+   * กุญแจเทียบเลข PI — ตัดขีด/เว้นวรรค/จุด และคำว่า "PI" ที่นำหน้าตัวเลขออก
+   * (24 พ.ย. 2569 · เจ้าของเจอเอง) ค้น "PI172" ได้ 0 คัน ทั้งที่รถมีอยู่จริง
+   * เพราะในฐานข้อมูลเก็บเลข PI ปนกันหลายรูปแบบ — เจอทั้ง "PI054" "PI-055" "C20726201-172"
+   * เทียบแบบตรงตัวจึงพลาด: "PI172" ≠ "PI-172" ≠ "172" ทั้งที่เป็นใบเดียวกัน
+   *   "PI-172"        → "172"
+   *   "C20726201-172" → "c20726201172"  (ไม่มี pi นำหน้า ไม่ตัด)
+   *   คำค้น "PI172" / "172" / "pi 172" → "172" ทั้งหมด → เจอทั้งสองแบบ
+   * ⚠️ ตัด "pi" เฉพาะตอนตามด้วยตัวเลข — ไม่งั้นค้นคำว่า "pi" เฉย ๆ จะกลายเป็นค่าว่าง = เจอทุกคัน
+   */
+  const piKey = (v: unknown) =>
+    (v == null ? "" : String(v)).toLowerCase().replace(/[^a-z0-9]/g, "").replace(/^pi(?=\d)/, "");
   const isAvailable = (s: unknown) => String(s ?? "") === "พร้อมขาย"; // "ยังเหลือในสต็อก"
   // สถานะที่แปลว่า "ขายไปแล้ว" — ใช้ตัดสินว่าควรมีชื่อเซลล์เจ้าของงานหรือยัง
   const SOLD_STATUS = ["ปิดการขายแล้ว", "ส่งมอบแล้ว", "ขายแล้ว"];
@@ -785,9 +797,13 @@ export default function StockMain() {
   const listFiltered = useMemo(() => {
     const q = listSearch.trim().toLowerCase();
     const qBase = baseModel(q); // ฐานรุ่นของคำค้น (ตัด MAST) → เจอทุก MAST ของรุ่นเดียวกัน
+    const qPi = piKey(q);       // คำค้นในรูปเลข PI ล้วน → เทียบข้ามรูปแบบที่เก็บไว้ไม่เหมือนกัน
     const rows = forklifts.filter(f => {
       const okQ = !q || hs(f.id).includes(q) || hs(f.SN).includes(q) || hs(f.brand).includes(q) || hs(f.model).includes(q) || hs(f.pi_no).includes(q)
-        || (qBase.length >= 3 && baseModel(hs(f.model)).includes(qBase));
+        || (qBase.length >= 3 && baseModel(hs(f.model)).includes(qBase))
+        // เทียบเลข PI แบบไม่สนขีด/เว้นวรรค — เพิ่มผลลัพธ์อย่างเดียว ของเดิมที่เคยเจอยังเจอเหมือนเดิม
+        // ขั้นต่ำ 2 ตัว กันคำค้นสั้น ๆ อย่าง "1" ไปแมตช์เลข PI ทุกใบ
+        || (qPi.length >= 2 && piKey(f.pi_no).includes(qPi));
       const okCat = listCat === "all" || (f.vehicle_category ?? "Forklift") === listCat;
       const okBrand = listBrand === "all" || (normBrand(f.brand) || "(ไม่ระบุ)") === listBrand;
       const okModel = listModel === "all" || f.model === listModel;
@@ -819,6 +835,43 @@ export default function StockMain() {
     else rows.sort(recent); // recent / remain (remain ใช้ในมุมมอง byModel)
     return rows;
   }, [forklifts, listSearch, listCat, listBrand, listModel, listMast, listFuel, listStatus, listSort, listNoCost, listBadModel, listNoWarranty, needWarrantySet, listNoDeal, noDealSet]);
+
+  // ── ตัวกรองที่เปิดอยู่ (ไม่นับคำค้น) ────────────────────────────────────
+  // (24 พ.ย. 2569) ค้นแล้วได้ 0 คัน จอบอกแค่ "ไม่พบรถตามเงื่อนไข" ไม่บอกว่าติดอะไร
+  // → เจ้าของเข้าใจว่ารถไม่มีในระบบ ทั้งที่แค่ตัวกรองสถานะค้างอยู่ที่ "พร้อมขาย"
+  const activeFilters = useMemo(() => {
+    const a: { label: string; clear: () => void }[] = [];
+    if (listStatus !== "all") a.push({ label: `สถานะ: ${listStatus}`, clear: () => setListStatus("all") });
+    if (listCat !== "all") a.push({ label: `ชนิด: ${VEHICLE_CATS.find(c => c.key === listCat)?.label ?? listCat}`, clear: () => setListCat("all") });
+    if (listBrand !== "all") a.push({ label: `ยี่ห้อ: ${listBrand}`, clear: () => setListBrand("all") });
+    if (listModel !== "all") a.push({ label: `รุ่น: ${listModel}`, clear: () => setListModel("all") });
+    if (listMast !== "all") a.push({ label: `เสา: ${listMast}`, clear: () => setListMast("all") });
+    if (listFuel !== "all") a.push({ label: `พลังงาน: ${listFuel}`, clear: () => setListFuel("all") });
+    if (listNoCost) a.push({ label: "ยังไม่มีทุน", clear: () => setListNoCost(false) });
+    if (listBadModel) a.push({ label: "ชื่อรุ่นน่าสงสัย", clear: () => setListBadModel(false) });
+    if (listNoWarranty) a.push({ label: "ยังไม่ลงรับประกัน", clear: () => setListNoWarranty(false) });
+    if (listNoDeal) a.push({ label: "ขายแล้วไม่มีใบขาย", clear: () => setListNoDeal(false) });
+    return a;
+  }, [listStatus, listCat, listBrand, listModel, listMast, listFuel, listNoCost, listBadModel, listNoWarranty, listNoDeal]);
+
+  const clearAllFilters = () => {
+    setListStatus("all"); setListCat("all"); setListBrand("all"); setListModel("all");
+    setListMast("all"); setListFuel("all");
+    setListNoCost(false); setListBadModel(false); setListNoWarranty(false); setListNoDeal(false);
+  };
+
+  /** ถ้าเอาตัวกรองออกหมด (เหลือแค่คำค้น) จะเจอกี่คัน — บอกผู้ใช้ว่ารถมีอยู่ แค่ถูกกรองทิ้ง */
+  const hitsIgnoringFilters = useMemo(() => {
+    const q = listSearch.trim().toLowerCase();
+    if (!q) return 0;
+    const qBase = baseModel(q), qPi = piKey(q);
+    return forklifts.filter(f =>
+      hs(f.id).includes(q) || hs(f.SN).includes(q) || hs(f.brand).includes(q)
+      || hs(f.model).includes(q) || hs(f.pi_no).includes(q)
+      || (qBase.length >= 3 && baseModel(hs(f.model)).includes(qBase))
+      || (qPi.length >= 2 && piKey(f.pi_no).includes(qPi))
+    ).length;
+  }, [forklifts, listSearch]);
 
   // รายการที่แสดงจริง (มุมมองรายคัน/ตาราง) — จำกัดตาม showCount กันโหลดพันแถวรวดเดียว
   const pagedList = showCount === Infinity ? listFiltered : listFiltered.slice(0, showCount);
@@ -1727,8 +1780,39 @@ export default function StockMain() {
                   </button>
                 </div>
               )}
+              {/* ศูนย์ผลลัพธ์ต้องอธิบายตัวเอง — บอกว่าติดตัวกรองอะไรอยู่ + ล้างได้ในคลิกเดียว
+                  (24 พ.ย. 2569) เดิมขึ้นแค่ "ไม่พบรถตามเงื่อนไข" เจ้าของค้น PI172 แล้วเข้าใจว่ารถไม่มีในระบบ
+                  ทั้งที่รถมีอยู่ แค่ตัวกรองสถานะค้างที่ "พร้อมขาย" (รถคันนั้นยังเป็น "สั่งผลิต") */}
               {listFiltered.length === 0 && (
-                <div className="text-center py-12 text-slate-400 text-sm">ไม่พบรถตามเงื่อนไข</div>
+                <div className="text-center py-12 px-4">
+                  <p className="text-slate-500 text-sm font-semibold">ไม่พบรถตามเงื่อนไข</p>
+                  {activeFilters.length > 0 ? (
+                    <>
+                      <p className="text-xs text-slate-400 mt-1.5">
+                        {listSearch.trim() && hitsIgnoringFilters > 0
+                          ? <>คำค้น &ldquo;{listSearch.trim()}&rdquo; มีรถตรงอยู่ <b className="text-amber-600">{hitsIgnoringFilters} คัน</b> แต่ถูกตัวกรองด้านล่างกรองออกหมด</>
+                          : <>มีตัวกรองเปิดอยู่ {activeFilters.length} ตัว</>}
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 justify-center mt-3">
+                        {activeFilters.map(f => (
+                          <button key={f.label} onClick={f.clear}
+                            title="กดเพื่อเอาตัวกรองนี้ออก"
+                            className="text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 px-2.5 py-1 rounded-lg transition-colors">
+                            {f.label} <span className="text-amber-500">✕</span>
+                          </button>
+                        ))}
+                      </div>
+                      <button onClick={clearAllFilters}
+                        className="mt-3 text-xs font-bold text-white bg-slate-600 hover:bg-slate-700 px-4 py-2 rounded-xl transition-colors active:scale-95">
+                        ล้างตัวกรองทั้งหมด
+                      </button>
+                    </>
+                  ) : (
+                    <p className="text-xs text-slate-400 mt-1.5">
+                      {listSearch.trim() ? <>ไม่มีรถที่ตรงกับ &ldquo;{listSearch.trim()}&rdquo; — ลองค้นด้วย SN หรือเลข PI สั้น ๆ เช่น &ldquo;172&rdquo;</> : "ยังไม่มีรถในสต็อก"}
+                    </p>
+                  )}
+                </div>
               )}
 
               {/* ── มุมมองค้างนาน (Aging) — พร้อมขาย เรียงค้างสต็อกนานสุดก่อน ── */}
