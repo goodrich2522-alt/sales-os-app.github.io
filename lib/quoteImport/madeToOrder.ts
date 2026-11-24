@@ -15,7 +15,9 @@ export const KD_LEAD_MAX_DAYS = 90;
  * อ่านจากใบได้แม่นกว่าใช้ค่าคงที่ — ไม่เจอค่อยตกไปใช้ KD_LEAD_MIN/MAX_DAYS
  */
 export function leadDaysFrom(text: string): { min: number; max: number } | undefined {
-  const m = text.match(/Delivery *:? *([0-9]{1,3}) *[-–—] *([0-9]{1,3}) *days?/i);
+  // (24 พ.ย. 2569 · ใบ C20726201-173KD) บางใบไม่ได้ขึ้นต้นด้วย "Delivery:"
+  // แต่เขียนว่า "will be ready in 75-90 days after confirm order" → ต้องอ่านได้เหมือนกัน
+  const m = text.match(/(?:Delivery *:?|ready in) *([0-9]{1,3}) *[-–—] *([0-9]{1,3}) *days?/i);
   if (!m) return undefined;
   const min = Number(m[1]), max = Number(m[2]);
   return min > 0 && max >= min && max <= 365 ? { min, max } : undefined;
