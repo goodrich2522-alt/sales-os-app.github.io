@@ -347,21 +347,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
 
     (async () => {
-      // โหลดจาก Google Sheets (ผ่าน GAS) ถ้าตั้งค่า NEXT_PUBLIC_GAS_URL ไว้
+      /**
+       * โหลด 2 ชั้น — อย่ารอให้ครบทุกตารางถึงจะยิงลงจอ (25 พ.ย. 2569)
+       *
+       * ที่มา: ผู้ใช้แจ้ง "กดเข้าหน้าแรกแล้วโหลด 1-2 นาที"
+       * เดิมเรียก api.bootstrap() ที่ดึง 4 ตารางพร้อมกันแล้วรอครบ → จอว่างนานเท่าตารางที่ช้าที่สุด
+       * ซึ่งคือ inspections เพราะรูปใบตรวจรับเป็น base64 อยู่ในแถว (ดูคำอธิบายใน lib/api.ts)
+       * ชั้นที่ 1 (รถ + ใบขาย + ตัวเลือกฟอร์ม) พอให้หน้าจอใช้งานได้ → โชว์เลย
+       * ชั้นที่ 2 (บันทึกรับรถ + ทะเบียนลูกค้า) ตามมาทีหลัง รูปหน้ารถจะโผล่เองภายหลัง
+       *
+       * ด่านตรวจ: scripts/e2e-first-paint.mjs
+       */
       if (api.apiEnabled) {
         try {
-          const data = await api.bootstrap();
+          const core = await api.bootstrapCore();
           if (cancelled) return;
-          setForklifts(data.forklifts ?? []);
-          setSales(data.sales ?? []);
-          setInspections((data.inspections ?? []) as InspectionRecord[]);
-          setDeletedInspections((data.deletedInspections ?? []) as DeletedInspectionRecord[]);
-          setCustomers(data.customers ?? []);
-          setFieldConfig({ ...DEFAULT_FIELD_CFG, ...(data.fieldConfig as Partial<FieldConfig>) });
-          setMounted(true);
+          setForklifts(core.forklifts ?? []);
+          setSales(core.sales ?? []);
+          setFieldConfig({ ...DEFAULT_FIELD_CFG, ...(core.fieldConfig as Partial<FieldConfig>) });
+          setMounted(true);                  // ← จอใช้งานได้ตั้งแต่ตรงนี้
+          // ชั้นที่ 2 — ล้มก็ไม่เป็นไร จอยังใช้งานได้ แค่ไม่มีรูป/ทะเบียนลูกค้า
+          api.bootstrapRest().then(rest => {
+            if (cancelled) return;
+            setInspections((rest.inspections ?? []) as InspectionRecord[]);
+            setDeletedInspections((rest.deletedInspections ?? []) as DeletedInspectionRecord[]);
+            setCustomers(rest.customers ?? []);
+          }).catch(e => console.warn("โหลดบันทึกรับรถ/ทะเบียนลูกค้าไม่สำเร็จ", e));
           return;
         } catch (e) {
-          console.warn("โหลดข้อมูลจาก Google Sheets ไม่สำเร็จ — ใช้ข้อมูลในเครื่องแทน", e);
+          console.warn("โหลดข้อมูลจากฐานข้อมูลไม่สำเร็จ — ใช้ข้อมูลในเครื่องแทน", e);
         }
       }
       if (cancelled) return;
@@ -384,20 +398,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let lastPull = Date.now();                 // เพิ่งโหลดตอนเปิดหน้า
 
-    const pull = async () => {
+    /**
+     * ตาข่ายกันพลาด — ปกติดึงแค่ "ชั้นที่ 1" (รถ + ใบขาย) (25 พ.ย. 2569)
+     * ลากรูปใบตรวจรับ (base64 ในแถว) มาใหม่ทุก 5 นาทีคือสาเหตุเดิมที่ทำดาต้าขาออกทะลุโควตา
+     * จนโปรเจกต์ถูกระงับทั้งโปรเจกต์ (14 ก.ย. 2569) — ชั้นที่ 2 พึ่ง realtime เป็นหลัก
+     */
+    const pull = async (withRest = false) => {
       lastPull = Date.now();
       try {
-        const data = await api.bootstrap();
-        setForklifts(data.forklifts ?? []);
-        setSales(data.sales ?? []);
-        setInspections((data.inspections ?? []) as InspectionRecord[]);
-        setDeletedInspections((data.deletedInspections ?? []) as DeletedInspectionRecord[]);
-        setCustomers(data.customers ?? []);
+        const core = await api.bootstrapCore();
+        setForklifts(core.forklifts ?? []);
+        setSales(core.sales ?? []);
         // ไม่อัปเดต fieldConfig จาก realtime — กัน loop การเซฟกลับ
+        if (!withRest) return;
+        const rest = await api.bootstrapRest();
+        setInspections((rest.inspections ?? []) as InspectionRecord[]);
+        setDeletedInspections((rest.deletedInspections ?? []) as DeletedInspectionRecord[]);
+        setCustomers(rest.customers ?? []);
       } catch (e) { console.warn("realtime pull", e); }
     };
     // สำรอง: payload ไม่มีข้อมูลแถว (RLS กรอง/ผิดรูปแบบ) → ค่อยโหลดทั้งหมด แบบรวบหลาย event เป็นครั้งเดียว
-    const fullPullSoon = () => { clearTimeout(timer); timer = setTimeout(pull, 1500); };
+    const fullPullSoon = () => { clearTimeout(timer); timer = setTimeout(() => pull(true), 1500); };
 
     // ── อัปเดตเฉพาะแถวที่เปลี่ยน (แทนการโหลดทั้งตาราง) ──
     type Row = Record<string, unknown> & { id?: unknown };
@@ -458,11 +479,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const isAnonTransporter = typeof window !== "undefined" && window.location.pathname.includes("/transporter");
     const POLL_MS = isAnonTransporter ? 2 * 60_000 : 5 * 60_000;
     const MIN_GAP_MS = 60_000;                 // กลับมาที่แท็บ: ดึงสดได้ แต่ห่างจากครั้งก่อนอย่างน้อย 1 นาที
+    // หน้าผู้ขนส่งไม่มี realtime (anon · RLS) → ต้องดึงชั้นที่ 2 ทุกรอบ
+    // หน้าอื่นมี realtime อยู่แล้ว → ดึงชั้นที่ 2 เป็นตาข่ายห่าง ๆ ทุก ~30 นาที
+    let tick = 0;
+    const REST_EVERY = isAnonTransporter ? 1 : Math.round((30 * 60_000) / POLL_MS);
     const onVisible = () => {
-      if (document.visibilityState === "visible" && Date.now() - lastPull > MIN_GAP_MS) pull();
+      if (document.visibilityState === "visible" && Date.now() - lastPull > MIN_GAP_MS) pull(isAnonTransporter);
     };
     document.addEventListener("visibilitychange", onVisible);
-    const id = setInterval(() => { if (document.visibilityState === "visible") pull(); }, POLL_MS);
+    const id = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      tick++;
+      pull(tick % REST_EVERY === 0);
+    }, POLL_MS);
 
     return () => {
       if (channel) supabase?.removeChannel(channel);

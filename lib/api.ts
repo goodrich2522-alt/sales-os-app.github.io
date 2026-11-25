@@ -19,6 +19,22 @@ export interface BootstrapData {
   fieldConfig: Record<string, unknown>;
 }
 
+/**
+ * ── โหลด 2 ชั้น: "ชั้นแรกที่ต้องเห็นก่อน" กับ "ที่เหลือตามมา" (25 พ.ย. 2569) ──
+ *
+ * ที่มา: ผู้ใช้แจ้ง "กดเข้าหน้าแรกแล้วโหลด 1-2 นาที"
+ * เดิมดึง 4 ตารางพร้อมกันแล้วรอให้ครบทุกตารางถึงจะยิงลงจอ → จอว่างนานเท่าตารางที่ช้าที่สุด
+ * ตารางที่ช้าที่สุดคือ inspections เพราะรูปใบตรวจรับเก็บเป็น base64 อยู่ในแถว
+ * (images + image_slots · ไม่ได้ตั้งค่า GAS_URL จึงอัปขึ้นที่เก็บไฟล์ไม่ได้ เก็บทับกัน 2 ที่ด้วย)
+ * แต่หน้าสต็อก/หน้าขายต้องมีแค่ "รถ + ใบขาย" ก็ใช้งานได้แล้ว
+ * รูปใช้แค่โชว์รูปหน้ารถบนการ์ดกับในหน้าต่างรายละเอียด = รอได้
+ *
+ * ด่านตรวจ: scripts/e2e-first-paint.mjs (หน่วง inspections/customers ไว้ 8 วิ
+ *           แล้วบังคับว่ารายการรถต้องขึ้นก่อน และข้อมูลต้องครบหลังตารางช้ามาถึง)
+ */
+export type BootstrapCore = Pick<BootstrapData, "forklifts" | "sales" | "fieldConfig">;
+export type BootstrapRest = Pick<BootstrapData, "inspections" | "deletedInspections" | "customers">;
+
 function sb() {
   if (!supabase) throw new Error("Supabase ยังไม่ถูกตั้งค่า (NEXT_PUBLIC_SUPABASE_URL/ANON_KEY)");
   return supabase;
@@ -48,21 +64,8 @@ async function fetchAllRpc(fn: string): Promise<Record<string, unknown>[]> {
   return out;
 }
 
-/** โหลดข้อมูลผ่าน RPC เฉพาะที่ผู้ขนส่งจำเป็นต้องใช้ (ไม่มีราคาทุน/ข้อมูลลูกค้า) */
-async function bootstrapTransporter(): Promise<BootstrapData> {
-  const [fk, ins] = await Promise.all([
-    fetchAllRpc("transporter_stock"),
-    fetchAllRpc("transporter_inspections"),
-  ]);
-  return {
-    forklifts: fk as unknown as Forklift[],
-    sales: [],                                   // ผู้ขนส่งไม่มีสิทธิ์เห็นดีลขาย
-    inspections: ins as unknown as InspectionRecord[],
-    deletedInspections: [],
-    customers: [],                               // ผู้ขนส่งไม่เห็นข้อมูลลูกค้า
-    fieldConfig: {},                             // ใช้ค่าเริ่มต้นในเครื่องแทน
-  };
-}
+// โหมดผู้ขนส่ง: โหลดผ่าน RPC เฉพาะที่จำเป็น (ไม่มีราคาทุน · ไม่มีดีลขาย · ไม่มีข้อมูลลูกค้า)
+// ตัวเลือกฟอร์มใช้ค่าเริ่มต้นในเครื่องแทน — ดู bootstrapCore / bootstrapRest
 
 // ดึงทุกแถวของตาราง — Supabase/PostgREST คืนสูงสุด 1000 แถว/ครั้ง → วนดึงทีละ 1000 จนครบ
 // (เดิมใช้ .limit(20000) แต่ถูก cap ที่ 1000 ทำให้รถเกิน 1000 คันหายไป)
@@ -170,31 +173,53 @@ async function fetchAllRows(table: string, select = "*"): Promise<Record<string,
   return out;
 }
 
-// ── อ่านข้อมูลทั้งหมดครั้งเดียว ──────────────────────────────────────────────
-export async function bootstrap(): Promise<BootstrapData> {
-  if (isTransporterMode()) return bootstrapTransporter();
+/** แยกบันทึกรับรถที่ยังอยู่ ออกจากที่ถูกลบ (soft delete) */
+function splitInspections(rows: Record<string, unknown>[]): Pick<BootstrapRest, "inspections" | "deletedInspections"> {
+  const all = rows as unknown as (InspectionRecord & { deleted_at?: string | null })[];
+  return {
+    inspections: all.filter(r => !r.deleted_at) as InspectionRecord[],
+    deletedInspections: all.filter(r => r.deleted_at)
+      .map(r => ({ ...r, deletedAt: r.deleted_at as string })) as DeletedInspectionRecord[],
+  };
+}
+
+// ── ชั้นที่ 1 · รถ + ใบขาย + ตัวเลือกฟอร์ม — มีเท่านี้หน้าจอใช้งานได้แล้ว ───────
+export async function bootstrapCore(): Promise<BootstrapCore> {
+  if (isTransporterMode()) {
+    return { forklifts: (await fetchAllRpc("transporter_stock")) as unknown as Forklift[], sales: [], fieldConfig: {} };
+  }
   const c = sb();
-  const [fkRows, slRows, insRows, custRows, cfg] = await Promise.all([
+  const [fkRows, slRows, cfg] = await Promise.all([
     fetchAllRows("forklifts"),
     fetchAllRows("sales", SALE_COLUMNS),   // ไม่เอารูปสลิป — ดู SALE_COLUMNS
-    fetchAllRows("inspections"),
-    fetchAllRows("customers"),
     c.from("app_config").select("data").eq("id", 1).maybeSingle(),
   ]);
-  const fk = { data: fkRows as unknown as Forklift[] };
-  // ดึง add_ons / freebie / shipping_cost กลับออกมาจาก custom_fields (ดู saleFromRow)
-  const sl = { data: (slRows as unknown as Sale[]).map(saleFromRow) };
-  const insAll = insRows as unknown as (InspectionRecord & { deleted_at?: string | null })[];
-  const active = insAll.filter(r => !r.deleted_at) as InspectionRecord[];
-  const deleted = insAll.filter(r => r.deleted_at).map(r => ({ ...r, deletedAt: r.deleted_at as string })) as DeletedInspectionRecord[];
   return {
-    forklifts: (fk.data ?? []) as Forklift[],
-    sales: (sl.data ?? []) as Sale[],
-    inspections: active,
-    deletedInspections: deleted,
-    customers: (custRows as unknown as Customer[]) ?? [],
+    forklifts: (fkRows as unknown as Forklift[]) ?? [],
+    // ดึง add_ons / freebie / shipping_cost กลับออกมาจาก custom_fields (ดู saleFromRow)
+    sales: (slRows as unknown as Sale[]).map(saleFromRow),
     fieldConfig: ((cfg.data as { data?: Record<string, unknown> } | null)?.data) ?? {},
   };
+}
+
+// ── ชั้นที่ 2 · บันทึกรับรถ (มีรูป = ก้อนใหญ่สุด) + ทะเบียนลูกค้า ─────────────
+export async function bootstrapRest(): Promise<BootstrapRest> {
+  if (isTransporterMode()) {
+    // ผู้ขนส่งไม่เห็นข้อมูลลูกค้า
+    return { ...splitInspections(await fetchAllRpc("transporter_inspections")), customers: [] };
+  }
+  const [insRows, custRows] = await Promise.all([
+    fetchAllRows("inspections"),
+    fetchAllRows("customers"),
+  ]);
+  return { ...splitInspections(insRows), customers: (custRows as unknown as Customer[]) ?? [] };
+}
+
+// ── อ่านข้อมูลทั้งหมดครั้งเดียว (ปุ่มรีเฟรช / นำเข้า-ส่งออก) ────────────────────
+// ตอนเปิดแอป **ห้ามใช้ตัวนี้** — ใช้ bootstrapCore แล้วค่อย bootstrapRest ตามหลัง
+export async function bootstrap(): Promise<BootstrapData> {
+  const [core, rest] = await Promise.all([bootstrapCore(), bootstrapRest()]);
+  return { ...core, ...rest };
 }
 
 // ── Customer (ทะเบียนลูกค้า — เฟส 3) ──────────────────────────────────────────
