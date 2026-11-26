@@ -740,6 +740,39 @@ export default function StockMain() {
    */
   const piKey = (v: unknown) =>
     (v == null ? "" : String(v)).toLowerCase().replace(/[^a-z0-9]/g, "").replace(/^pi(?=\d)/, "");
+  /**
+   * ── ค้นด้วยชื่อลูกค้า/บริษัท (26 พ.ย. 2569 · ผู้ใช้สั่ง) ──
+   * "รถที่ขายไปแล้ว อยากให้ค้นด้วยชื่อบริษัทลูกค้าก็เจอ"
+   * ชื่อลูกค้าอยู่ใน "ใบขาย" ไม่ได้อยู่ในแถวรถ → ทำดัชนี รหัสรถ/SN → ชื่อลูกค้า ไว้ก่อน
+   * เก็บ "ทุกใบ" ของรถคันนั้น ไม่ใช่ใบล่าสุดใบเดียว (รถที่ขาย-คืน-ขายใหม่ ต้องค้นเจอทั้งสองราย)
+   */
+  const nameKey = (v: unknown) =>
+    String(v ?? "").toLowerCase().replace(/[\s.,\-_()/\\"'’·]/g, "");
+  const custIndex = useMemo(() => {
+    const m = new Map<string, string>();
+    const add = (k: unknown, name: string) => {
+      const key = String(k ?? "").trim().toUpperCase();
+      if (!key) return;
+      m.set(key, (m.get(key) ?? "") + " " + name);
+    };
+    for (const s of sales) {
+      const name = String(s.customer_name ?? "").trim().toLowerCase();
+      if (!name) continue;
+      add(s.forklift_id, name);
+      add(s.forklift_unit_no, name);
+    }
+    return m;
+  }, [sales]);
+  /** ชื่อลูกค้าทั้งหมดของรถคันนี้ (ตัวพิมพ์เล็กแล้ว) — ว่าง = ยังไม่มีใบขาย */
+  const custNamesOf = (f: { id?: string; SN?: string }) =>
+    (custIndex.get(String(f.id ?? "").trim().toUpperCase()) ?? "")
+    + (custIndex.get(String(f.SN ?? "").trim().toUpperCase()) ?? "");
+  /** คำค้นตรงกับชื่อลูกค้าไหม — เทียบทั้งตรงตัว และแบบตัดเว้นวรรค/จุด (บจก.ทิสโก้ = บจก. ทิสโก้) */
+  const custHit = (f: { id?: string; SN?: string }, q: string, qName: string) => {
+    if (q.length < 2) return false;            // คำค้นสั้นเกินไป = แมตช์มั่ว
+    const blob = custNamesOf(f);
+    return !!blob && (blob.includes(q) || (qName.length >= 2 && nameKey(blob).includes(qName)));
+  };
   const isAvailable = (s: unknown) => String(s ?? "") === "พร้อมขาย"; // "ยังเหลือในสต็อก"
   // สถานะที่แปลว่า "ขายไปแล้ว" — ใช้ตัดสินว่าควรมีชื่อเซลล์เจ้าของงานหรือยัง
   const SOLD_STATUS = ["ปิดการขายแล้ว", "ส่งมอบแล้ว", "ขายแล้ว"];
@@ -798,12 +831,15 @@ export default function StockMain() {
     const q = listSearch.trim().toLowerCase();
     const qBase = baseModel(q); // ฐานรุ่นของคำค้น (ตัด MAST) → เจอทุก MAST ของรุ่นเดียวกัน
     const qPi = piKey(q);       // คำค้นในรูปเลข PI ล้วน → เทียบข้ามรูปแบบที่เก็บไว้ไม่เหมือนกัน
+    const qName = nameKey(q);   // คำค้นแบบตัดเว้นวรรค/จุด → เทียบกับชื่อลูกค้า
     const rows = forklifts.filter(f => {
       const okQ = !q || hs(f.id).includes(q) || hs(f.SN).includes(q) || hs(f.brand).includes(q) || hs(f.model).includes(q) || hs(f.pi_no).includes(q)
         || (qBase.length >= 3 && baseModel(hs(f.model)).includes(qBase))
         // เทียบเลข PI แบบไม่สนขีด/เว้นวรรค — เพิ่มผลลัพธ์อย่างเดียว ของเดิมที่เคยเจอยังเจอเหมือนเดิม
         // ขั้นต่ำ 2 ตัว กันคำค้นสั้น ๆ อย่าง "1" ไปแมตช์เลข PI ทุกใบ
-        || (qPi.length >= 2 && piKey(f.pi_no).includes(qPi));
+        || (qPi.length >= 2 && piKey(f.pi_no).includes(qPi))
+        // ชื่อลูกค้า/บริษัทจากใบขาย — รถที่ขายไปแล้วต้องค้นด้วยชื่อลูกค้าได้
+        || custHit(f, q, qName);
       const okCat = listCat === "all" || (f.vehicle_category ?? "Forklift") === listCat;
       const okBrand = listBrand === "all" || (normBrand(f.brand) || "(ไม่ระบุ)") === listBrand;
       const okModel = listModel === "all" || f.model === listModel;
@@ -834,7 +870,8 @@ export default function StockMain() {
     }
     else rows.sort(recent); // recent / remain (remain ใช้ในมุมมอง byModel)
     return rows;
-  }, [forklifts, listSearch, listCat, listBrand, listModel, listMast, listFuel, listStatus, listSort, listNoCost, listBadModel, listNoWarranty, needWarrantySet, listNoDeal, noDealSet]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forklifts, listSearch, listCat, listBrand, listModel, listMast, listFuel, listStatus, listSort, listNoCost, listBadModel, listNoWarranty, needWarrantySet, listNoDeal, noDealSet, custIndex]);
 
   // ── ตัวกรองที่เปิดอยู่ (ไม่นับคำค้น) ────────────────────────────────────
   // (24 พ.ย. 2569) ค้นแล้วได้ 0 คัน จอบอกแค่ "ไม่พบรถตามเงื่อนไข" ไม่บอกว่าติดอะไร
@@ -864,14 +901,16 @@ export default function StockMain() {
   const hitsIgnoringFilters = useMemo(() => {
     const q = listSearch.trim().toLowerCase();
     if (!q) return 0;
-    const qBase = baseModel(q), qPi = piKey(q);
+    const qBase = baseModel(q), qPi = piKey(q), qName = nameKey(q);
     return forklifts.filter(f =>
       hs(f.id).includes(q) || hs(f.SN).includes(q) || hs(f.brand).includes(q)
       || hs(f.model).includes(q) || hs(f.pi_no).includes(q)
       || (qBase.length >= 3 && baseModel(hs(f.model)).includes(qBase))
       || (qPi.length >= 2 && piKey(f.pi_no).includes(qPi))
+      || custHit(f, q, qName)
     ).length;
-  }, [forklifts, listSearch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forklifts, listSearch, custIndex]);
 
   // รายการที่แสดงจริง (มุมมองรายคัน/ตาราง) — จำกัดตาม showCount กันโหลดพันแถวรวดเดียว
   const pagedList = showCount === Infinity ? listFiltered : listFiltered.slice(0, showCount);
@@ -1642,7 +1681,7 @@ export default function StockMain() {
               </div>
               {/* ค้นหา */}
               <input value={listSearch} onChange={e => setListSearch(e.target.value)}
-                placeholder="ค้นหา SN / ยี่ห้อ / รุ่น / PI..."
+                placeholder="ค้นหา SN / ยี่ห้อ / รุ่น / PI / ชื่อลูกค้า..."
                 className="w-full border border-slate-200 rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white text-slate-800 placeholder:text-slate-400" />
               {/* แท็กกรอง: ชนิดสินค้า */}
               <div className="flex items-center gap-1.5 flex-wrap">
@@ -1983,6 +2022,12 @@ export default function StockMain() {
                       item.height ? `สูง ${item.height}` : "",
                       item.location,
                     ].filter(Boolean).join(" · ") || "—"}</p>
+                    {/* ค้นหาอยู่ → โชว์ชื่อลูกค้าด้วย จะได้รู้ว่าคันนี้โผล่มาเพราะอะไร (26 พ.ย. 2569) */}
+                    {listSearch.trim() && dealOf(item)?.customer_name && (
+                      <p className="text-[11px] text-indigo-600 mt-0.5 flex items-center gap-1 truncate" title="ลูกค้าจากใบขาย">
+                        <User className="w-3 h-3 flex-shrink-0" />{dealOf(item)!.customer_name}
+                      </p>
+                    )}
                     {fmtAdded(item.created_at) && (
                       <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1"><Clock className="w-3 h-3 flex-shrink-0" />เติมเมื่อ {fmtAdded(item.created_at)}</p>
                     )}

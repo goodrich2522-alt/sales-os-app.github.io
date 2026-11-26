@@ -498,13 +498,35 @@ export default function SalesMain() {
 
   // ── ดีลที่ปิดแล้วแต่ยังไม่ลงข้อมูลรับประกัน → ค่าคอมยังไม่ออก (บังคับตั้งแต่ ส.ค. 69) ──
   const WARRANTY_GATE_FROM = "2026-08";
+  const NO_STAFF = "(ไม่มีชื่อเซลล์)";     // ดีลที่ไม่ได้กรอกชื่อเซลล์ — ต้องเห็นด้วย ไม่ใช่ซ่อน
   const blockedDeals = useMemo(() => mySales.filter(s => {
     if (!isClosedSale(s) || closeMonth(s) < WARRANTY_GATE_FROM) return false;
     const fk = forklifts.find(f => f.id === s.forklift_id);
     return !warrantyFilled(fk);
   }), [mySales, forklifts]);
+  /**
+   * ── แยกดีลที่ค้างตาม "เจ้าของเซลล์" (26 พ.ย. 2569 · ผู้ใช้สั่ง) ──
+   * แอดมินเห็นรวมเป็นก้อนเดียว ("มี 32 ดีลยังไม่ลงข้อมูลรับประกัน") แต่ไม่รู้ว่าต้องไปตามใคร
+   * จัดกลุ่มด้วย "ชื่อจริง" (canonicalStaff) กันคนเดียวกันแตกเป็นหลายชื่อเพราะชื่อเล่น
+   * เรียงคนที่ค้างเยอะสุดขึ้นก่อน — ตามคนนั้นก่อนคุ้มที่สุด
+   */
+  const blockedByStaff = useMemo(() => {
+    const m = new Map<string, Sale[]>();
+    for (const s of blockedDeals) {
+      const name = canonicalStaff(s.sales_staff, fieldConfig.staffAliases) || NO_STAFF;
+      m.set(name, [...(m.get(name) ?? []), s]);
+    }
+    return [...m.entries()]
+      .map(([name, deals]) => ({ name, deals }))
+      .sort((a, b) => b.deals.length - a.deals.length || a.name.localeCompare(b.name, "th"));
+  }, [blockedDeals, fieldConfig.staffAliases]);
   const [warnDismissed, setWarnDismissed] = useState(false);
+  const [warnStaff, setWarnStaff] = useState("");      // "" = ดูของทุกคน
+  // เลือกเซลล์ไว้แล้วเขาลงข้อมูลครบ (กลุ่มหายไป) → ถอยกลับไปโชว์ของทุกคน ไม่ใช่โชว์จอว่าง
+  const warnList = blockedByStaff.find(g => g.name === warnStaff)?.deals ?? blockedDeals;
   const showWarnPopup = !warnDismissed && blockedDeals.length > 0;
+  /** เปิดป๊อปอัพพร้อมเลือกเซลล์คนนั้น (ว่าง = ทุกคน) */
+  const openWarn = (staff: string) => { setWarnStaff(staff); setWarnDismissed(false); };
 
   // ส่งออกรายงานการขายของเซลล์คนนี้เป็นไฟล์ Excel (.xlsx) — โหลด xlsx ตอนกดเท่านั้น
   const exportMySalesExcel = async () => {
@@ -1208,15 +1230,30 @@ export default function SalesMain() {
         )}
         {/* แถบเตือนค้าง (ปิดไม่ได้) — เตือนไปเรื่อยๆ จนกว่าจะลงข้อมูลรับประกันครบ · หายเองเมื่อครบ */}
         {blockedDeals.length > 0 && (
-          <button onClick={() => setWarnDismissed(false)}
-            className="flex items-center gap-3 bg-red-50 border border-red-300 rounded-2xl px-4 py-3 text-left hover:bg-red-100 transition-colors animate-pulse">
-            <span className="text-2xl flex-shrink-0">⚠️</span>
-            <span className="flex-1 min-w-0">
-              <span className="font-bold text-red-700 text-sm block">มี {blockedDeals.length} ดีลยังไม่ลงข้อมูลรับประกัน · ค่าคอมยังไม่ออก</span>
-              <span className="text-xs text-red-600">แตะเพื่อลงข้อมูลให้ครบ — แถบนี้จะหายเองเมื่อลงครบทุกดีล</span>
-            </span>
-            <span className="text-xs font-bold text-white bg-red-600 rounded-lg px-3 py-1.5 flex-shrink-0 whitespace-nowrap">ลงข้อมูล</span>
-          </button>
+          <div className="bg-red-50 border border-red-300 rounded-2xl px-4 py-3 flex flex-col gap-2">
+            <button onClick={() => openWarn("")}
+              className="flex items-center gap-3 text-left w-full hover:opacity-80 transition-opacity">
+              <span className="text-2xl flex-shrink-0">⚠️</span>
+              <span className="flex-1 min-w-0">
+                <span className="font-bold text-red-700 text-sm block">มี {blockedDeals.length} ดีลยังไม่ลงข้อมูลรับประกัน · ค่าคอมยังไม่ออก</span>
+                <span className="text-xs text-red-600">แตะเพื่อลงข้อมูลให้ครบ — แถบนี้จะหายเองเมื่อลงครบทุกดีล</span>
+              </span>
+              <span className="text-xs font-bold text-white bg-red-600 rounded-lg px-3 py-1.5 flex-shrink-0 whitespace-nowrap">ลงข้อมูล</span>
+            </button>
+            {/* แยกตามเจ้าของเซลล์ — เห็นทันทีว่าต้องไปตามใคร · แตะชื่อ = เปิดเฉพาะดีลของคนนั้น */}
+            {blockedByStaff.length > 1 && (
+              <div className="flex flex-wrap items-center gap-1.5 border-t border-red-200 pt-2">
+                <span className="text-[11px] font-bold text-red-700 flex-shrink-0">ค้างอยู่ที่:</span>
+                {blockedByStaff.map(g => (
+                  <button key={g.name} onClick={() => openWarn(g.name)}
+                    title={`ดู ${g.deals.length} ดีลของ ${g.name}`}
+                    className="text-xs font-semibold text-red-700 bg-white border border-red-200 hover:bg-red-100 hover:border-red-400 rounded-lg px-2 py-1 transition-colors">
+                    {g.name} <b className="text-red-600">{g.deals.length}</b>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         {/* ── รถถึงคลังแล้วแต่ดีลยังไม่ปิด (25 ก.ย. 2569 · ผู้ใช้สั่งให้เตือน) ── */}
         {/* รถรับเข้าคลังนานแล้วแต่ดีลยังค้างจอง/มัดจำ → ยอดขายและค่าคอมยังไม่เข้าเดือนไหนเลย */}
@@ -2210,15 +2247,33 @@ export default function SalesMain() {
                 <p className="text-xs text-slate-500 mt-0.5">มี <b className="text-red-600">{blockedDeals.length} ดีล</b> ที่ยังไม่ลงข้อมูล<b>รับประกัน/บริการหลังการขาย</b> — ต้องลงให้ครบก่อน ค่าคอมถึงจะออก</p>
               </div>
             </div>
+            {/* เลือกดูเฉพาะของเซลล์คนเดียว — ตามทีละคนได้ ไม่ต้องไล่ทั้งกอง */}
+            {blockedByStaff.length > 1 && (
+              <div className="flex flex-wrap gap-1.5">
+                <button onClick={() => setWarnStaff("")}
+                  className={`text-xs font-bold rounded-lg px-2.5 py-1 border transition-colors ${warnStaff === "" ? "bg-red-600 text-white border-red-600" : "text-slate-600 bg-white border-slate-200 hover:bg-slate-50"}`}>
+                  ทุกเซลล์ {blockedDeals.length}
+                </button>
+                {blockedByStaff.map(g => (
+                  <button key={g.name} onClick={() => setWarnStaff(g.name)}
+                    className={`text-xs font-bold rounded-lg px-2.5 py-1 border transition-colors ${warnStaff === g.name ? "bg-red-600 text-white border-red-600" : "text-slate-600 bg-white border-slate-200 hover:bg-slate-50"}`}>
+                    {g.name} {g.deals.length}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="flex flex-col gap-2 max-h-64 overflow-y-auto">
-              {blockedDeals.map(s => {
+              {warnList.map(s => {
                 const fk = forklifts.find(f => f.id === s.forklift_id);
+                const staff = canonicalStaff(s.sales_staff, fieldConfig.staffAliases) || NO_STAFF;
                 return (
                   <button key={s.id} onClick={() => { setWarnDismissed(true); setDetailSale(s); }}
                     className="flex items-center justify-between gap-2 border border-red-200 bg-red-50 hover:bg-red-100 rounded-xl px-3 py-2.5 text-left transition-colors">
                     <span className="min-w-0 flex-1">
                       <span className="font-semibold text-slate-800 text-sm block truncate">{fk?.brand || s.forklift_brand} {fk?.model || s.forklift_model}</span>
-                      <span className="text-[11px] text-slate-500">{s.customer_name || "—"}{s.delivery_date ? ` · ปิด ${s.delivery_date}` : ""}</span>
+                      <span className="text-[11px] text-slate-500 block truncate">{s.customer_name || "—"}{s.delivery_date ? ` · ปิด ${s.delivery_date}` : ""}</span>
+                      {/* ชื่อเจ้าของเซลล์ — แอดมินจะได้รู้ว่าดีลนี้ของใคร */}
+                      <span className="text-[11px] font-semibold text-violet-700">เซลล์: {staff}</span>
                     </span>
                     <span className="text-xs font-bold text-red-600 flex-shrink-0 whitespace-nowrap">ลงข้อมูล →</span>
                   </button>

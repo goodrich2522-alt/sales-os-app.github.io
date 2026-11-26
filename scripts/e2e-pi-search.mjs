@@ -9,12 +9,18 @@
 //   ชั้นที่ 2 — ตัวกรองสถานะค้างอยู่ที่ "พร้อมขาย" แต่จอบอกแค่ "ไม่พบรถตามเงื่อนไข"
 //              ไม่บอกว่าติดตัวกรองตัวไหน → เข้าใจว่าไม่มีรถคันนี้ในระบบ
 //
-// ตรวจ 5 ข้อ:
+// เพิ่ม (26 พ.ย. 2569 · ผู้ใช้สั่ง): "รถที่ขายไปแล้ว อยากให้ค้นด้วยชื่อบริษัทลูกค้าก็เจอ"
+// ชื่อลูกค้าอยู่ในใบขาย ไม่ได้อยู่ในแถวรถ — ช่องค้นหาเดิมจึงหาไม่เจอเลย
+//
+// ตรวจ 8 ข้อ:
 //   1) ค้น "PI172"        → เจอรถที่เก็บเป็น "PI-172"
 //   2) ค้น "172"          → เจอทั้ง "PI-172" และ "C20726201-172"
 //   3) ค้น "pi 172"       → เจอ (เว้นวรรค/ตัวพิมพ์เล็กก็ต้องได้)
 //   4) ค้นเลขที่ไม่มีจริง  → ต้องไม่เจอ (กันแก้แบบ "จับทุกอย่าง")
 //   5) ผลลัพธ์ 0 ตอนมีตัวกรองเปิดอยู่ → ต้องบอกว่าติดตัวกรองอะไร + มีปุ่มล้างตัวกรอง
+//   6) ค้นชื่อบริษัทลูกค้า → เจอรถที่ขายให้เจ้านั้น (ทั้งใบที่ผูกด้วยรหัสรถและผูกด้วย SN)
+//   7) ค้นชื่อแบบเว้นวรรคไม่ตรง ("บจก.ทิสโก้" vs "บจก. ทิสโก้") → ต้องเจอเหมือนกัน
+//   8) ค้นชื่อลูกค้าที่ไม่มีจริง → ต้องไม่เจอ (กันจับกว้างเกิน)
 //
 // รัน: npm run build แล้ว SB_URL=<supabase url> node scripts/e2e-pi-search.mjs
 // ไม่แตะฐานข้อมูลจริง — ดัก request ไป Supabase แล้วตอบเอง
@@ -47,10 +53,29 @@ const mk = (sn, pi, status) => ({
 const SN_DASH = "010253R7514";   // เก็บเป็น "PI-172"            ← ค้น "PI172" ต้องเจอ
 const SN_FULL = "010253R7515";   // เก็บเป็น "C20726201-172"      ← ค้น "172" ต้องเจอ
 const SN_OTHER = "010253R9999";  // เก็บเป็น "PI880"              ← ต้องไม่โผล่มามั่ว
+// รถที่ขายไปแล้ว — ใบขายผูกคนละแบบ (ใบหนึ่งผูกด้วย SN · อีกใบผูกด้วยรหัสรถ/PI ชั่วคราว)
+const SN_CUST = "010253R8001";   // ขายให้ "บจก. ทิสโก้ ลีสซิ่ง"   ← ใบขายผูกด้วย SN
+const ID_CUST = "PI900#1";       // ขายให้ "หจก. สมชายขนส่ง"       ← ใบขายผูกด้วยรหัสรถ
 const forklifts = [
   mk(SN_DASH, "PI-172", "สั่งผลิต"),
   mk(SN_FULL, "C20726201-172", "รอรับ"),
   mk(SN_OTHER, "PI880", "พร้อมขาย"),
+  { ...mk(SN_CUST, "PI900", "ปิดการขายแล้ว") },
+  { ...mk(ID_CUST, "PI900", "ปิดการขายแล้ว"), id: ID_CUST, SN: "" },
+];
+const sales = [
+  { id: "sale_cust_1", forklift_id: SN_CUST, forklift_unit_no: SN_CUST, forklift_brand: "HELI",
+    forklift_model: "CPCD25-WS1H", sales_staff: "เซลล์ ก", customer_name: "บจก. ทิสโก้ ลีสซิ่ง",
+    customer_tel: "", customer_type: "นิติบุคคล", province: "", payment_type: "เครดิต",
+    actual_sale: 450000, deposit: 0, delivery_date: "2026-10-05",
+    sale_status: "ปิดการขาย/จัดส่งแล้ว", sale_type: "รถขายเต็มคัน",
+    created_at: "2026-10-05T00:00:00.000Z", custom_fields: {} },
+  { id: "sale_cust_2", forklift_id: ID_CUST, forklift_unit_no: "", forklift_brand: "HELI",
+    forklift_model: "CPCD25-WS1H", sales_staff: "เซลล์ ข", customer_name: "หจก. สมชายขนส่ง",
+    customer_tel: "", customer_type: "นิติบุคคล", province: "", payment_type: "เครดิต",
+    actual_sale: 420000, deposit: 0, delivery_date: "2026-10-09",
+    sale_status: "ปิดการขาย/จัดส่งแล้ว", sale_type: "รถขายเต็มคัน",
+    created_at: "2026-10-09T00:00:00.000Z", custom_fields: {} },
 ];
 
 const browser = await chromium.launch({ channel: "msedge" });
@@ -62,6 +87,7 @@ await ctx.route("**://" + SB_HOST + "/**", async route => {
   if (u.includes("/auth/v1/")) return json(route, { id: "t", email: "t@t.com", aud: "authenticated", role: "authenticated", user: { id: "t", email: "t@t.com" } });
   if (u.includes("/rpc/my_access")) return json(route, { user: { email: "t@t.com", role: "stock", status: "approved" }, is_admin: true });
   if (u.includes("/rest/v1/forklifts")) return json(route, forklifts);
+  if (u.includes("/rest/v1/sales")) return json(route, sales);
   return json(route, []);
 });
 
@@ -135,12 +161,34 @@ if (await statusSel.count()) {
   why5 = "ไม่เจอช่องเลือกสถานะ";
 }
 
+// ── ข้อ 6-8: ค้นด้วยชื่อบริษัท/ลูกค้า (26 พ.ย. 2569) ──────────────────────
+// ล้างตัวกรองสถานะก่อน (ข้อ 5 ตั้งค้างไว้ที่ "พร้อมขาย" แต่รถที่ขายแล้วเป็น "ปิดการขายแล้ว")
+if (await statusSel.count()) await statusSel.selectOption({ label: "ทุกสถานะ" }).catch(() => {});
+
+const t6 = await search("ทิสโก้");
+const ok6a = t6.includes(SN_CUST);
+const t6b = await search("สมชายขนส่ง");
+const ok6b = t6b.includes(ID_CUST) || /สมชายขนส่ง/.test(t6b);
+const ok6 = ok6a && ok6b;
+
+// เว้นวรรคไม่ตรงกับที่เก็บไว้ ("บจก. ทิสโก้ ลีสซิ่ง" ในฐานข้อมูล)
+const t7 = await search("บจก.ทิสโก้");
+const ok7 = t7.includes(SN_CUST);
+
+// ชื่อที่ไม่มีลูกค้ารายไหนชื่อนี้ → ต้องไม่เจออะไรเลย
+const t8 = await search("บริษัทไม่มีจริงจำกัด");
+const ok8 = !t8.includes(SN_CUST) && !t8.includes(ID_CUST) && !t8.includes(SN_DASH);
+
 const checks = [
   ['1) ค้น "PI172" เจอรถที่เก็บเป็น "PI-172"', ok1, "ขีดคั่นทำให้ค้นไม่เจอ"],
   ['2) ค้น "172" เจอทั้ง "PI-172" และ "C20726201-172"', ok2, "เลขใบเดียวกันแต่เก็บคนละรูปแบบ ค้นไม่ครบ"],
   ['3) ค้น "pi 172" (เว้นวรรค/ตัวเล็ก) เจอ', ok3, "เว้นวรรคแล้วค้นไม่เจอ"],
   ['4) ค้น "PI173" ที่ไม่มีจริง → ไม่เจออะไร', ok4, "จับกว้างเกินไป คืนรถที่ไม่เกี่ยวมาด้วย"],
   ["5) ศูนย์ผลลัพธ์ บอกตัวกรองที่เปิดอยู่ + ปุ่มล้าง", ok5, why5],
+  ['6) ค้นชื่อบริษัทลูกค้า เจอรถที่ขายให้เจ้านั้น', ok6,
+    !ok6a ? "ค้น \"ทิสโก้\" ไม่เจอรถที่ขายให้ (ใบขายผูกด้วย SN)" : "ค้น \"สมชายขนส่ง\" ไม่เจอ (ใบขายผูกด้วยรหัสรถ)"],
+  ['7) ชื่อเว้นวรรคไม่ตรง ("บจก.ทิสโก้") ก็ต้องเจอ', ok7, "ต้องตัดเว้นวรรค/จุดก่อนเทียบ ไม่งั้นพิมพ์ต่างนิดเดียวก็หาย"],
+  ['8) ค้นชื่อลูกค้าที่ไม่มีจริง → ไม่เจออะไร', ok8, "จับกว้างเกินไป คืนรถที่ไม่เกี่ยวมาด้วย"],
 ];
 let fail = 0;
 for (const [name, ok, why] of checks) { console.log(`${name}: ${ok ? "✓" : "✗ " + why}`); if (!ok) fail++; }
