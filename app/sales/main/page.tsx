@@ -18,12 +18,12 @@ import { isPendingId, displayCode, piLabel } from "@/lib/productId";
 import { STATUS_BADGE, SALE_STATUS_BADGE, CONTACT_SOURCE_COLORS, VEHICLE_CATS, paymentBadgeClass, sameStaff, canonicalStaff } from "@/lib/constants";
 import { MoneyInput } from "@/components/ui/MoneyInput";
 import { WarrantyBlock } from "@/components/WarrantyBlock";
-import { buildDefaultSvc, SVC_ROUNDS } from "@/lib/warranty";
+import { buildDefaultSvc, SVC_ROUNDS, isSystemFilled } from "@/lib/warranty";
 import { CLOSE_SALE_ALERT_DAYS } from "@/lib/dataHealth";
 import { parseSvc, nextDue, SVC_SOON_DAYS } from "@/lib/warranty";
 import { formatBaht, toIsoDate } from "@/lib/format";
 import { hasActiveSession, signOutSupabase, OWNER_EMAILS } from "@/lib/auth";
-import { COMMISSION_FIELD, COMMISSION_CATEGORIES, isStackerModel, isOtherGroup, priorPurchaseByCustomer, toGregorian, isClosedSale, closeMonth, warrantyFilled, isForkliftVehicle } from "@/lib/commission";
+import { COMMISSION_FIELD, COMMISSION_CATEGORIES, isStackerModel, isOtherGroup, priorPurchaseByCustomer, toGregorian, isClosedSale, closeMonth, warrantyFilled, isForkliftVehicle, autoFillWarranty } from "@/lib/commission";
 import { apiEnabled, uploadImageApi } from "@/lib/api";
 import AiAssistant from "@/components/AiAssistant";
 
@@ -527,6 +527,25 @@ export default function SalesMain() {
   const showWarnPopup = !warnDismissed && blockedDeals.length > 0;
   /** เปิดป๊อปอัพพร้อมเลือกเซลล์คนนั้น (ว่าง = ทุกคน) */
   const openWarn = (staff: string) => { setWarnStaff(staff); setWarnDismissed(false); };
+  /**
+   * ── เติมข้อมูลรับประกันให้ทุกดีลที่ค้าง (27 พ.ย. 2569 · ผู้ใช้เลือก "ทางสายกลาง") ──
+   * ปุ่มแบบนี้เคยมีเฉพาะหน้าสต็อก — คนที่เห็นแถบแดงอยู่หน้านี้จึงต้องเปิดทีละดีล เสียเวลาเปล่า
+   * เติมเฉพาะที่คำนวณได้ (autoFillWarranty: วันส่งมอบ + เงื่อนไขมาตรฐานตามชนิดรถ)
+   * คันที่เดาไม่ได้ข้ามไว้ ด่านยังเตือนต่อ — ตรงนั้นต้องให้คนตัดสินใจจริง ๆ
+   */
+  const [warnFillMsg, setWarnFillMsg] = useState("");
+  const fillWarrantyFor = (list: Sale[]) => {
+    let filled = 0, skipped = 0;
+    for (const s of list) {
+      const fk = forklifts.find(f => f.id === s.forklift_id);
+      const next = fk ? autoFillWarranty(fk, s, salesUser?.name || "ฝ่ายขาย") : null;
+      if (next) { updateForklift(next); filled++; } else skipped++;
+    }
+    setWarnFillMsg(
+      filled === 0 ? `ระบบเติมให้ไม่ได้สักดีล (${skipped} ดีล) — ต้องเปิดกรอกเอง`
+      : skipped > 0 ? `เติมให้ ${filled} ดีลแล้ว ✓ · เหลือ ${skipped} ดีลที่ระบบเดาไม่ได้ ต้องเปิดกรอกเอง`
+      : `เติมให้ครบทั้ง ${filled} ดีลแล้ว ✓`);
+  };
 
   // ส่งออกรายงานการขายของเซลล์คนนี้เป็นไฟล์ Excel (.xlsx) — โหลด xlsx ตอนกดเท่านั้น
   const exportMySalesExcel = async () => {
@@ -1030,7 +1049,7 @@ export default function SalesMain() {
    */
   const warrantyReady = !needWarranty || !selectedLive
     || warrantyFilled(selectedLive)
-    || !!buildDefaultSvc(selectedLive, true, form.delivery_date || "", "");
+    || !!buildDefaultSvc(selectedLive, form.delivery_date || "", "");
 
   const submitSale = (status: SaleStatus) => {
     // ⭐ (3 ต.ค. 2569 · ผู้ใช้บอกว่าไม่อยากเจอกล่องแดงบ่อย ๆ)
@@ -1038,7 +1057,7 @@ export default function SalesMain() {
     //    เหลือแค่คนลืมกดปุ่มบันทึกในกล่องนั้น แล้วมาเจอกล่องแดงตอนกดปิดการขาย
     //    → ถ้าค่ามาตรฐานครบ บันทึกให้เลย ไม่ต้องเตือน · เดาไม่ได้เมื่อไหร่ค่อยเตือน (เงื่อนไขเดิม)
     if (status === "ปิดการขาย/จัดส่งแล้ว" && needWarranty && selectedLive && !warrantyFilled(selectedLive)) {
-      const svc = buildDefaultSvc(selectedLive, true, form.delivery_date || "", salesUser?.name || "ฝ่ายขาย");
+      const svc = buildDefaultSvc(selectedLive, form.delivery_date || "", salesUser?.name || "ฝ่ายขาย");
       if (svc) {
         updateForklift({
           ...selectedLive,
@@ -1240,6 +1259,17 @@ export default function SalesMain() {
               </span>
               <span className="text-xs font-bold text-white bg-red-600 rounded-lg px-3 py-1.5 flex-shrink-0 whitespace-nowrap">ลงข้อมูล</span>
             </button>
+            {/* เติมอัตโนมัติทั้งกอง — ส่วนที่คำนวณได้ไม่ต้องให้คนพิมพ์ซ้ำ */}
+            <div className="flex flex-wrap items-center gap-2 border-t border-red-200 pt-2">
+              <button onClick={() => fillWarrantyFor(blockedDeals)}
+                className="text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg px-3 py-1.5 transition-colors flex-shrink-0">
+                ⚡ เติมให้อัตโนมัติ ({blockedDeals.length})
+              </button>
+              <span className="text-[11px] text-red-700 flex-1 min-w-0">
+                วันเริ่มประกัน = วันส่งมอบ · เงื่อนไข = มาตรฐานตามชนิดรถ — ดีลที่ระบบเดาไม่ได้จะข้ามไว้ให้กรอกเอง
+              </span>
+            </div>
+            {warnFillMsg && <p className="text-xs font-bold text-emerald-700">{warnFillMsg}</p>}
             {/* แยกตามเจ้าของเซลล์ — เห็นทันทีว่าต้องไปตามใคร · แตะชื่อ = เปิดเฉพาะดีลของคนนั้น */}
             {blockedByStaff.length > 1 && (
               <div className="flex flex-wrap items-center gap-1.5 border-t border-red-200 pt-2">
@@ -2327,7 +2357,7 @@ export default function SalesMain() {
               {(() => {
                 const fk = forklifts.find(f => String(f.id) === String(detailSale.forklift_id) || (detailSale.forklift_unit_no && String(f.SN ?? "").toUpperCase() === String(detailSale.forklift_unit_no).toUpperCase()));
                 // กติกา: ฝ่ายขายลงข้อมูลหลังการขายแล้ว → ล็อก แก้ไขไม่ได้ (แก้ที่ฝ่ายสต็อก/แอดมินเท่านั้น)
-                return fk ? <WarrantyBlock forklift={fk} actor={salesUser?.name || "ฝ่ายขาย"} canEdit={!warrantyFilled(fk)} defaultStart={toGregorian(String(detailSale.delivery_date ?? "")).slice(0, 10)} /> : null;
+                return fk ? <WarrantyBlock forklift={fk} actor={salesUser?.name || "ฝ่ายขาย"} canEdit={!warrantyFilled(fk) || isSystemFilled(fk)} defaultStart={toGregorian(String(detailSale.delivery_date ?? "")).slice(0, 10)} /> : null;
               })()}
 
               {/* ── ยกเลิกการจอง — เฉพาะดีลที่ยังไม่ปิดขาด (ไม่ผ่านไฟแนนซ์/ลูกค้ายกเลิก) ── */}

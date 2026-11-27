@@ -1,15 +1,28 @@
 // lib/warranty.ts — บริการหลังการขาย / รับประกัน (คิดรอบเช็คเป็น "เดือน" · ไม่ใช้ชั่วโมง เพราะแต่ละคันใช้งานต่างกัน)
 
+import { categorizeModel } from "./constants";
+
 export interface SvcRound { date: string; done: boolean; note: string; }
 export interface SvcEdit { by: string; at: string; }
 export interface SvcData { start: string; terms: string; rounds: SvcRound[]; history?: SvcEdit[]; }
 
+export const SVC_FIELD = "บริการหลังการขาย";
 export const DEFAULT_WARRANTY = "เครื่องยนต์ + ชุดเกียร์ 3 ปี · ระบบไฮดรอลิก/เบรก/กล่องคุมไฟฟ้า 6 เดือน · ฟรีค่าตรวจเช็ค 4 รอบ · แนะนำเข้าเช็ค/เปลี่ยนถ่ายทุก 3 เดือน";
 // รับประกันมาตรฐานของรถที่ไม่ใช่โฟล์คลิฟท์ (ไม่มีรอบเช็คฟรี)
 export const HYDRAULIC_WARRANTY = "รับประกันระบบไฮดรอลิค 1 ปี";
 // รีชสแตกเกอร์ (CQDM · ยืนขับ) — ตัวขับเป็นมอเตอร์ไฟฟ้าล้วน ไม่มีเครื่องยนต์/ไฮดรอลิกแบบโฟล์คลิฟท์
 // (26 ก.ย. 2569 · ผู้ใช้ระบุ — CQD กับ CQDM ใช้เงื่อนไขคนละแบบ)
 export const MOTOR_WARRANTY = "รับประกันมอเตอร์ขับเคลื่อน · มอเตอร์ยก · กล่องควบคุม 1 ปี";
+
+/**
+ * ชนิดรถที่ใช้ตัดสินเงื่อนไขประกัน (27 พ.ย. 2569)
+ *
+ * ที่มา: ดีลที่ค้าง "ยังไม่ลงรับประกัน" ส่วนหนึ่งค้างเพราะช่อง "หมวดรถ" ว่าง
+ * → defaultWarrantyTerms คืน "" → เติมอัตโนมัติไม่ได้ → ค้างวนอยู่อย่างนั้น
+ * ช่องหมวดรถว่างเมื่อไหร่ ให้เดาจากรหัสรุ่นแทน (กติกาเดียวกับที่จัดหมวดใน DB)
+ */
+export const warrantyCategoryOf = (f: { vehicle_category?: string; model?: string }): string =>
+  String(f.vehicle_category ?? "").trim() || (f.model ? categorizeModel(String(f.model)) : "");
 
 /**
  * เงื่อนไขรับประกันมาตรฐานตามชนิดรถ — คืน "" ถ้ายังไม่มีข้อความมาตรฐานของชนิดนั้น (ต้องพิมพ์เอง)
@@ -42,7 +55,7 @@ export const addMonths = (dateStr: string, months: number): string => {
 
 // อ่านข้อมูลบริการหลังการขายจาก forklift.custom_fields["บริการหลังการขาย"] (JSON)
 export const parseSvc = (f?: { custom_fields?: Record<string, string> | null; received_date?: string }): SvcData | null => {
-  const raw = f?.custom_fields?.["บริการหลังการขาย"];
+  const raw = f?.custom_fields?.[SVC_FIELD];
   if (!raw) return null;
   try {
     const p = JSON.parse(String(raw));
@@ -57,7 +70,7 @@ export const parseSvc = (f?: { custom_fields?: Record<string, string> | null; re
 
 // รถประเภทนี้ลงข้อมูลบริการหลังการขาย "ครบ" หรือยัง (มีวันเริ่ม + เงื่อนไขรับประกัน) — ใช้กันจ่ายค่าคอม
 export const warrantyFilled = (f?: { custom_fields?: Record<string, string> | null }): boolean => {
-  const raw = f?.custom_fields?.["บริการหลังการขาย"];
+  const raw = f?.custom_fields?.[SVC_FIELD];
   if (!raw) return false; // ยังไม่เคยบันทึก
   try {
     const p = JSON.parse(String(raw));
@@ -99,9 +112,11 @@ export const daysUntil = (dueISO: string, todayISO: string): number | null => {
  * คืน null เมื่อ "เติมเองไม่ได้" (ไม่มีวันส่งมอบ หรือชนิดรถยังไม่มีเงื่อนไขมาตรฐาน)
  * — กรณีนั้นยังต้องให้คนกรอกเอง เพราะเดาไม่ได้
  */
+/** ข้อความกำกับว่าแถวนี้ "ระบบเติมให้" ไม่ใช่คนกรอก — ใช้ตัดสินว่ายังให้ฝ่ายขายแก้ได้ไหม */
+export const SYSTEM_FILL_MARK = "ระบบเติมค่ามาตรฐาน";
+
 export const buildDefaultSvc = (
-  f: { received_date?: string; vehicle_category?: string; custom_fields?: Record<string, string> | null },
-  isForklift: boolean,
+  f: { received_date?: string; vehicle_category?: string; model?: string; custom_fields?: Record<string, string> | null },
   deliveryDate: string,
   actor: string,
 ): SvcData | null => {
@@ -109,10 +124,24 @@ export const buildDefaultSvc = (
   // ⚠️ วันเริ่มประกัน = **วันส่งมอบ** เท่านั้น (กติกาข้อ 8) — ห้ามถอยไปใช้วันรับรถเข้าคลัง
   //    วันรับรถคือวันที่รถมาถึงโกดัง ไม่ใช่วันที่ลูกค้าได้รถ ใช้แทนกันไม่ได้
   const start = String(deliveryDate || "").trim();
-  const terms = defaultWarrantyTerms(isForklift, f.vehicle_category);
+  const cat = warrantyCategoryOf(f);
+  const terms = defaultWarrantyTerms(cat === "Forklift", cat);
   if (!start || !terms) return null;                  // เดาไม่ได้ → ให้คนกรอกเอง
   return {
     start, terms, rounds: emptySvcRounds(),
-    history: [{ by: `${actor || "-"} (ระบบเติมค่ามาตรฐานให้ตอนปิดการขาย)`, at: new Date().toLocaleString("th-TH") }],
+    history: [{ by: `${actor || "-"} (${SYSTEM_FILL_MARK}ให้ตอนปิดการขาย)`, at: new Date().toLocaleString("th-TH") }],
   };
+};
+
+/**
+ * ข้อมูลรับประกันชุดนี้ "ระบบเติมให้" หรือ "คนกรอกเอง" (27 พ.ย. 2569)
+ *
+ * กติกาเดิม: ฝ่ายขายลงข้อมูลแล้ว → ล็อก แก้ไม่ได้ (แก้ได้เฉพาะสต็อก/แอดมิน)
+ * พอระบบเติมให้อัตโนมัติ กติกานั้นจะล็อกค่าที่ "ระบบเดา" ไปด้วย ฝ่ายขายแก้ให้ถูกไม่ได้เลย
+ * → ตราบใดที่ยังเป็นค่าที่ระบบเติม ให้ฝ่ายขายแก้ทับได้ · พอคนแก้แล้วค่อยล็อกตามเดิม
+ */
+export const isSystemFilled = (f?: { custom_fields?: Record<string, string> | null }): boolean => {
+  const svc = parseSvc(f);
+  const last = svc?.history?.[0];                     // แถวบนสุด = ล่าสุด
+  return !!last && String(last.by ?? "").includes(SYSTEM_FILL_MARK);
 };

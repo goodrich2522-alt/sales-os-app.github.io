@@ -9,7 +9,7 @@ import {
   Download, Upload, FileText, ShoppingCart, User, QrCode, PackageCheck, ClipboardList, RotateCcw, RefreshCw, Truck
 } from "lucide-react";
 import { Forklift, Sale, STOCK_APPROVAL_FIELD, isVoidSale } from "@/lib/types";
-import { COMMISSION_FIELD, COMMISSION_CATEGORIES, isClosedSale, isForkliftVehicle, closeMonth, closeDate } from "@/lib/commission";
+import { COMMISSION_FIELD, COMMISSION_CATEGORIES, isClosedSale, isForkliftVehicle, closeMonth, closeDate, autoFillWarranty } from "@/lib/commission";
 import { useApp, FieldConfig } from "@/lib/AppContext";
 import { isPendingId, displayCode, piLabel } from "@/lib/productId";
 import { thaiMonthShort, today, toIsoDate } from "@/lib/format";
@@ -806,26 +806,24 @@ export default function StockMain() {
 
   const needWarrantySet = useMemo(() => new Set(needWarrantyList.map(x => x.f.id)), [needWarrantyList]);
 
-  /** เติมวันเริ่มประกัน (= วันส่งมอบของดีล) + เงื่อนไขมาตรฐานตามชนิดรถ ให้ทุกคันที่ค้าง */
+  /**
+   * เติมวันเริ่มประกัน (= วันส่งมอบของดีล) + เงื่อนไขมาตรฐานตามชนิดรถ ให้ทุกคันที่ค้าง
+   *
+   * (27 พ.ย. 2569) ใช้กติกาเดียวกับที่ระบบเติมให้ตอนปิดการขาย — autoFillWarranty
+   * เดิมที่นี่เขียนเองคนละชุด แล้ว "เติมครึ่งเดียว" ได้ (ลงวันเริ่มทั้งที่ไม่มีเงื่อนไข)
+   * ซึ่งยังนับว่าค้างอยู่ดี → กดปุ่มแล้วตัวเลขไม่ลด คนกดก็ไม่รู้ว่าทำไม
+   * ตอนนี้เดาไม่ได้ = ไม่แตะ แล้วบอกให้ชัดว่าเหลือกี่คันที่ต้องกรอกเอง
+   */
   const fillWarrantyAll = () => {
-    let done = 0, needTerms = 0;
+    let filled = 0, skipped = 0;
     needWarrantyList.forEach(({ f, deal }) => {
-      const start = closeDate(deal!);
-      if (!start) return;
-      const cur = parseSvc(f);
-      const terms = String(cur?.terms ?? "").trim() || defaultWarrantyTerms(isForkliftVehicle(f.brand, f.model), f.vehicle_category);
-      const svc = {
-        start: String(cur?.start ?? "").trim() || start,
-        terms,
-        rounds: cur?.rounds?.length ? cur.rounds : emptySvcRounds(),
-        history: [{ by: `${username || "สต็อก"} (เติมวันส่งมอบ)`, at: new Date().toLocaleString("th-TH") }, ...(cur?.history ?? [])].slice(0, 10),
-      };
-      updateForklift({ ...f, custom_fields: { ...(f.custom_fields ?? {}), "บริการหลังการขาย": JSON.stringify(svc) } });
-      if (terms) done++; else needTerms++;
+      const next = autoFillWarranty(f, deal!, username || "สต็อก");
+      if (next) { updateForklift(next); filled++; } else skipped++;
     });
-    showToast(needTerms
-      ? `เติมให้ ${done + needTerms} คัน · ${needTerms} คันยังต้องพิมพ์เงื่อนไขรับประกันเอง (ชนิดรถนี้ยังไม่มีข้อความมาตรฐาน)`
-      : `เติมวันเริ่มประกัน + เงื่อนไขให้ ${done} คันแล้ว ✓`);
+    showToast(
+      filled === 0 ? `ระบบเติมให้ไม่ได้สักคัน (${skipped} คัน) — ต้องเปิดกรอกเอง (ไม่มีวันส่งมอบ หรือชนิดรถยังไม่มีเงื่อนไขมาตรฐาน)`
+      : skipped > 0 ? `เติมให้ ${filled} คันแล้ว ✓ · เหลือ ${skipped} คันที่ระบบเดาไม่ได้ ต้องเปิดกรอกเอง`
+      : `เติมวันเริ่มประกัน + เงื่อนไขให้ครบทั้ง ${filled} คันแล้ว ✓`);
   };
   const listFiltered = useMemo(() => {
     const q = listSearch.trim().toLowerCase();

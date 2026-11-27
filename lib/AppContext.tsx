@@ -16,7 +16,7 @@ import { supabase } from "./supabaseClient";
 import { isPendingId } from "./productId";
 import { stockStatusForSale } from "./saleStatus";
 import { isInlineImage, countInline, inlineBytes, liftArray, liftMap } from "./imageCleanup";
-import type { CommissionLock } from "./commission";
+import { autoFillWarranty, type CommissionLock } from "./commission";
 
 // ── Field configuration ───────────────────────────────────────────────────────
 export interface FieldConfig {
@@ -664,6 +664,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const withApprovalMarker = (s: Sale): Sale => s;      // ไม่มีเกตอนุมัติแล้ว
 
   /**
+   * ── ปิดดีล = เติมข้อมูลรับประกันให้เลย ถ้าคำนวณได้ (27 พ.ย. 2569 · "ทางสายกลาง") ──
+   *
+   * ที่มา: มีดีลค้าง "ยังไม่ลงข้อมูลรับประกัน" 32 ใบ ค่าคอมไม่ออก ต้องไล่ตามเซลล์ทีละคน
+   * เดิมเติมอัตโนมัติเฉพาะตอนฝ่ายขายกดปิดการขายที่หน้าขาย ด้วยสถานะ "ปิดการขาย/จัดส่งแล้ว"
+   * เส้นทางอื่นไม่เติมเลย → ปิดจากหน้าสต็อก · ใช้สถานะอื่นที่แปลว่าปิด · นำเข้าใบขายย้อนหลัง
+   * ทั้งหมดนั้นวิ่งผ่าน addSale/updateSale/addSalesBulk ที่นี่ → ย้ายมาทำจุดเดียวให้ครบทุกทาง
+   *
+   * กติกาการเติมอยู่ที่ autoFillWarranty (lib/commission.ts) — เติมเฉพาะที่แน่ ๆ
+   * เดาไม่ได้ก็ไม่เติม ด่านยังเตือนต่อ
+   */
+  const withWarranty = (f: Forklift, s: Sale): Forklift => autoFillWarranty(f, s, actorRef.current) ?? f;
+
+  /**
    * โหลดรูปสลิปของดีลใบเดียว (28 ก.ย. 2569)
    * ตอนเปิดแอปเราไม่ดึงคอลัมน์รูปสลิปมาด้วย เพราะเป็น base64 ก้อนใหญ่จนแท็บแครช
    * → หน้าที่ต้องโชว์/แก้ดีล เรียกอันนี้ก่อน แล้วรูปจะถูกเติมเข้า state ของดีลใบนั้น
@@ -691,13 +704,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const before = forkliftsRef.current.find(f => f.id === s.forklift_id); // สถานะเดิม (อ่านก่อนแก้ ไว้ถอยคืน)
     setSales(p => [s, ...p]); // optimistic (โชว์รูป base64 ทันที)
     const nextStatus = forkStatusGated(s);
-    setForklifts(p => p.map(f => f.id === s.forklift_id ? { ...f, status: nextStatus } : f));
+    setForklifts(p => p.map(f => f.id === s.forklift_id ? withWarranty({ ...f, status: nextStatus }, s) : f));
     if (api.apiEnabled) {
       (async () => {
         const saved = await uploadPaymentProof(s);
         if (saved !== s) setSales(p => p.map(x => x.id === s.id ? saved : x)); // เปลี่ยน base64 → URL
         if (!(await saleSaved(() => api.addSaleApi(saved), "addSale", before, () => setSales(p => p.filter(x => x.id !== s.id))))) return;
-        if (before) api.updateForkliftApi({ ...before, status: nextStatus }).catch(failed("updateForklift"));
+        if (before) api.updateForkliftApi(withWarranty({ ...before, status: nextStatus }, s)).catch(failed("updateForklift"));
       })();
     }
     logAudit("บันทึกการขาย/จอง", "sale", s.id, { forklift: s.forklift_id, model: `${s.forklift_brand} ${s.forklift_model}`, status: s.sale_status, customer: s.customer_name, amount: s.actual_sale });
@@ -715,13 +728,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
     // สถานะรถให้ตรงกับใบขายที่เพิ่ง เติมเข้าไป (เช่น คันที่ยังค้าง "พร้อมขาย" ทั้งที่ขายไปแล้ว)
     const status = new Map(list.map(x => [x.forklift_id, forkStatusGated(x)]));
+    const saleOf = new Map(list.map(x => [x.forklift_id, x]));
     const touched: Forklift[] = [];
-    const prevStatus = new Map<string, string>();   // สถานะเดิมของคันที่แตะ ไว้ถอยคืนถ้าใบขายลงไม่สำเร็จ
+    const prevForklift = new Map<string, Forklift>();   // ของเดิมของคันที่แตะ ไว้ถอยคืนถ้าใบขายลงไม่สำเร็จ
     setForklifts(p => p.map(f => {
       const st = status.get(f.id);
-      if (!st || f.status === st) return f;
-      const next = { ...f, status: st };
-      prevStatus.set(f.id, String(f.status ?? ""));
+      const sale = saleOf.get(f.id);
+      if (!st || !sale) return f;
+      // สถานะอาจตรงอยู่แล้ว แต่ยังต้องเติมรับประกัน — จึงเช็คทั้งสองอย่าง ไม่ใช่แค่สถานะ
+      const next = withWarranty(f.status === st ? f : { ...f, status: st }, sale);
+      if (next === f) return f;
+      prevForklift.set(f.id, f);
       touched.push(next);
       return next;
     }));
@@ -731,7 +748,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (!(await saleSaved(() => api.bulkUpsertSalesApi(list), "addSalesBulk", undefined, () => {
           const ids = new Set(list.map(x => x.id));
           setSales(p => p.filter(x => !ids.has(x.id)));
-          setForklifts(p => p.map(f => { const o = prevStatus.get(f.id); return o === undefined ? f : { ...f, status: o }; }));
+          setForklifts(p => p.map(f => prevForklift.get(f.id) ?? f));
         }))) return;
         if (touched.length) await api.bulkUpsertForkliftsApi(touched).catch(failed("addSalesBulk/forklifts"));
       })();
@@ -748,14 +765,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const prevSale = salesRef.current.find(x => x.id === s.id);                // ไว้ถอยคืนถ้าบันทึกไม่สำเร็จ
     const before = forkliftsRef.current.find(f => f.id === s.forklift_id);
     setSales(p => p.map(x => x.id === s.id ? s : x));
-    setForklifts(p => p.map(f => f.id === s.forklift_id ? { ...f, status: nextStatus } : f));
+    setForklifts(p => p.map(f => f.id === s.forklift_id ? withWarranty({ ...f, status: nextStatus }, s) : f));
     if (api.apiEnabled) {
       (async () => {
         const saved = await uploadPaymentProof(s);
         if (saved !== s) setSales(p => p.map(x => x.id === s.id ? saved : x));
         if (!(await saleSaved(() => api.updateSaleApi(saved), "updateSale", before,
           () => { if (prevSale) setSales(p => p.map(x => x.id === s.id ? prevSale : x)); }))) return;
-        if (before) api.updateForkliftApi({ ...before, status: nextStatus }).catch(failed("updateForklift"));
+        if (before) api.updateForkliftApi(withWarranty({ ...before, status: nextStatus }, s)).catch(failed("updateForklift"));
       })();
     }
   }, []);

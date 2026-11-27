@@ -90,6 +90,13 @@ step("ตัวอ่านใบขายย้อนหลัง", () => {
   if (!m) throw new Error(out.split("\n").slice(-3).join("\n"));
   return `${m[1]}/${m[2]} ข้อ`;
 });
+// (27 พ.ย. 2569) ปิดดีลแล้วระบบเติมข้อมูลรับประกันให้เอง — แต่ต้องเติมเฉพาะส่วนที่ "แน่"
+step("เติมข้อมูลรับประกันอัตโนมัติ (เส้นแบ่งของที่เดาได้/ไม่ได้)", () => {
+  const out = run("node", ["scripts/test-warranty-autofill.mjs"]);
+  const m = /ผ่านทั้งหมด (\d+)\/(\d+) ข้อ/.exec(out);
+  if (!m) throw new Error(out.split("\n").filter(l => l.includes("✗")).slice(0, 4).join("\n"));
+  return `${m[1]}/${m[2]} ข้อ`;
+});
 step("จำแนกกลุ่มค่าคอมจากรุ่นรถ", () => {
   const out = run("node", ["scripts/test-commission-group.mjs"]);
   const m = /ผ่านทั้งหมด (\d+)\/(\d+) รุ่น/.exec(out);
@@ -222,6 +229,8 @@ if (built) {
     if (!/2\).*✓/.test(out)) throw new Error("กดชื่อเซลล์แล้วไม่ได้กรองเฉพาะดีลของคนนั้น");
     if (!/3\).*✓/.test(out)) throw new Error("กด \"ทุกเซลล์\" แล้วไม่กลับมาครบทุกดีล");
     if (!/4\).*✓/.test(out)) throw new Error("มีเซลล์คนเดียวแต่ยังขึ้นแถวแยกชื่อ");
+    // (27 พ.ย. 2569) ของที่คำนวณได้ต้องไม่บังคับให้คนพิมพ์ — แต่ใบที่เดาไม่ได้ต้องค้างไว้ให้คนกรอก
+    if (!/5\).*✓/.test(out)) throw new Error("ปุ่มเติมอัตโนมัติไม่ทำงาน หรือเดาข้อมูลที่ไม่ควรเดา\n" + out.split("\n").slice(-5).join("\n"));
   });
 }
 
