@@ -44,6 +44,25 @@ for (const f of tracked.filter(x => /\.sql$/i.test(x))) {
   });
 }
 
+// ── 3) เอกสาร/บันทึกงาน (.md .txt) ก็หลุดได้ ────────────────────────────────
+// เจอตอนตรวจครั้งแรก: TODO-2026-10-28.md มีชื่อบริษัทลูกค้าจริง 5 จุด
+// และบรรทัดอธิบายด่านนี้เองก็เผลอยกราคาทุนจริงมาเป็นตัวอย่าง
+// (อีเมลไม่นับที่นี่ — allowlist แอดมินอยู่ในซอร์สและถูกคอมไพล์ลง bundle สาธารณะอยู่แล้ว
+//  ลบออกจากเอกสารก็ไม่ได้ทำให้ปลอดภัยขึ้น ต้องแก้ที่ออกแบบระบบสิทธิ์แทน)
+const DOC_RULES = [
+  { re: /\bcost_price\s*=\s*\d{3,}/i, why: "ราคาทุนจริงในเอกสาร — ยกตัวอย่างให้ใช้เลขสมมติ" },
+  { re: /บริษัท\s*ไดเหวยหยวน|ไทย\s*เทียนเฉิง|ยูเอ็ม\s*อินดัสทรี/, why: "ชื่อบริษัทลูกค้าจริง" },
+];
+for (const f of tracked.filter(x => /\.(md|txt)$/i.test(x))) {
+  const lines = readFileSync(f, "utf8").split("\n");
+  lines.forEach((ln, i) => {
+    for (const r of DOC_RULES) {
+      const m = r.re.exec(ln);
+      if (m) hit(f, i + 1, m[0].slice(0, 70), r.why);
+    }
+  });
+}
+
 if (bad.length === 0) {
   console.log(`ผ่านทั้งหมด ${tracked.length}/${tracked.length} ไฟล์ — ไม่มีข้อมูลธุรกิจจริงใน repo สาธารณะ`);
   process.exit(0);
