@@ -6,7 +6,7 @@ import {
   ArrowLeft, ShieldCheck, Download, AlertTriangle, Clock, CheckCircle, Wrench, ChevronDown,
 } from "lucide-react";
 import { useApp } from "@/lib/AppContext";
-import { parseSvc, nextDue, daysUntil, SVC_SOON_DAYS, SVC_ROUNDS } from "@/lib/warranty";
+import { parseSvc, nextDue, daysUntil, todayISO, SVC_SOON_DAYS, SVC_ROUNDS } from "@/lib/warranty";
 import { isForkliftVehicle } from "@/lib/commission";
 import { displayCode } from "@/lib/productId";
 import { WarrantyBlock } from "@/components/WarrantyBlock";
@@ -14,7 +14,9 @@ import { DashboardGuard } from "@/components/DashboardGuard";
 
 function WarrantyPageInner() {
   const { forklifts, sales } = useApp();
-  const today = new Date().toISOString().slice(0, 10);
+  // ⚠️ เคยใช้ toISOString() = เวลา UTC — ก่อน 07:00 น. บ้านเราจะยังนับเป็น "เมื่อวาน"
+  //    รถที่ครบกำหนดวันนี้จะถูกนับเป็น "เกินกำหนดแล้ว" ตั้งแต่เช้า
+  const today = todayISO();
   const [filter, setFilter] = useState<"due" | "overdue" | "soon" | "all">("due");
   const [openId, setOpenId] = useState<string | null>(null); // การ์ดที่กางดู/แก้รอบเช็ค
   const [actor, setActor] = useState("แดชบอร์ด");

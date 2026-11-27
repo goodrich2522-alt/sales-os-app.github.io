@@ -44,13 +44,37 @@ export const SVC_SOON_DAYS = 30;           // ถือว่า "ใกล้�
 
 export const emptySvcRounds = (): SvcRound[] => Array.from({ length: SVC_ROUNDS }, () => ({ date: "", done: false, note: "" }));
 
-// บวกเดือนแบบปลอดภัย (รับ YYYY-MM-DD) → YYYY-MM-DD
+/** วันที่อยู่ในรูปแบบ YYYY-MM-DD จริงไหม — ใช้ตัดสินว่า "ลงวันแล้ว" ที่เดียวทั้งไฟล์ */
+export const isISODate = (v: unknown): boolean => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? "").slice(0, 10));
+
+/**
+ * วันที่ "วันนี้" ตามเวลาเครื่อง (YYYY-MM-DD)
+ * ⚠️ ห้ามใช้ new Date().toISOString() — นั่นคือเวลา UTC ซึ่งไทยเร็วกว่า 7 ชม.
+ *    ก่อน 07:00 น. UTC ยังเป็น "เมื่อวาน" → วันที่ที่บันทึกจะเพี้ยนไป 1 วัน
+ */
+export const todayISO = (now: Date = new Date()): string =>
+  `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+/**
+ * บวกเดือนแบบปลอดภัย (รับ YYYY-MM-DD) → YYYY-MM-DD
+ *
+ * ── บั๊ก 2 ตัวที่เคยอยู่ในนี้ (27 พ.ย. 2569) ──
+ * 1) คืนค่าผ่าน toISOString() ซึ่งแปลงกลับเป็น UTC — เที่ยงคืนตามเวลาไทยคือ 17:00 ของ
+ *    "เมื่อวาน" ใน UTC → **วันครบกำหนดทุกรอบเร็วไป 1 วัน** ทั้งระบบ
+ * 2) setMonth ปล่อยให้วันล้นเดือน: 30 พ.ย. +3 เดือน → "30 ก.พ." → เด้งไป 2 มี.ค.
+ *    ต้องตัดลงเป็นวันสุดท้ายของเดือนปลายทาง (28/29 ก.พ.) ตามที่คนเข้าใจ
+ * → คิดด้วยเลขปี/เดือน/วันตรง ๆ ไม่ผ่าน Date เลย จะได้ไม่มีโซนเวลามาเกี่ยว
+ */
 export const addMonths = (dateStr: string, months: number): string => {
   const s = String(dateStr || "").slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return "";
-  const d = new Date(s + "T00:00:00");
-  d.setMonth(d.getMonth() + months);
-  return d.toISOString().slice(0, 10);
+  if (!isISODate(s)) return "";
+  const [y, m, d] = s.split("-").map(Number);
+  const total = y * 12 + (m - 1) + months;
+  const ny = Math.floor(total / 12);
+  const nm = ((total % 12) + 12) % 12;
+  const lastDay = new Date(Date.UTC(ny, nm + 1, 0)).getUTCDate();
+  const nd = Math.min(d, lastDay);
+  return `${ny}-${String(nm + 1).padStart(2, "0")}-${String(nd).padStart(2, "0")}`;
 };
 
 // อ่านข้อมูลบริการหลังการขายจาก forklift.custom_fields["บริการหลังการขาย"] (JSON)
@@ -82,7 +106,7 @@ export const warrantyFilled = (f?: { custom_fields?: Record<string, string> | nu
 export const roundDue = (svc: SvcData, i: number): string => {
   if (i <= 0) return addMonths(svc.start, SVC_INTERVAL_MONTHS);
   const prev = svc.rounds[i - 1];
-  const anchor = (prev?.date && /^\d{4}-\d{2}-\d{2}$/.test(String(prev.date).slice(0, 10))) ? prev.date : roundDue(svc, i - 1);
+  const anchor = isISODate(prev?.date) ? prev.date : roundDue(svc, i - 1);
   return addMonths(anchor, SVC_INTERVAL_MONTHS);
 };
 
@@ -99,6 +123,39 @@ export const daysUntil = (dueISO: string, todayISO: string): number | null => {
   const d = String(dueISO || "").slice(0, 10), t = String(todayISO || "").slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !/^\d{4}-\d{2}-\d{2}$/.test(t)) return null;
   return Math.round((new Date(d + "T00:00:00").getTime() - new Date(t + "T00:00:00").getTime()) / 86400000);
+};
+
+/**
+ * ── บันทึกรอบเช็ค 1 รอบ แล้วให้รอบถัดไปคำนวณต่อเองอัตโนมัติ (27 พ.ย. 2569 · ผู้ใช้สั่ง) ──
+ *
+ * roundDue ผูกรอบถัดไปไว้กับ "วันเข้าจริงของรอบก่อน" อยู่แล้ว แต่พังเงียบ ๆ 2 ทาง:
+ *   · ติ๊ก "เช็คแล้ว" แต่ไม่ได้ลงวัน → ไม่มีวันให้เกาะ → ถอยไปนับจากกำหนดเดิม
+ *     ช่างไปเช็คช้า 1 เดือน รอบถัดไปก็ยังขึ้นกำหนดเดิม = ตารางเพี้ยนสะสมไปทุกรอบ
+ *   · ลงวันเข้าจริงแต่ลืมติ๊ก → ระบบยังนับว่ารอบนั้นค้าง เตือนรอบที่ไปเช็คมาแล้ว
+ * → ทำสองอย่างนี้ให้อัตโนมัติ คนกรอกอย่างเดียวพอ
+ *
+ * ⚠️ ติ๊กออก = ยังไม่ได้เช็ค แต่ "วันที่" เป็นข้อมูลที่คนกรอกเอง ห้ามลบทิ้งให้
+ */
+export const applyRoundChange = (
+  rounds: SvcRound[], i: number, patch: Partial<SvcRound>, today: string,
+): SvcRound[] => rounds.map((r, j) => {
+  if (j !== i) return r;
+  const next: SvcRound = { ...r, ...patch };
+  // ติ๊กว่าเช็คแล้วแต่ยังไม่มีวัน → ลงวันนี้ให้ (ยังแก้ทับได้ ถ้าช่างไปเช็ควันอื่น)
+  if (patch.done === true && !isISODate(next.date) && isISODate(today)) next.date = today;
+  // ลงวันเข้าจริงเมื่อไหร่ = เช็คแล้ว ไม่ต้องติ๊กซ้ำอีกที
+  if (isISODate(patch.date)) next.done = true;
+  return next;
+});
+
+/** ป้ายบอกสถานะวันครบกำหนด — ใช้ข้อความ/สีเดียวกันทุกที่ที่โชว์รอบเช็ค */
+export type DueTone = "overdue" | "soon" | "ok" | "none";
+export const dueStatus = (due: string, today: string): { label: string; tone: DueTone } => {
+  const n = daysUntil(due, today);
+  if (n === null) return { label: "", tone: "none" };
+  if (n < 0) return { label: `เกินกำหนดมา ${-n} วัน`, tone: "overdue" };
+  if (n === 0) return { label: "ครบกำหนดวันนี้", tone: "overdue" };
+  return { label: `อีก ${n} วัน`, tone: n <= SVC_SOON_DAYS ? "soon" : "ok" };
 };
 
 /**

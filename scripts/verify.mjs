@@ -97,6 +97,13 @@ step("เติมข้อมูลรับประกันอัตโน�
   if (!m) throw new Error(out.split("\n").filter(l => l.includes("✗")).slice(0, 4).join("\n"));
   return `${m[1]}/${m[2]} ข้อ`;
 });
+// (27 พ.ย. 2569) รอบเช็ค: ลงรอบเดียว รอบถัดไปต้องคำนวณต่อเอง + วันต้องไม่เพี้ยนเพราะโซนเวลา
+step("รอบเข้าเช็ค (คำนวณรอบถัดไปอัตโนมัติ · วันครบกำหนดไม่เพี้ยน)", () => {
+  const out = run("node", ["scripts/test-warranty-rounds.mjs"]);
+  const m = /ผ่านทั้งหมด (\d+)\/(\d+) ข้อ/.exec(out);
+  if (!m) throw new Error(out.split("\n").filter(l => l.includes("✗")).slice(0, 4).join("\n"));
+  return `${m[1]}/${m[2]} ข้อ`;
+});
 step("จำแนกกลุ่มค่าคอมจากรุ่นรถ", () => {
   const out = run("node", ["scripts/test-commission-group.mjs"]);
   const m = /ผ่านทั้งหมด (\d+)\/(\d+) รุ่น/.exec(out);
@@ -135,6 +142,15 @@ if (built) {
   step("กรอกประกันแล้วปิดการขายได้ทันที", () => {
     const out = run("node", ["scripts/e2e-warranty-gate.mjs"], { env });
     if (!/✓ หายแล้ว/.test(out) || !/✓ ไม่ติด/.test(out)) throw new Error(out.split("\n").slice(-4).join("\n"));
+  });
+  // (27 พ.ย. 2569) แก้ตรรกะรอบเช็คใน lib แล้ว ต้องพิสูจน์ว่าหน้าจอต่อสายถึงจริง ไม่ใช่แก้แล้วคนใช้ไม่เห็น
+  step("ลงรอบเช็ค 1 รอบ → รอบถัดไปขยับให้เองบนหน้าจอ", () => {
+    const out = run("node", ["scripts/e2e-warranty-rounds.mjs"], { env });
+    if (!/1\).*✓/.test(out)) throw new Error("ติ๊กเช็คแล้วไม่ลงวันให้ — รอบถัดไปจะนับจากกำหนดเดิม ตารางเพี้ยนสะสม\n" + out.split("\n").slice(-6).join("\n"));
+    if (!/2\).*✓/.test(out)) throw new Error("รอบถัดไปไม่ขยับตามวันเข้าจริง\n" + out.split("\n").slice(-6).join("\n"));
+    if (!/3\).*✓/.test(out)) throw new Error("ไม่มีบรรทัดสรุปรอบถัดไป ต้องไล่อ่านทีละรอบเอง");
+    if (!/4\).*✓/.test(out)) throw new Error("ติ๊กออกแล้วลบวันที่ที่คนกรอกทิ้ง");
+    if (!/5\).*✓/.test(out)) throw new Error("ลงวันเข้าจริงแล้วไม่นับว่าเช็ค — ระบบจะเตือนรอบที่เช็คไปแล้ว");
   });
   // (29 ต.ค. 2569) ติ๊กของแถมแล้วขึ้น "Could not find the 'freebie' column of 'sales'" — ดีลไม่ลงเลย
   step("ใบขายต้องส่งเฉพาะคอลัมน์จริง", () => {

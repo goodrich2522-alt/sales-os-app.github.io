@@ -7,7 +7,8 @@ import { useState, useEffect } from "react";
 import { Wrench, History } from "lucide-react";
 import { useApp } from "@/lib/AppContext";
 import { Forklift } from "@/lib/types";
-import { parseSvc, roundDue, emptySvcRounds, defaultWarrantyTerms, warrantyFilled, SvcData } from "@/lib/warranty";
+import { parseSvc, roundDue, emptySvcRounds, defaultWarrantyTerms, warrantyFilled, SvcData,
+  applyRoundChange, nextDue, dueStatus, todayISO, SVC_INTERVAL_MONTHS, type DueTone } from "@/lib/warranty";
 import { isForkliftVehicle } from "@/lib/commission";
 
 // รับประกันเริ่มต้นตามหมวดรถ — ใช้ตัวเดียวกับปุ่มเติมย้อนหลัง (lib/warranty.ts)
@@ -26,10 +27,21 @@ export function WarrantyBlock({ forklift, actor, onSaved, canEdit = true, defaul
   const [showHist, setShowHist] = useState(false);
   useEffect(() => { setSvc(initSvc(forklift, isForkliftVehicle(forklift.brand, forklift.model), defaultStart)); setSaved(false); }, [forklift, defaultStart]);
 
+  // "วันนี้" ตามเวลาเครื่อง — ห้ามใช้ toISOString() ซึ่งเป็น UTC (ไทยเร็วกว่า 7 ชม. วันจะเพี้ยน)
+  const today = todayISO();
+
   const inp = "w-full mt-0.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400 disabled:bg-slate-50 disabled:text-slate-500";
+  // ติ๊ก/ลงวันรอบไหนก็ตาม → อีกช่องเติมให้เอง แล้วรอบถัดไปขยับตามทันที (lib/warranty.ts)
   const setRound = (i: number, patch: Partial<{ date: string; done: boolean; note: string }>) => {
-    setSvc({ ...svc, rounds: svc.rounds.map((r, j) => j === i ? { ...r, ...patch } : r) }); setSaved(false);
+    setSvc({ ...svc, rounds: applyRoundChange(svc.rounds, i, patch, today) }); setSaved(false);
   };
+  const TONE: Record<DueTone, string> = {
+    overdue: "text-red-700 bg-red-100 border-red-200",
+    soon: "text-amber-700 bg-amber-100 border-amber-200",
+    ok: "text-slate-500 bg-slate-100 border-slate-200",
+    none: "text-slate-400 bg-slate-50 border-slate-200",
+  };
+  const upcoming = nextDue(svc);
   const doneCount = svc.rounds.filter(r => r.done).length;
   const filled = warrantyFilled(forklift);                 // สถานะที่บันทึกไว้ (ใช้กันจ่ายค่าคอม)
   const willFill = !!(svc.start.trim() && svc.terms.trim()); // สถานะปัจจุบันในฟอร์ม
@@ -65,18 +77,43 @@ export function WarrantyBlock({ forklift, actor, onSaved, canEdit = true, defaul
 
         {isFork && (
           <div>
-            <p className="text-[11px] font-semibold text-slate-500 mb-1">รอบเข้าเช็ค/บำรุงรักษา (ฟรี · ทุก 3 เดือน — รอบถัดไปนับจากวันเข้าครั้งก่อน)</p>
+            <p className="text-[11px] font-semibold text-slate-500 mb-1">
+              รอบเข้าเช็ค/บำรุงรักษา (ฟรี · ทุก {SVC_INTERVAL_MONTHS} เดือน — ลงวันเข้าเช็ครอบไหน รอบถัดไปคำนวณให้เองทันที)
+            </p>
+            {/* ── รอบถัดไปอยู่บนสุด — ไม่ต้องไล่อ่านทีละรอบว่าต้องไปเมื่อไหร่ ── */}
+            {(() => {
+              if (!svc.start.trim()) return (
+                <p className="text-[11px] text-slate-400 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 mb-1.5">
+                  ลงวันเริ่มรับประกันก่อน แล้วระบบจะคำนวณวันครบกำหนดทุกรอบให้เอง
+                </p>
+              );
+              if (!upcoming) return (
+                <p className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1.5 mb-1.5">
+                  ✓ เข้าเช็คครบทั้ง {svc.rounds.length} รอบแล้ว — ไม่มีรอบค้าง
+                </p>
+              );
+              const st = dueStatus(upcoming.due, today);
+              return (
+                <p className={`text-[11px] font-semibold rounded-lg border px-2 py-1.5 mb-1.5 ${TONE[st.tone]}`}>
+                  รอบถัดไป: <b>รอบที่ {upcoming.index + 1}</b> · ครบกำหนด {upcoming.due || "—"}{st.label && <> · {st.label}</>}
+                </p>
+              );
+            })()}
             <div className="flex flex-col gap-1.5">
               {svc.rounds.map((r, i) => {
                 const due = roundDue(svc, i);
+                const st = r.done ? { label: "", tone: "none" as DueTone } : dueStatus(due, today);
                 return (
-                  <div key={i} className={`rounded-lg border p-2 ${r.done ? "bg-emerald-50 border-emerald-200" : "bg-white border-slate-200"}`}>
+                  <div key={i} data-round={i + 1} className={`rounded-lg border p-2 ${r.done ? "bg-emerald-50 border-emerald-200" : "bg-white border-slate-200"}`}>
                     <div className="flex items-center gap-2 flex-wrap">
                       <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
                         <input type="checkbox" checked={r.done} disabled={!canEdit} onChange={e => setRound(i, { done: e.target.checked })} className="w-4 h-4 accent-teal-600" />รอบที่ {i + 1}
                       </label>
-                      <span className="text-[10px] text-slate-400">{i === 0 ? "กำหนด ~" : "ครบ +3 เดือน ~"}{due || "—"}</span>
-                      <input type="date" value={r.date} disabled={!canEdit} onChange={e => setRound(i, { date: e.target.value })} title="วันเข้าเช็คจริง"
+                      <span className="text-[10px] text-slate-400">
+                        {r.done ? "เข้าเช็คแล้ว" : `ครบกำหนด ${due || "—"}`}
+                      </span>
+                      {st.label && <span className={`text-[10px] font-semibold rounded-full border px-1.5 py-0.5 ${TONE[st.tone]}`}>{st.label}</span>}
+                      <input type="date" value={r.date} disabled={!canEdit} onChange={e => setRound(i, { date: e.target.value })} title="วันเข้าเช็คจริง — ลงแล้วรอบถัดไปขยับตามให้เอง"
                         className="ml-auto border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-700 disabled:bg-slate-50" />
                     </div>
                     <input value={r.note} disabled={!canEdit} onChange={e => setRound(i, { note: e.target.value })} placeholder="หมายเหตุ (ช่าง/รายการที่เปลี่ยน)"
