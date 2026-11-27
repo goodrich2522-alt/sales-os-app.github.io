@@ -112,6 +112,13 @@ step("รอบเข้าเช็ค (คำนวณรอบถัดไป
   if (!m) throw new Error(out.split("\n").filter(l => l.includes("✗")).slice(0, 4).join("\n"));
   return `${m[1]}/${m[2]} ข้อ`;
 });
+// (27 พ.ย. 2569) บัญชีพิมพ์หมายเหตุต่อท้ายช่องวันที่ → อ่านไม่ออก เงินเข้าแล้วแต่แอปไม่รู้
+step("อ่านวันที่รับเงินจากไฟล์บัญชี (เส้นแบ่งรับแล้ว/ยังไม่รับ)", () => {
+  const out = run("node", ["scripts/test-payment-date.mjs"]);
+  const m = /ผ่านทั้งหมด (\d+)\/(\d+) ข้อ/.exec(out);
+  if (!m) throw new Error(out.split("\n").filter(l => l.includes("✗")).slice(0, 4).join("\n"));
+  return `${m[1]}/${m[2]} ข้อ`;
+});
 step("จำแนกกลุ่มค่าคอมจากรุ่นรถ", () => {
   const out = run("node", ["scripts/test-commission-group.mjs"]);
   const m = /ผ่านทั้งหมด (\d+)\/(\d+) รุ่น/.exec(out);
