@@ -57,6 +57,14 @@ step("ลำดับโค้ด (ตัวแปรก่อนประกา
 // 3) ชื่อคอลัมน์ตรงกับฐานข้อมูลจริง
 step("ชื่อคอลัมน์ในฐานข้อมูล", () => { run("node", ["scripts/check-columns.mjs"]); });
 
+// (27 พ.ย. 2569) repo เป็น public แต่ .gitignore ไม่ได้กัน .sql — ราคาทุน/ชื่อลูกค้าหลุดขึ้นไป 3 ไฟล์
+step("ไม่มีข้อมูลธุรกิจจริงใน repo สาธารณะ", () => {
+  const out = run("node", ["scripts/check-no-data-leak.mjs"]);
+  const m = /ผ่านทั้งหมด (\d+)\/(\d+) ไฟล์/.exec(out);
+  if (!m) throw new Error(out.split("\n").slice(0, 10).join("\n"));
+  return `${m[1]} ไฟล์`;
+});
+
 // 4) eslint — ห้ามมี error เพิ่มจากเดิม (ของเดิมค้างอยู่ ยังไม่ไล่แก้)
 step("eslint (ห้าม error เพิ่ม)", () => {
   // เขียนผลลง ไฟล์ ไม่รับทาง stdout — ผลเป็น JSON เกือบ 1 MB ซึ่งเกินบัฟเฟอร์ของ child process

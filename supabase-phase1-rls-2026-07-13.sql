@@ -101,8 +101,10 @@ grant execute on function public.jwt_email(), public.access_user(), public.is_ad
   to anon, authenticated;
 
 -- ── A4. seed adminEmails ลง app_config (ถ้ายังไม่มี) ──
+-- ⚠️ repo นี้เป็น public — ใส่อีเมลจริงลงไปไม่ได้ (บอกใบ้ว่าต้องไปเจาะบัญชีไหน)
+--    แทนที่ <อีเมลแอดมิน> ด้วยอีเมลจริงตอนวางใน Supabase SQL Editor เท่านั้น
 update public.app_config
-   set data = data || '{"adminEmails": ["goodrichforklift@gmail.com"]}'::jsonb
+   set data = data || '{"adminEmails": ["<อีเมลแอดมิน>"]}'::jsonb
  where id = 1 and not (data ? 'adminEmails');
 
 -- ── A5. Policies (มีผลเมื่อเปิด RLS ในส่วน B) ──
